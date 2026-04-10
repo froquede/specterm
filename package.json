@@ -9,6 +9,8 @@
     "dev:electron": "concurrently \"vite\" \"wait-on http://localhost:1420 && VITE_DEV_SERVER_URL=http://localhost:1420 electron .\"",
     "build": "vite build",
     "start:electron": "npm run build && electron .",
+    "build:electron": "npm run build && electron-builder --linux AppImage deb --publish never",
+    "build:electron:win": "npm run build && electron-builder --win nsis --publish never",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -24,6 +26,30 @@
     "mermaid": "^11.4.0",
     "nanoid": "^5.0.0",
     "solid-js": "^1.9.0"
+  },
+  "build": {
+    "appId": "com.specterm.terminal",
+    "productName": "Specterm",
+    "directories": {
+      "output": "build-output"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "linux": {
+      "target": ["AppImage", "deb"],
+      "category": "TerminalEmulator"
+    },
+    "win": {
+      "target": ["nsis"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
