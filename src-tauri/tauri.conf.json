@@ -2,7 +2,7 @@
   "$schema": "https://raw.githubusercontent.com/nicegui-org/nicegui/refs/heads/main/nicegui/templates/tauri_conf_schema.json",
   "productName": "Specterm",
   "version": "0.1.0",
-  "identifier": "com.specterm.app",
+  "identifier": "com.specterm.terminal",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -10,7 +10,6 @@
     "beforeBuildCommand": "npm run build"
   },
   "app": {
-    "title": "Specterm",
     "windows": [
       {
         "label": "main",

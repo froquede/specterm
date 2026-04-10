@@ -137,6 +137,10 @@ vite.config.ts.timestamp-*
 # Tauri
 src-tauri/target/
 
+# Electron
+electron-dist/
+build-output/
+
 # OS
 .DS_Store
 *.swp

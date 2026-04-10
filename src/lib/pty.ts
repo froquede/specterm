@@ -1,25 +1,17 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getBackend, type UnlistenFn } from "../backends";
 
-interface SpawnOptions {
+export async function spawnPty(options: {
   cols: number;
   rows: number;
   cwd?: string;
-}
-
-interface PtyOutput {
-  id: number;
-  data: number[];
-}
-
-export async function spawnPty(options: SpawnOptions): Promise<number> {
-  return invoke<number>("spawn_pty", { options });
+}): Promise<number> {
+  const backend = await getBackend();
+  return backend.spawnPty(options);
 }
 
 export async function writePty(id: number, data: string): Promise<void> {
-  const encoder = new TextEncoder();
-  const bytes = Array.from(encoder.encode(data));
-  return invoke("write_pty", { id, data: bytes });
+  const backend = await getBackend();
+  return backend.writePty(id, data);
 }
 
 export async function resizePty(
@@ -27,25 +19,21 @@ export async function resizePty(
   cols: number,
   rows: number
 ): Promise<void> {
-  return invoke("resize_pty", { id, cols, rows });
+  const backend = await getBackend();
+  return backend.resizePty(id, cols, rows);
 }
 
 export async function killPty(id: number): Promise<void> {
-  return invoke("kill_pty", { id });
+  const backend = await getBackend();
+  return backend.killPty(id);
 }
 
 export function onPtyOutput(
   callback: (id: number, data: Uint8Array) => void
 ): Promise<UnlistenFn> {
-  return listen<PtyOutput>("pty-output", (event) => {
-    callback(event.payload.id, new Uint8Array(event.payload.data));
-  });
+  return getBackend().then((b) => b.onPtyOutput(callback));
 }
 
-export function onPtyExit(
-  callback: (id: number) => void
-): Promise<UnlistenFn> {
-  return listen<number>("pty-exit", (event) => {
-    callback(event.payload);
-  });
+export function onPtyExit(callback: (id: number) => void): Promise<UnlistenFn> {
+  return getBackend().then((b) => b.onPtyExit(callback));
 }
