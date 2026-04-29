@@ -2,8 +2,8 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Emitter, Manager, State};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter, State};
 
 pub struct PtyState {
     instances: Mutex<HashMap<u32, PtyInstance>>,
