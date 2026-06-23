@@ -48,7 +48,7 @@ export default function App() {
     registerBinding("enter", () => {
       store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
     }, { ctrl: true, shift: true });
-    registerBinding("\\", () => {
+    registerBinding("s", () => {
       store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
     }, { ctrl: true, shift: true });
     registerBinding("w", () => {
