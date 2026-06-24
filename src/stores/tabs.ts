@@ -266,5 +266,9 @@ export function useTabStore() {
     toggleSidebar() {
       update((s) => ({ ...s, sidebarOpen: !s.sidebarOpen }));
     },
+
+    openSidebar() {
+      update((s) => (s.sidebarOpen ? s : { ...s, sidebarOpen: true }));
+    },
   };
 }

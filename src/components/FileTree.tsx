@@ -1,6 +1,7 @@
 import { createSignal, createResource, For, Show, onMount } from "solid-js";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
+import { isAccelClick } from "../lib/platform";
 
 interface FileTreeProps {
   open: boolean;
@@ -56,7 +57,7 @@ export default function FileTree(props: FileTreeProps) {
     if (entry.isDirectory) {
       navigateTo(entry.path);
     } else if (entry.name.endsWith(".md")) {
-      const mode = e.ctrlKey ? "tab" : "split";
+      const mode = isAccelClick(e) ? "tab" : "split";
       props.onOpenFile(entry.path, mode);
     }
   }

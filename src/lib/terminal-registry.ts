@@ -25,6 +25,79 @@ export interface TerminalInstance {
 
 const instances = new Map<string, TerminalInstance>();
 
+// Font zoom (Ghostty-style: ⌘= / ⌘- / ⌘0). Applies to every open terminal.
+const DEFAULT_FONT_SIZE = 14;
+const MIN_FONT_SIZE = 6;
+const MAX_FONT_SIZE = 40;
+const FONT_SIZE_STORAGE_KEY = "specterm.fontSize";
+
+// Restore the last zoom level from a previous session, clamped to the valid
+// range. Falls back to the default when nothing valid is stored.
+function loadFontSize(): number {
+  try {
+    const stored = Number(localStorage.getItem(FONT_SIZE_STORAGE_KEY));
+    if (Number.isFinite(stored) && stored >= MIN_FONT_SIZE && stored <= MAX_FONT_SIZE) {
+      return stored;
+    }
+  } catch {
+    // localStorage unavailable — fall through to default
+  }
+  return DEFAULT_FONT_SIZE;
+}
+
+let currentFontSize = loadFontSize();
+
+function persistFontSize() {
+  try {
+    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(currentFontSize));
+  } catch {
+    // localStorage unavailable — zoom just won't persist this session
+  }
+}
+
+function applyFontSize() {
+  persistFontSize();
+  for (const instance of instances.values()) {
+    if (instance.disposed) continue;
+    instance.term.options.fontSize = currentFontSize;
+    if (instance.container) {
+      try {
+        safeFit(instance.term, instance.fitAddon);
+      } catch {
+        // container not measurable right now — ignore
+      }
+    }
+  }
+  // Publish the same zoom factor to markdown panes via a CSS variable so
+  // ⌘= / ⌘- / ⌘0 scale the .md reader in lockstep with the terminal font.
+  document.documentElement.style.setProperty(
+    "--md-font-scale",
+    (currentFontSize / DEFAULT_FONT_SIZE).toString()
+  );
+}
+
+export function increaseFontSize() {
+  currentFontSize = Math.min(MAX_FONT_SIZE, currentFontSize + 1);
+  applyFontSize();
+}
+
+export function decreaseFontSize() {
+  currentFontSize = Math.max(MIN_FONT_SIZE, currentFontSize - 1);
+  applyFontSize();
+}
+
+export function resetFontSize() {
+  currentFontSize = DEFAULT_FONT_SIZE;
+  applyFontSize();
+}
+
+// Publish the restored zoom to markdown panes on startup, so the .md reader
+// opens at the same scale as the terminal even before the first ⌘=/⌘-/⌘0.
+document.documentElement.style.setProperty(
+  "--md-font-scale",
+  (currentFontSize / DEFAULT_FONT_SIZE).toString()
+);
+
 export function getTerminalInstance(paneId: string): TerminalInstance | undefined {
   return instances.get(paneId);
 }
@@ -45,13 +118,19 @@ export async function createTerminalInstance(
 
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: 14,
+    fontSize: currentFontSize,
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    allowTransparency: true,
     theme: {
-      background: "#1a1b26",
+      // Specterm's default theme (Tokyo Night). Transparent background so the
+      // pane/.app layer (opaque #1a1b26) shows through — this lets the
+      // unfocused-split dimming overlay tint the terminal without repainting it.
+      background: "rgba(0, 0, 0, 0)",
       foreground: "#c0caf5",
       cursor: "#c0caf5",
+      cursorAccent: "#1a1b26",
       selectionBackground: "#33467c",
+      selectionForeground: "#c0caf5",
       black: "#15161e",
       red: "#f7768e",
       green: "#9ece6a",

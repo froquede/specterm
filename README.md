@@ -17,15 +17,18 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+Shift+T` | New tab |
-| `Ctrl+Shift+Q` | Close tab |
-| `Ctrl+Shift+Right/Left` | Next/previous tab |
-| `Ctrl+Shift+Enter` | Split horizontally |
-| `Ctrl+Shift+\` | Split vertically |
-| `Ctrl+Shift+W` | Close pane |
-| `Ctrl+Shift+C` | Copy selection |
-| `Ctrl+Shift+V` | Paste |
-| `Ctrl+Shift+B` | Toggle sidebar |
+| `⌘T` | New tab |
+| `⌘W` | Close pane |
+| `⌘⇧W` | Close tab |
+| `⌘⇧]` / `⌘⇧[` | Next/previous tab |
+| `⌘⇧D` | Split horizontally (stacked) |
+| `⌘D` | Split vertically (side by side) |
+| `⌘C` | Copy selection |
+| `⌘V` | Paste |
+| `⌘B` | Toggle sidebar |
+| `⌘F` | Find in markdown preview |
+| `⌘=` / `⌘-` | Increase / decrease font size |
+| `⌘0` | Reset font size |
 
 ## Tech Stack
 

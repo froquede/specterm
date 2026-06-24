@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu } = require("electron");
 const path = require("path");
 const pty = require("node-pty");
 const fs = require("fs");
@@ -11,12 +11,26 @@ let mainWindow = null;
 let fsWatcher = null;
 
 function createWindow() {
+  const isMac = process.platform === "darwin";
+
+  // Solid, opaque window on every platform — no transparency, blur or vibrancy.
+  // macOS keeps the inset titlebar so the custom tab bar can host the traffic
+  // lights (drag handled by `.tab-drag-region`); other platforms use their
+  // native title bar.
+  const platformWindow = isMac
+    ? {
+        backgroundColor: "#1a1b26",
+        titleBarStyle: "hiddenInset",
+        trafficLightPosition: { x: 14, y: 11 },
+      }
+    : { backgroundColor: "#1a1b26" };
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
     title: "Specterm",
-    backgroundColor: "#1a1b26",
     autoHideMenuBar: true,
+    ...platformWindow,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
@@ -168,13 +182,47 @@ ipcMain.handle("unwatch-dir", () => {
   }
 });
 
+// === Application menu ===
+// Minimal menu so the OS default accelerators (⌘C/⌘V/⌘W/⌘T/⌘D) don't get
+// captured by the menu — those are handled in the renderer as terminal
+// actions. We keep ⌘Q (quit), ⌘H (hide) and ⌘M (minimize).
+function buildAppMenu() {
+  const isMac = process.platform === "darwin";
+  const template = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }],
+    },
+  ];
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 // === App lifecycle ===
 
 app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  buildAppMenu();
+  createWindow();
+});
 
 app.on("window-all-closed", () => {
   for (const [, instance] of ptyInstances) {

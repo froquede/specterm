@@ -11,6 +11,7 @@
     "start:electron": "npm run build && electron .",
     "build:electron": "npm run build && electron-builder --linux AppImage deb --publish never",
     "build:electron:win": "npm run build && electron-builder --win nsis --publish never",
+    "build:electron:mac": "npm run build && electron-builder --mac --publish never",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -22,9 +23,11 @@
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
+    "chokidar": "^4.0.0",
     "markdown-it": "^14.1.0",
     "mermaid": "^11.4.0",
     "nanoid": "^5.0.0",
+    "node-pty": "^1.0.0",
     "solid-js": "^1.9.0"
   },
   "build": {
@@ -33,6 +36,9 @@
     "directories": {
       "output": "build-output"
     },
+    "asarUnpack": [
+      "node_modules/node-pty/**/*"
+    ],
     "files": [
       "dist/**/*",
       "electron/**/*",
@@ -54,11 +60,9 @@
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",
     "@types/markdown-it": "^14.1.2",
-    "chokidar": "^4.0.0",
     "concurrently": "^9.0.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
-    "node-pty": "^1.0.0",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vite-plugin-solid": "^2.10.0",
