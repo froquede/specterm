@@ -21,7 +21,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 | `Ctrl+Shift+Q` | Close tab |
 | `Ctrl+Shift+Right/Left` | Next/previous tab |
 | `Ctrl+Shift+Enter` | Split horizontally |
-| `Ctrl+Shift+\` | Split vertically |
+| `Ctrl+Shift+S` | Split vertically |
 | `Ctrl+Shift+W` | Close pane |
 | `Ctrl+Shift+C` | Copy selection |
 | `Ctrl+Shift+V` | Paste |
