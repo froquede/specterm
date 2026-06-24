@@ -1,7 +1,13 @@
 import { Show, onMount } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBinding } from "./stores/keybindings";
-import { getTerminalInstance } from "./lib/terminal-registry";
+import { cmd } from "./lib/platform";
+import {
+  getTerminalInstance,
+  increaseFontSize,
+  decreaseFontSize,
+  resetFontSize,
+} from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
@@ -21,40 +27,44 @@ export default function App() {
   }
 
   onMount(() => {
-    // Kitty-style shortcuts (all Ctrl+Shift+key)
+    // Shortcuts are authored macOS / Ghostty-style (⌘ = primary command key).
+    // cmd() translates them per-OS: ⌘X -> Ctrl+Shift+X and ⌘⇧X -> Ctrl+Alt+X
+    // on Windows/Linux, keeping bare Ctrl+<key> free for the terminal.
 
     // Tabs
-    registerBinding("t", () => store.createTab(), { ctrl: true, shift: true });
-    registerBinding("q", () => {
+    registerBinding("t", () => store.createTab(), cmd());
+    registerBinding("w", () => {
+      // ⌘⇧W — close tab
       const tab = store.activeTab;
       if (tab) store.closeTab(tab.id);
-    }, { ctrl: true, shift: true });
-    registerBinding("arrowright", () => {
+    }, cmd({ shift: true }));
+    registerBinding("]", () => {
       const tabs = store.state.tabs;
       const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
       if (tabs.length > 1) {
         store.setActiveTab(tabs[(idx + 1) % tabs.length].id);
       }
-    }, { ctrl: true, shift: true });
-    registerBinding("arrowleft", () => {
+    }, cmd({ shift: true, code: "BracketRight" }));
+    registerBinding("[", () => {
       const tabs = store.state.tabs;
       const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
       if (tabs.length > 1) {
         store.setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
       }
-    }, { ctrl: true, shift: true });
+    }, cmd({ shift: true, code: "BracketLeft" }));
 
-    // Windows/panes
-    registerBinding("enter", () => {
-      store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
-    }, { ctrl: true, shift: true });
-    registerBinding("s", () => {
+    // Splits — ⌘D side-by-side, ⌘⇧D stacked (matches Ghostty)
+    registerBinding("d", () => {
       store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
-    }, { ctrl: true, shift: true });
+    }, cmd());
+    registerBinding("d", () => {
+      store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
+    }, cmd({ shift: true }));
     registerBinding("w", () => {
+      // ⌘W — close pane
       const tab = store.activeTab;
       if (tab) store.closePane(tab.activePaneId);
-    }, { ctrl: true, shift: true });
+    }, cmd());
 
     // Clipboard
     registerBinding("c", () => {
@@ -64,7 +74,7 @@ export default function App() {
       if (inst && inst.term.hasSelection()) {
         navigator.clipboard.writeText(inst.term.getSelection());
       }
-    }, { ctrl: true, shift: true });
+    }, cmd());
     registerBinding("v", async () => {
       const tab = store.activeTab;
       if (!tab) return;
@@ -73,10 +83,35 @@ export default function App() {
         const text = await navigator.clipboard.readText();
         if (text) writePty(inst.ptyId, text);
       }
-    }, { ctrl: true, shift: true });
+    }, cmd());
 
     // Sidebar
-    registerBinding("b", () => store.toggleSidebar(), { ctrl: true, shift: true });
+    registerBinding("b", () => store.toggleSidebar(), cmd());
+    // ⌘⇧B — open the sidebar (if closed) and focus its folder filter field.
+    registerBinding("b", () => {
+      store.openSidebar();
+      // The input mounts when the sidebar opens, so retry briefly until it's
+      // in the DOM, then focus and select any existing filter text.
+      let tries = 0;
+      const focusFilter = () => {
+        const input = document.querySelector<HTMLInputElement>(
+          ".file-tree-search input"
+        );
+        if (input) {
+          input.focus();
+          input.select();
+        } else if (tries++ < 10) {
+          setTimeout(focusFilter, 16);
+        }
+      };
+      focusFilter();
+    }, cmd({ shift: true }));
+
+    // Font zoom — ⌘= / ⌘+ to grow, ⌘- to shrink, ⌘0 to reset
+    registerBinding("=", () => increaseFontSize(), cmd({ code: "Equal" }));
+    registerBinding("=", () => increaseFontSize(), cmd({ shift: true, code: "Equal" }));
+    registerBinding("-", () => decreaseFontSize(), cmd({ code: "Minus" }));
+    registerBinding("0", () => resetFontSize(), cmd({ code: "Digit0" }));
 
     initKeybindings();
   });
