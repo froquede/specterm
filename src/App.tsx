@@ -66,6 +66,19 @@ export default function App() {
       if (tab) store.closePane(tab.activePaneId);
     }, cmd());
 
+    // New split — literal Ctrl+Shift+S / Ctrl+Shift+Enter on Win/Linux
+    // (⌘⇧S / ⌘⇧Enter on macOS): S stacks the pane (vertical), Enter places it
+    // side-by-side (horizontal).
+    const splitMods = isMac
+      ? { meta: true, shift: true }
+      : { ctrl: true, shift: true };
+    registerBinding("s", () => {
+      store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
+    }, splitMods);
+    registerBinding("enter", () => {
+      store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
+    }, splitMods);
+
     // Split orientation — ⌘⇧← / → make the active pane's split horizontal
     // (side-by-side), ⌘⇧↑ / ↓ make it vertical (stacked). The user asked for
     // Ctrl+Shift+Arrow on Win/Linux and ⌘⇧Arrow on macOS, so bind those
@@ -102,10 +115,14 @@ export default function App() {
       }
     }, cmd());
 
-    // Sidebar
-    registerBinding("b", () => store.toggleSidebar(), cmd());
-    // ⌘⇧B — open the sidebar (if closed) and focus its folder filter field.
+    // Sidebar / search — ⌘B (Ctrl+Shift+B on Win/Linux): when the sidebar is
+    // closed, open it and focus the folder-filter field; when already open,
+    // close it. One key both opens-with-focus and dismisses the search.
     registerBinding("b", () => {
+      if (store.state.sidebarOpen) {
+        store.toggleSidebar();
+        return;
+      }
       store.openSidebar();
       // The input mounts when the sidebar opens, so retry briefly until it's
       // in the DOM, then focus and select any existing filter text.
@@ -122,7 +139,7 @@ export default function App() {
         }
       };
       focusFilter();
-    }, cmd({ shift: true }));
+    }, { ...cmd(), allowInInput: true });
 
     // Font zoom — ⌘= / ⌘+ to grow, ⌘- to shrink, ⌘0 to reset
     registerBinding("=", () => increaseFontSize(), cmd({ code: "Equal" }));

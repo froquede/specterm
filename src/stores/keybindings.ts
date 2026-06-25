@@ -7,6 +7,7 @@ interface Keybinding {
   shift?: boolean;
   meta?: boolean;
   alt?: boolean;
+  allowInInput?: boolean;
   handler: KeyHandler;
 }
 
@@ -15,7 +16,17 @@ const directBindings: Keybinding[] = [];
 export function registerBinding(
   key: string,
   handler: KeyHandler,
-  opts?: { ctrl?: boolean; shift?: boolean; meta?: boolean; alt?: boolean; code?: string }
+  opts?: {
+    ctrl?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+    alt?: boolean;
+    code?: string;
+    // Fire even when focus is in a real text field. Use sparingly, for
+    // modifier shortcuts that must work from inside an input (e.g. the
+    // sidebar-search toggle, which itself focuses an input).
+    allowInInput?: boolean;
+  }
 ) {
   directBindings.push({
     key: opts?.code ? undefined : key.toLowerCase(),
@@ -24,6 +35,7 @@ export function registerBinding(
     shift: opts?.shift,
     meta: opts?.meta,
     alt: opts?.alt,
+    allowInInput: opts?.allowInInput,
     handler,
   });
 }
@@ -44,9 +56,13 @@ export function initKeybindings() {
   window.addEventListener(
     "keydown",
     (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
+      const inEditable = isEditableTarget(e.target);
 
       for (const binding of directBindings) {
+        // In a real text field, only bindings that opt in may fire — keeps
+        // typing and native ⌘C/⌘V working everywhere else.
+        if (inEditable && !binding.allowInInput) continue;
+
         const ctrlMatch = binding.ctrl ? e.ctrlKey : !e.ctrlKey;
         const shiftMatch = binding.shift ? e.shiftKey : !e.shiftKey;
         const metaMatch = binding.meta ? e.metaKey : !e.metaKey;

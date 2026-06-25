@@ -257,9 +257,61 @@ body,
 .pane {
   width: 100%;
   height: 100%;
+  /* Title-bar on top, content fills the rest. */
+  display: flex;
+  flex-direction: column;
   /* Positioning context for the ::after overlays (active-pane border and
      unfocused-split dimming), so they anchor to this pane, not .app-content. */
   position: relative;
+}
+
+/* Per-pane title-bar: shows the pane label and doubles as the drag handle for
+   reordering / swapping panes. */
+.pane-titlebar {
+  flex: 0 0 26px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  background: #16161e;
+  border-bottom: 1px solid #292e42;
+  color: #565f89;
+  font-size: 12px;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  z-index: 35;
+}
+
+.pane-titlebar:active {
+  cursor: grabbing;
+}
+
+.pane-active .pane-titlebar {
+  color: #c0caf5;
+  background: #1a1b26;
+}
+
+.pane-grip {
+  flex: 0 0 auto;
+  font-size: 13px;
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.pane-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Content area below the title-bar — the terminal/markdown surface. The
+   ResizeObserver in terminal-registry watches this element. */
+.pane-content {
+  flex: 1 1 auto;
+  position: relative;
+  overflow: hidden;
 }
 
 /* Dim splits that are not focused by blending the fill color over them.
@@ -289,41 +341,6 @@ body,
   z-index: 30;
 }
 
-.pane-grip {
-  position: absolute;
-  top: 4px;
-  left: 4px;
-  z-index: 20;
-  width: 22px;
-  height: 22px;
-  border: none;
-  background: rgba(22, 22, 30, 0.85);
-  color: #565f89;
-  font-size: 14px;
-  line-height: 1;
-  cursor: grab;
-  border-radius: 4px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
-  touch-action: none;
-}
-
-.pane:hover .pane-grip {
-  opacity: 1;
-}
-
-.pane-grip:hover {
-  background: #292e42;
-  color: #c0caf5;
-}
-
-.pane-grip:active {
-  cursor: grabbing;
-}
-
 /* Drop-zone indicator shown over the hovered target pane during a drag. */
 .drop-indicator {
   position: absolute;
@@ -351,28 +368,20 @@ body,
 }
 
 .pane-close-btn {
-  position: absolute;
-  top: 4px;
-  right: 4px;
-  z-index: 20;
-  width: 22px;
-  height: 22px;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
   border: none;
-  background: rgba(22, 22, 30, 0.85);
+  background: none;
   color: #565f89;
-  font-size: 16px;
+  font-size: 15px;
   line-height: 1;
   cursor: pointer;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s, color 0.15s;
-}
-
-.pane:hover .pane-close-btn {
-  opacity: 1;
+  transition: background 0.15s, color 0.15s;
 }
 
 .pane-close-btn:hover {
