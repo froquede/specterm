@@ -82,7 +82,7 @@ export default function Pane(props: PaneProps) {
 
   return (
     <div
-      class={`pane ${props.isActive ? "pane-active" : ""}`}
+      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""}`}
       data-pane-id={props.id}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}

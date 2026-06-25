@@ -1,4 +1,4 @@
-import { Show, onMount } from "solid-js";
+import { Show, onMount, createEffect, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBinding } from "./stores/keybindings";
 import { cmd, isMac } from "./lib/platform";
@@ -15,6 +15,38 @@ import FileTree from "./components/FileTree";
 
 export default function App() {
   const store = useTabStore();
+
+  // Keep keyboard focus on the active pane's terminal. The active pane is the
+  // one drawn at full opacity (others are dimmed), so typing must always land
+  // there — even after splits, drag-reorders or tab switches remount panes.
+  function focusActiveTerminal() {
+    const tab = store.activeTab;
+    if (!tab) return;
+    // Don't steal focus from a real text field (e.g. the sidebar search opened
+    // by ⌘B); only xterm's hidden textarea should yield to the terminal.
+    const ae = document.activeElement;
+    if (
+      ae instanceof HTMLElement &&
+      (ae.tagName === "INPUT" ||
+        (ae.tagName === "TEXTAREA" &&
+          !ae.classList.contains("xterm-helper-textarea")))
+    ) {
+      return;
+    }
+    getTerminalInstance(tab.activePaneId)?.term.focus();
+  }
+
+  createEffect(() => {
+    const tab = store.activeTab;
+    if (!tab) return;
+    // Track the active pane id so the effect re-runs when focus moves.
+    void tab.activePaneId;
+    // Wait a frame so a just-remounted terminal is in the DOM before focusing.
+    // Cancel a still-pending frame if the active pane changes again first, so
+    // rapid tab/pane switches don't queue up stale focus calls.
+    const raf = requestAnimationFrame(focusActiveTerminal);
+    onCleanup(() => cancelAnimationFrame(raf));
+  });
 
   function handleOpenMarkdown(path: string, mode: "split" | "tab") {
     const mdPane = { kind: "markdown" as const, filePath: path };
@@ -79,23 +111,6 @@ export default function App() {
       store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
     }, splitMods);
 
-    // Split orientation — ⌘⇧← / → make the active pane's split horizontal
-    // (side-by-side), ⌘⇧↑ / ↓ make it vertical (stacked). The user asked for
-    // Ctrl+Shift+Arrow on Win/Linux and ⌘⇧Arrow on macOS, so bind those
-    // directly rather than through cmd() (whose shift variant maps to Alt).
-    const arrowMods = (code: string) =>
-      isMac
-        ? { meta: true, shift: true, code }
-        : { ctrl: true, shift: true, code };
-    const setDir = (dir: "h" | "v") => () => {
-      const tab = store.activeTab;
-      if (tab) store.setSplitDirectionForPane(tab.activePaneId, dir);
-    };
-    registerBinding("", setDir("h"), arrowMods("ArrowLeft"));
-    registerBinding("", setDir("h"), arrowMods("ArrowRight"));
-    registerBinding("", setDir("v"), arrowMods("ArrowUp"));
-    registerBinding("", setDir("v"), arrowMods("ArrowDown"));
-
     // Clipboard
     registerBinding("c", () => {
       const tab = store.activeTab;
@@ -148,6 +163,9 @@ export default function App() {
     registerBinding("0", () => resetFontSize(), cmd({ code: "Digit0" }));
 
     initKeybindings();
+
+    // When the OS window regains focus, return the cursor to the active pane.
+    window.addEventListener("focus", focusActiveTerminal);
   });
 
   return (

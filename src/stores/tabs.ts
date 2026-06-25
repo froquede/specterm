@@ -191,12 +191,17 @@ export function useTabStore() {
       if (idx === -1) return;
 
       const tab = s.tabs[idx];
+      const before = new Set(collectLeaves(tab.root).map((l) => l.id));
       const newRoot = splitPaneInTree(tab.root, tab.activePaneId, direction, newPane);
+      // Focus the freshly created pane so typing lands there (focus = opacity 1).
+      const newLeaf = collectLeaves(newRoot).find((l) => !before.has(l.id));
 
       update(() => ({
         ...s,
         tabs: s.tabs.map((t, i) =>
-          i === idx ? { ...t, root: newRoot } : t
+          i === idx
+            ? { ...t, root: newRoot, activePaneId: newLeaf?.id ?? t.activePaneId }
+            : t
         ),
       }));
     },
