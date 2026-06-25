@@ -1,4 +1,4 @@
-import { Show, onMount } from "solid-js";
+import { Show, onMount, createEffect } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBinding } from "./stores/keybindings";
 import { cmd, isMac } from "./lib/platform";
@@ -15,6 +15,24 @@ import FileTree from "./components/FileTree";
 
 export default function App() {
   const store = useTabStore();
+
+  // Keep keyboard focus on the active pane's terminal. The active pane is the
+  // one drawn at full opacity (others are dimmed), so typing must always land
+  // there — even after splits, drag-reorders or tab switches remount panes.
+  function focusActiveTerminal() {
+    const tab = store.activeTab;
+    if (!tab) return;
+    getTerminalInstance(tab.activePaneId)?.term.focus();
+  }
+
+  createEffect(() => {
+    const tab = store.activeTab;
+    if (!tab) return;
+    // Track the active pane id so the effect re-runs when focus moves.
+    void tab.activePaneId;
+    // Wait a frame so a just-remounted terminal is in the DOM before focusing.
+    requestAnimationFrame(focusActiveTerminal);
+  });
 
   function handleOpenMarkdown(path: string, mode: "split" | "tab") {
     const mdPane = { kind: "markdown" as const, filePath: path };
@@ -148,6 +166,9 @@ export default function App() {
     registerBinding("0", () => resetFontSize(), cmd({ code: "Digit0" }));
 
     initKeybindings();
+
+    // When the OS window regains focus, return the cursor to the active pane.
+    window.addEventListener("focus", focusActiveTerminal);
   });
 
   return (

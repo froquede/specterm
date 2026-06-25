@@ -318,7 +318,7 @@ body,
    A lone pane is always the active pane, so this only ever affects a real
    split. Using an overlay (instead of element opacity) keeps text crisp and
    lets us tint toward the fill color exactly like Ghostty does. */
-.pane:not(.pane-active)::after {
+.pane:not(.pane-active):not(.pane-markdown)::after {
   content: "";
   position: absolute;
   inset: 0;
