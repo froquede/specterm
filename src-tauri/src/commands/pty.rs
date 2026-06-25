@@ -39,8 +39,15 @@ pub struct SpawnOptions {
 
 #[cfg(windows)]
 fn resolve_shell() -> String {
+    // Honor $SHELL only if it points at something Windows can actually launch.
+    // When the app is started from Git Bash/MSYS, SHELL is a POSIX path like
+    // `/usr/bin/bash` that CreateProcess can't run — using it would re-create
+    // the original "terminal opens but won't type" bug, so fall through to
+    // PowerShell instead.
     if let Ok(shell) = std::env::var("SHELL") {
-        return shell;
+        if std::path::Path::new(&shell).exists() {
+            return shell;
+        }
     }
     // Prefer PowerShell Core (pwsh) if installed, else built-in Windows PowerShell
     if let Ok(pf) = std::env::var("ProgramFiles") {
