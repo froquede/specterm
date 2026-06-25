@@ -1,4 +1,4 @@
-import { Show, onMount, createEffect } from "solid-js";
+import { Show, onMount, createEffect, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBinding } from "./stores/keybindings";
 import { cmd, isMac } from "./lib/platform";
@@ -42,7 +42,10 @@ export default function App() {
     // Track the active pane id so the effect re-runs when focus moves.
     void tab.activePaneId;
     // Wait a frame so a just-remounted terminal is in the DOM before focusing.
-    requestAnimationFrame(focusActiveTerminal);
+    // Cancel a still-pending frame if the active pane changes again first, so
+    // rapid tab/pane switches don't queue up stale focus calls.
+    const raf = requestAnimationFrame(focusActiveTerminal);
+    onCleanup(() => cancelAnimationFrame(raf));
   });
 
   function handleOpenMarkdown(path: string, mode: "split" | "tab") {

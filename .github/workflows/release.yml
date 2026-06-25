@@ -52,7 +52,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          npm install --global node-gyp@latest
+          npm install --global node-gyp@11.2.0
           npm config set node_gyp "$(npm root -g)/node-gyp/bin/node-gyp.js"
           npm config set msvs_version 2022
 
