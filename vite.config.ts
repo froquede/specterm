@@ -4,6 +4,7 @@ import solidPlugin from "vite-plugin-solid";
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig(async () => ({
+  base: "./",
   plugins: [solidPlugin()],
   clearScreen: false,
   server: {

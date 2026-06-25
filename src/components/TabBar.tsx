@@ -59,6 +59,9 @@ export default function TabBar(props: TabBarProps) {
           )}
         </For>
       </div>
+      {/* Flexible draggable strip: fills the empty space so the window can be
+          moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
+      <div class="tab-drag-region" />
       <button
         class="tab-sidebar-toggle"
         onClick={props.onToggleSidebar}

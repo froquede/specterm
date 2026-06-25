@@ -1,7 +1,16 @@
 import { createSignal } from "solid-js";
 import { nanoid } from "nanoid";
 import type { AppState, Tab, PaneType, PaneId, SplitNode } from "../types";
-import { createLeaf, collectLeaves, firstLeafId } from "../lib/split-tree";
+import {
+  createLeaf,
+  collectLeaves,
+  firstLeafId,
+  moveLeaf,
+  findParentSplit,
+  setSplitDirection,
+  toggleSplitDirection,
+  type DropEdge,
+} from "../lib/split-tree";
 import { destroyTerminal } from "../lib/terminal-registry";
 
 function createTerminalTab(): Tab {
@@ -250,6 +259,56 @@ export function useTabStore() {
       }));
     },
 
+    movePane(sourceId: PaneId, targetId: PaneId, edge: DropEdge) {
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const newRoot = moveLeaf(s.tabs[idx].root, sourceId, targetId, edge);
+      if (newRoot === s.tabs[idx].root) return;
+
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) =>
+          i === idx
+            ? { ...t, root: newRoot, activePaneId: sourceId }
+            : t
+        ),
+      }));
+    },
+
+    // Force the orientation of the split that directly contains `paneId`.
+    setSplitDirectionForPane(paneId: PaneId, direction: "h" | "v") {
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const parent = findParentSplit(s.tabs[idx].root, paneId);
+      if (!parent || parent.direction === direction) return;
+
+      const newRoot = setSplitDirection(s.tabs[idx].root, parent.id, direction);
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) =>
+          i === idx ? { ...t, root: newRoot } : t
+        ),
+      }));
+    },
+
+    toggleSplitDirection(splitId: string) {
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const newRoot = toggleSplitDirection(s.tabs[idx].root, splitId);
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) =>
+          i === idx ? { ...t, root: newRoot } : t
+        ),
+      }));
+    },
+
     updateTabTitle(tabId: string, title: string) {
       if (titleDebounce) clearTimeout(titleDebounce);
       titleDebounce = window.setTimeout(() => {
@@ -265,6 +324,10 @@ export function useTabStore() {
 
     toggleSidebar() {
       update((s) => ({ ...s, sidebarOpen: !s.sidebarOpen }));
+    },
+
+    openSidebar() {
+      update((s) => (s.sidebarOpen ? s : { ...s, sidebarOpen: true }));
     },
   };
 }

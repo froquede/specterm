@@ -1,0 +1,51 @@
+name: Release
+
+# Publishes installable builds for the version being released:
+#   • Windows  → NSIS installer (.exe)
+#   • macOS    → .dmg + .zip (Apple-silicon, unsigned)
+#
+# Triggered by pushing a semantic-version tag (vMAJOR.MINOR.FIX, e.g. v0.2.0).
+# The tag drives the GitHub Release and electron-builder uploads each platform's
+# artifacts onto it. `workflow_dispatch` allows a manual re-run for a tag.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            build_args: "--win nsis"
+          - os: macos-latest
+            build_args: "--mac dmg zip"
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build renderer (Vite)
+        run: npm run build
+
+      - name: Build & publish Electron installer
+        run: npx electron-builder ${{ matrix.build_args }} --publish always
+        env:
+          # Lets electron-builder create/attach assets to the tag's Release.
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # No Apple Developer cert in CI — skip signing so the mac build runs.
+          CSC_IDENTITY_AUTO_DISCOVERY: false

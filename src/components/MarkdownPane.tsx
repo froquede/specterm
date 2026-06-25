@@ -1,6 +1,7 @@
 import { createSignal, createEffect, onMount, onCleanup } from "solid-js";
 import { getBackend } from "../backends";
 import { renderMarkdown, renderMermaidBlocks } from "../lib/markdown";
+import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
 
 interface MarkdownPaneProps {
   filePath: string;
@@ -214,12 +215,12 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     // Resolve relative path against current file's directory
     const dir = props.filePath.substring(0, props.filePath.lastIndexOf("/"));
     const resolved = href.startsWith("/") ? href : dir + "/" + href;
-    const mode = e.ctrlKey ? "tab" : "split";
+    const mode = isAccelClick(e) ? "tab" : "split";
     props.onOpenMarkdown?.(resolved, mode);
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+    if (matchesCmd(e) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       e.stopPropagation();
       if (searchOpen()) {
@@ -247,7 +248,7 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
           <button
             class="markdown-toolbar-btn"
             onClick={() => (searchOpen() ? closeSearch() : openSearch())}
-            title="Search (Ctrl+Shift+F)"
+            title={`Search (${shortcutLabel("F")})`}
           >
             Search
           </button>

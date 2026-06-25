@@ -46,13 +46,13 @@ export async function renderMermaidBlocks(
       theme: "dark",
       themeVariables: {
         darkMode: true,
-        background: "#1a1b26",
-        primaryColor: "#7aa2f7",
-        primaryTextColor: "#c0caf5",
-        primaryBorderColor: "#414868",
-        lineColor: "#565f89",
-        secondaryColor: "#bb9af7",
-        tertiaryColor: "#292e42",
+        background: "#1e1e2e",
+        primaryColor: "#89b4fa",
+        primaryTextColor: "#cdd6f4",
+        primaryBorderColor: "#45475a",
+        lineColor: "#6c7086",
+        secondaryColor: "#cba6f7",
+        tertiaryColor: "#313244",
       },
     });
     mermaidLoaded = true;
