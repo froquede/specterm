@@ -22,6 +22,17 @@ export default function App() {
   function focusActiveTerminal() {
     const tab = store.activeTab;
     if (!tab) return;
+    // Don't steal focus from a real text field (e.g. the sidebar search opened
+    // by ⌘B); only xterm's hidden textarea should yield to the terminal.
+    const ae = document.activeElement;
+    if (
+      ae instanceof HTMLElement &&
+      (ae.tagName === "INPUT" ||
+        (ae.tagName === "TEXTAREA" &&
+          !ae.classList.contains("xterm-helper-textarea")))
+    ) {
+      return;
+    }
     getTerminalInstance(tab.activePaneId)?.term.focus();
   }
 
