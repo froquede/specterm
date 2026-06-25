@@ -36,6 +36,26 @@ jobs:
           node-version: 22
           cache: npm
 
+      # electron-builder rebuilds node-pty for Electron's ABI via node-gyp.
+      # Runners ship Python 3.12, which dropped the `distutils` module node-gyp
+      # still imports — pin 3.11 so the native rebuild works (fixes the macOS
+      # "No module named 'distutils'" failure).
+      - name: Install Python 3.11 for node-gyp
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # On Windows, point node-gyp at the runner's Visual Studio 2022 so it
+      # finds the MSVC toolchain (fixes "Could not find any Visual Studio
+      # installation to use").
+      - name: Configure MSVC for node-gyp (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          npm install --global node-gyp@latest
+          npm config set node_gyp "$(npm root -g)/node-gyp/bin/node-gyp.js"
+          npm config set msvs_version 2022
+
       - name: Install dependencies
         run: npm ci
 
@@ -49,3 +69,4 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No Apple Developer cert in CI — skip signing so the mac build runs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+          GYP_MSVS_VERSION: "2022"
