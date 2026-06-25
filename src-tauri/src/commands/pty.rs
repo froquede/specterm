@@ -37,6 +37,41 @@ pub struct SpawnOptions {
     cwd: Option<String>,
 }
 
+#[cfg(windows)]
+fn resolve_shell() -> String {
+    // Honor $SHELL only if it points at something Windows can actually launch.
+    // When the app is started from Git Bash/MSYS, SHELL is a POSIX path like
+    // `/usr/bin/bash` that CreateProcess can't run — using it would re-create
+    // the original "terminal opens but won't type" bug, so fall through to
+    // PowerShell instead.
+    if let Ok(shell) = std::env::var("SHELL") {
+        if std::path::Path::new(&shell).exists() {
+            return shell;
+        }
+    }
+    // Prefer PowerShell Core (pwsh) if installed, else built-in Windows PowerShell
+    if let Ok(pf) = std::env::var("ProgramFiles") {
+        let pwsh = std::path::Path::new(&pf).join("PowerShell\\7\\pwsh.exe");
+        if pwsh.exists() {
+            return pwsh.to_string_lossy().into_owned();
+        }
+    }
+    "powershell.exe".to_string()
+}
+
+#[cfg(not(windows))]
+fn resolve_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
+}
+
+/// Resolve the user's home directory. Windows exposes it as USERPROFILE,
+/// Unix as HOME.
+fn home_dir() -> Option<String> {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .ok()
+}
+
 #[tauri::command]
 pub fn spawn_pty(
     app: AppHandle,
@@ -56,14 +91,14 @@ pub fn spawn_pty(
         .openpty(size)
         .map_err(|e| format!("Failed to open PTY: {}", e))?;
 
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string());
+    let shell = resolve_shell();
     let mut cmd = CommandBuilder::new(&shell);
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
 
     if let Some(cwd) = &options.cwd {
         cmd.cwd(cwd);
-    } else if let Ok(home) = std::env::var("HOME") {
+    } else if let Some(home) = home_dir() {
         cmd.cwd(home);
     }
 

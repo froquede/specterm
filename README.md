@@ -77,6 +77,9 @@ npm install
 npm run tauri dev
 ```
 
+On Windows, see [docs/windows-setup.md](docs/windows-setup.md) for prerequisites
+and troubleshooting.
+
 ### Docker build (Tauri AppImage)
 
 ```bash
