@@ -9,7 +9,6 @@ import {
   resetFontSize,
 } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
-import { collectLeaves } from "./lib/split-tree";
 import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
@@ -176,19 +175,6 @@ export default function App() {
     registerBinding("=", () => increaseFontSize(), cmd({ shift: true, code: "Equal" }));
     registerBinding("-", () => decreaseFontSize(), cmd({ code: "Minus" }));
     registerBinding("0", () => resetFontSize(), cmd({ code: "Digit0" }));
-
-    // Tab / Shift+Tab cycle panes within the active tab (forward / backward,
-    // wrapping). collectLeaves yields panes left-to-right.
-    const cyclePane = (dir: 1 | -1) => {
-      const tab = store.activeTab;
-      if (!tab) return;
-      const ids = collectLeaves(tab.root).map((l) => l.id);
-      if (ids.length < 2) return;
-      const i = ids.indexOf(tab.activePaneId);
-      store.setActivePaneId(ids[(i + dir + ids.length) % ids.length]);
-    };
-    registerBinding("", () => cyclePane(1), { code: "Tab" });
-    registerBinding("", () => cyclePane(-1), { shift: true, code: "Tab" });
 
     initKeybindings();
 
