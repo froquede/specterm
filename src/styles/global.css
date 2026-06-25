@@ -192,6 +192,10 @@ body,
   background: #292e42;
   transition: background 0.15s;
   z-index: 10;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .split-handle:hover {
@@ -206,6 +210,40 @@ body,
 .split-handle-v {
   height: 4px;
   cursor: row-resize;
+}
+
+/* Flip-direction button, floating centered on the split handle (which is only
+   4px thick) and revealed on hover. */
+.split-flip {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 4px;
+  background: #292e42;
+  color: #c0caf5;
+  font-size: 12px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  z-index: 15;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.split-handle:hover .split-flip {
+  opacity: 1;
+}
+
+.split-flip:hover {
+  background: #7aa2f7;
+  color: #1a1b26;
+}
+
+.split-handle-v .split-flip {
+  transform: rotate(90deg);
 }
 
 /* Pane */
@@ -249,6 +287,67 @@ body,
   border: 1px solid #7aa2f7;
   pointer-events: none;
   z-index: 30;
+}
+
+.pane-grip {
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  z-index: 20;
+  width: 22px;
+  height: 22px;
+  border: none;
+  background: rgba(22, 22, 30, 0.85);
+  color: #565f89;
+  font-size: 14px;
+  line-height: 1;
+  cursor: grab;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  touch-action: none;
+}
+
+.pane:hover .pane-grip {
+  opacity: 1;
+}
+
+.pane-grip:hover {
+  background: #292e42;
+  color: #c0caf5;
+}
+
+.pane-grip:active {
+  cursor: grabbing;
+}
+
+/* Drop-zone indicator shown over the hovered target pane during a drag. */
+.drop-indicator {
+  position: absolute;
+  background: rgba(122, 162, 247, 0.28);
+  border: 1px solid #7aa2f7;
+  pointer-events: none;
+  z-index: 40;
+  transition: inset 0.08s ease;
+}
+
+.drop-indicator-center {
+  inset: 0;
+}
+.drop-indicator-left {
+  inset: 0 50% 0 0;
+}
+.drop-indicator-right {
+  inset: 0 0 0 50%;
+}
+.drop-indicator-top {
+  inset: 0 0 50% 0;
+}
+.drop-indicator-bottom {
+  inset: 50% 0 0 0;
 }
 
 .pane-close-btn {

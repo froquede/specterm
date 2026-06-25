@@ -1,7 +1,7 @@
 import { Show, onMount } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBinding } from "./stores/keybindings";
-import { cmd } from "./lib/platform";
+import { cmd, isMac } from "./lib/platform";
 import {
   getTerminalInstance,
   increaseFontSize,
@@ -65,6 +65,23 @@ export default function App() {
       const tab = store.activeTab;
       if (tab) store.closePane(tab.activePaneId);
     }, cmd());
+
+    // Split orientation — ⌘⇧← / → make the active pane's split horizontal
+    // (side-by-side), ⌘⇧↑ / ↓ make it vertical (stacked). The user asked for
+    // Ctrl+Shift+Arrow on Win/Linux and ⌘⇧Arrow on macOS, so bind those
+    // directly rather than through cmd() (whose shift variant maps to Alt).
+    const arrowMods = (code: string) =>
+      isMac
+        ? { meta: true, shift: true, code }
+        : { ctrl: true, shift: true, code };
+    const setDir = (dir: "h" | "v") => () => {
+      const tab = store.activeTab;
+      if (tab) store.setSplitDirectionForPane(tab.activePaneId, dir);
+    };
+    registerBinding("", setDir("h"), arrowMods("ArrowLeft"));
+    registerBinding("", setDir("h"), arrowMods("ArrowRight"));
+    registerBinding("", setDir("v"), arrowMods("ArrowUp"));
+    registerBinding("", setDir("v"), arrowMods("ArrowDown"));
 
     // Clipboard
     registerBinding("c", () => {
@@ -143,6 +160,12 @@ export default function App() {
                 onFocusPane={(id) => store.setActivePaneId(id)}
                 onResizeSplit={(splitId, ratio) =>
                   store.resizeSplit(splitId, ratio)
+                }
+                onToggleDirection={(splitId) =>
+                  store.toggleSplitDirection(splitId)
+                }
+                onDropPane={(sourceId, targetId, edge) =>
+                  store.movePane(sourceId, targetId, edge)
                 }
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
