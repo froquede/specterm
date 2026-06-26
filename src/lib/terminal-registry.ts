@@ -238,7 +238,15 @@ export async function attachTerminal(
   term.open(container);
 
   try {
-    term.loadAddon(new WebglAddon());
+    const webglAddon = new WebglAddon();
+    // Chromium caps the number of simultaneous WebGL contexts (~16). With many
+    // open panes/tabs the oldest contexts get force-killed, which previously
+    // left those terminals as a blank white canvas. Dispose the addon on
+    // context loss so xterm falls back to the DOM renderer and keeps drawing.
+    webglAddon.onContextLoss(() => {
+      webglAddon.dispose();
+    });
+    term.loadAddon(webglAddon);
   } catch {
     // WebGL not available
   }

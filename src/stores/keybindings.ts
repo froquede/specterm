@@ -7,6 +7,7 @@ interface Keybinding {
   shift?: boolean;
   meta?: boolean;
   alt?: boolean;
+  allowInInput?: boolean;
   handler: KeyHandler;
 }
 
@@ -15,7 +16,14 @@ const directBindings: Keybinding[] = [];
 export function registerBinding(
   key: string,
   handler: KeyHandler,
-  opts?: { ctrl?: boolean; shift?: boolean; meta?: boolean; alt?: boolean; code?: string }
+  opts?: {
+    ctrl?: boolean;
+    shift?: boolean;
+    meta?: boolean;
+    alt?: boolean;
+    code?: string;
+    allowInInput?: boolean;
+  }
 ) {
   directBindings.push({
     key: opts?.code ? undefined : key.toLowerCase(),
@@ -24,6 +32,7 @@ export function registerBinding(
     shift: opts?.shift,
     meta: opts?.meta,
     alt: opts?.alt,
+    allowInInput: opts?.allowInInput,
     handler,
   });
 }
@@ -44,9 +53,14 @@ export function initKeybindings() {
   window.addEventListener(
     "keydown",
     (e: KeyboardEvent) => {
-      if (isEditableTarget(e.target)) return;
+      const inEditable = isEditableTarget(e.target);
 
       for (const binding of directBindings) {
+        // In a real text field we let native editing win, EXCEPT for bindings
+        // explicitly flagged to work everywhere (e.g. ⌘B to close the sidebar
+        // and jump back to the terminal).
+        if (inEditable && !binding.allowInInput) continue;
+
         const ctrlMatch = binding.ctrl ? e.ctrlKey : !e.ctrlKey;
         const shiftMatch = binding.shift ? e.shiftKey : !e.shiftKey;
         const metaMatch = binding.meta ? e.metaKey : !e.metaKey;

@@ -23,6 +23,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 | `⌘⇧]` / `⌘⇧[` | Next/previous tab |
 | `⌘⇧D` | Split horizontally (stacked) |
 | `⌘D` | Split vertically (side by side) |
+| `⌘⌥→` / `⌘⌥←` | Focus next/previous grid (pane) |
 | `⌘C` | Copy selection |
 | `⌘V` | Paste |
 | `⌘B` | Toggle sidebar |

@@ -12,6 +12,8 @@
     "build:electron": "npm run build && electron-builder --linux AppImage deb --publish never",
     "build:electron:win": "npm run build && electron-builder --win nsis --publish never",
     "build:electron:mac": "npm run build && electron-builder --mac --publish never",
+    "install:mac": "npm run build:electron:mac && node scripts/install-mac.cjs",
+    "install:mac:only": "node scripts/install-mac.cjs",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -36,6 +38,7 @@
     "directories": {
       "output": "build-output"
     },
+    "afterSign": "scripts/adhoc-sign.cjs",
     "asarUnpack": [
       "node_modules/node-pty/**/*"
     ],
@@ -48,6 +51,14 @@
     "linux": {
       "target": ["AppImage", "deb"],
       "category": "TerminalEmulator"
+    },
+    "mac": {
+      "target": [
+        { "target": "dmg", "arch": "arm64" },
+        { "target": "zip", "arch": "arm64" }
+      ],
+      "category": "public.app-category.developer-tools",
+      "identity": null
     },
     "win": {
       "target": ["nsis"]

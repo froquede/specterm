@@ -26,6 +26,18 @@ export default function App() {
     }
   }
 
+  // Move keyboard focus back into the active tab's terminal (or, if that pane
+  // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
+  function focusActivePane() {
+    const paneId = store.activeTab?.activePaneId;
+    const term = paneId ? getTerminalInstance(paneId) : undefined;
+    if (term) {
+      term.term.focus();
+    } else if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }
+
   onMount(() => {
     // Shortcuts are authored macOS / Ghostty-style (⌘ = primary command key).
     // cmd() translates them per-OS: ⌘X -> Ctrl+Shift+X and ⌘⇧X -> Ctrl+Alt+X
@@ -66,6 +78,17 @@ export default function App() {
       if (tab) store.closePane(tab.activePaneId);
     }, cmd());
 
+    // Pane focus — ⌘⌥→ next grid, ⌘⌥← previous grid, in layout order.
+    // After moving the active pane, pull keyboard focus into it.
+    registerBinding("ArrowRight", () => {
+      store.focusRelativePane(1);
+      focusActivePane();
+    }, { ...cmd({ code: "ArrowRight" }), alt: true });
+    registerBinding("ArrowLeft", () => {
+      store.focusRelativePane(-1);
+      focusActivePane();
+    }, { ...cmd({ code: "ArrowLeft" }), alt: true });
+
     // Clipboard
     registerBinding("c", () => {
       const tab = store.activeTab;
@@ -86,7 +109,17 @@ export default function App() {
     }, cmd());
 
     // Sidebar
-    registerBinding("b", () => store.toggleSidebar(), cmd());
+    // ⌘B toggles the sidebar. When it closes (including when the folder filter
+    // currently has focus), pull focus back to the active terminal pane so you
+    // land straight back on the grid you were working in.
+    registerBinding(
+      "b",
+      () => {
+        store.toggleSidebar();
+        if (!store.state.sidebarOpen) focusActivePane();
+      },
+      { ...cmd(), allowInInput: true }
+    );
     // ⌘⇧B — open the sidebar (if closed) and focus its folder filter field.
     registerBinding("b", () => {
       store.openSidebar();
@@ -132,6 +165,7 @@ export default function App() {
           open={store.state.sidebarOpen}
           width={store.state.sidebarWidth}
           onOpenFile={handleOpenMarkdown}
+          onDismiss={focusActivePane}
         />
         <div class="app-content">
           <Show when={store.activeTab}>

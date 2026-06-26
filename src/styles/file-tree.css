@@ -59,6 +59,32 @@
   outline: none;
 }
 
+.file-tree-search-field {
+  position: relative;
+}
+
+/* Sugestão inline (ghost text) alinhada por cima do input */
+.file-tree-search-ghost {
+  position: absolute;
+  inset: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-family: inherit;
+  line-height: normal;
+  white-space: pre;
+  overflow: hidden;
+  pointer-events: none;
+  border: 1px solid transparent;
+}
+
+.file-tree-search-ghost .ghost-typed {
+  color: transparent;
+}
+
+.file-tree-search-ghost .ghost-suffix {
+  color: #414868;
+}
+
 .file-tree-search input::placeholder {
   color: #414868;
 }
@@ -83,6 +109,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
   user-select: none;
+}
+
+/* Item ativo via teclado (Tab / setas) */
+.file-tree-entry.is-selected {
+  background: #292e42;
+}
+
+.file-tree-dir.is-selected {
+  color: #89b4fa;
+}
+
+.file-tree-md.is-selected {
+  color: #a6e3a1;
 }
 
 .file-tree-icon {
