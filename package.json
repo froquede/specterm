@@ -38,6 +38,9 @@
     "node-pty": "^1.0.0",
     "solid-js": "^1.9.0"
   },
+  "overrides": {
+    "node-gyp": "^11.2.0"
+  },
   "build": {
     "appId": "com.specterm.terminal",
     "productName": "Specterm",

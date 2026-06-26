@@ -48,18 +48,11 @@ jobs:
         with:
           python-version: "3.11"
 
-      # node-pty's transitive node-gyp is too old to detect Visual Studio 2022
-      # (it only probes for VS 2013/2015), so the native rebuild fails on
-      # windows-latest with "Could not find any Visual Studio installation".
-      # Install a current node-gyp and point @electron/rebuild at it via
-      # npm_config_node_gyp; GYP_MSVS_VERSION (build step env) pins the toolset.
-      - name: Provide a VS2022-aware node-gyp (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          npm install --global node-gyp@11.2.0
-          echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
-
+      # node-pty's transitive node-gyp was too old to detect Visual Studio 2022
+      # (it only probed VS 2013/2015), failing the Windows rebuild with "Could
+      # not find any Visual Studio installation". A `node-gyp` override in
+      # package.json pins every copy to v11, which detects VS2022;
+      # GYP_MSVS_VERSION (build step env) pins the toolset.
       - name: Install dependencies
         run: npm ci
 
