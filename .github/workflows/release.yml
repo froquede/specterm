@@ -57,8 +57,13 @@ jobs:
           apt-get update
           apt-get install -y --no-install-recommends \
             git curl ca-certificates xz-utils file \
-            build-essential python3 \
+            build-essential python3 gcc-10 g++-10 \
             fakeroot dpkg libfuse2
+          # Ubuntu 20.04's default g++ is 9 (no -std=gnu++20, which node-pty
+          # needs). Use g++-10 for the native compile; glibc stays 2.31, so the
+          # binary still runs on Ubuntu 20.04+.
+          echo "CC=gcc-10" >> "$GITHUB_ENV"
+          echo "CXX=g++-10" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
 
