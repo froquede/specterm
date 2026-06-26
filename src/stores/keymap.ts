@@ -3,10 +3,11 @@
 // Each row is authored macOS-first: cmd() expands a ⌘ shortcut into the host
 // OS's chord (⌘X -> Ctrl+Shift+X, ⌘⇧X -> Ctrl+Alt+X on Windows/Linux), keeping
 // bare Ctrl+<key> free for the terminal. That mac-vs-rest split covers almost
-// everything; when a single platform needs to diverge (e.g. Windows ≠ Linux),
-// add a `byOS` entry — see the example on `sidebar.toggle` below.
+// everything. Where a platform must diverge, a row adds a `byOS` override —
+// here, Linux/Windows keep the original Kitty "Ctrl+Shift+<key>" chords (see
+// `kitty()` below) while macOS uses the ⌘ scheme.
 import { cmd } from "../lib/platform";
-import type { BindingSpec } from "./keybindings";
+import type { BindingSpec, Chord } from "./keybindings";
 import type { useTabStore } from "./tabs";
 import {
   getTerminalInstance,
@@ -25,6 +26,15 @@ export interface KeymapContext {
 const newTerminal = () =>
   ({ kind: "terminal", ptyId: null, cwd: "" }) as const;
 
+// Linux/Windows keep the original Kitty-style "Ctrl+Shift+<key>" defaults; only
+// macOS adopted the ⌘ scheme. `kitty(key)` pins that original chord on non-mac
+// so those platforms behave exactly as they did before the macOS keymap landed.
+// (macOS still uses the row's cmd()-authored default.)
+const kitty = (key: string): { windows: Chord; linux: Chord } => {
+  const chord: Chord = { key, ctrl: true, shift: true };
+  return { windows: chord, linux: chord };
+};
+
 export function createKeymap({ store, focusActivePane }: KeymapContext): BindingSpec[] {
   return [
     // Tabs
@@ -39,6 +49,7 @@ export function createKeymap({ store, focusActivePane }: KeymapContext): Binding
       id: "tab.close",
       key: "w",
       ...cmd({ shift: true }),
+      byOS: kitty("q"),
       label: "Close tab",
       run: () => {
         const tab = store.activeTab;
@@ -49,6 +60,7 @@ export function createKeymap({ store, focusActivePane }: KeymapContext): Binding
       id: "tab.next",
       key: "]",
       ...cmd({ shift: true, code: "BracketRight" }),
+      byOS: kitty("ArrowRight"),
       label: "Next tab",
       run: () => {
         const tabs = store.state.tabs;
@@ -60,6 +72,7 @@ export function createKeymap({ store, focusActivePane }: KeymapContext): Binding
       id: "tab.prev",
       key: "[",
       ...cmd({ shift: true, code: "BracketLeft" }),
+      byOS: kitty("ArrowLeft"),
       label: "Previous tab",
       run: () => {
         const tabs = store.state.tabs;
@@ -75,6 +88,7 @@ export function createKeymap({ store, focusActivePane }: KeymapContext): Binding
       id: "split.stacked",
       key: "d",
       ...cmd(),
+      byOS: kitty("s"),
       label: "Split — new pane stacked",
       run: () => store.splitActivePane("v", newTerminal()),
     },
@@ -82,6 +96,7 @@ export function createKeymap({ store, focusActivePane }: KeymapContext): Binding
       id: "split.sideBySide",
       key: "d",
       ...cmd({ shift: true }),
+      byOS: kitty("enter"),
       label: "Split — new pane side by side",
       run: () => store.splitActivePane("h", newTerminal()),
     },
@@ -155,10 +170,7 @@ export function createKeymap({ store, focusActivePane }: KeymapContext): Binding
     // Sidebar / search — single ⌘B: closed → open and focus the filter; open →
     // close it and return focus to the active terminal. Fires from inside the
     // filter input too (allowInInput), so the same key dismisses the search.
-    //
-    // `byOS` example (currently a no-op — the cmd() default already suits both
-    // Windows and Linux): to give one platform its own chord, do e.g.
-    //   byOS: { windows: { key: "b", ctrl: true, alt: true } },
+    // (Ctrl+Shift+B on Linux/Windows via cmd() — already the original chord.)
     {
       id: "sidebar.toggle",
       key: "b",
