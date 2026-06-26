@@ -11,25 +11,29 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Dual backend** -- runs on Tauri v2 (Rust) or Electron (Node.js + node-pty)
 - **WebGL rendering** -- GPU-accelerated terminal via xterm.js WebGL addon
 - **OSC protocol** -- captures title sequences and working directory updates
-- **Kitty-style keybindings** -- all shortcuts use `Ctrl+Shift+<key>`
+- **Per-OS keybindings** -- macOS uses `⌘`; Linux/Windows keep the Kitty-style `Ctrl+Shift+<key>` scheme
 
 ## Keybindings
 
-| Shortcut | Action |
-|---|---|
-| `⌘T` | New tab |
-| `⌘W` | Close pane |
-| `⌘⇧W` | Close tab |
-| `⌘⇧]` / `⌘⇧[` | Next/previous tab |
-| `⌘D` | Split — new pane stacked (vertical) |
-| `⌘⇧D` | Split — new pane side by side (horizontal) |
-| `⌘⌥→` / `⌘⌥←` | Focus next/previous grid (pane) |
-| `⌘C` | Copy selection |
-| `⌘V` | Paste |
-| `⌘B` | Open sidebar + focus search, or close it if open |
-| `⌘F` | Find in markdown preview |
-| `⌘=` / `⌘-` | Increase / decrease font size |
-| `⌘0` | Reset font size |
+macOS uses the `⌘` command key. Linux and Windows use the Kitty-style
+`Ctrl+Shift+<key>` scheme (there is no `⌘`, and this keeps bare `Ctrl+<key>`
+free for terminal control codes).
+
+| Action | macOS | Linux / Windows |
+|---|---|---|
+| New tab | `⌘T` | `Ctrl+Shift+T` |
+| Close tab | `⌘⇧W` | `Ctrl+Shift+Q` |
+| Close pane | `⌘W` | `Ctrl+Shift+W` |
+| Next / previous tab | `⌘⇧]` / `⌘⇧[` | `Ctrl+Shift+→` / `Ctrl+Shift+←` |
+| Split — new pane stacked (below) | `⌘D` | `Ctrl+Shift+S` |
+| Split — new pane side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
+| Focus next / previous pane | `⌘⌥→` / `⌘⌥←` | `Ctrl+Shift+Alt+→` / `Ctrl+Shift+Alt+←` |
+| Copy selection | `⌘C` | `Ctrl+Shift+C` |
+| Paste | `⌘V` | `Ctrl+Shift+V` |
+| Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
+| Find in markdown preview | `⌘F` | `Ctrl+Shift+F` |
+| Increase / decrease font size | `⌘=` / `⌘-` | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
+| Reset font size | `⌘0` | `Ctrl+Shift+0` |
 
 ## Tech Stack
 
@@ -126,7 +130,8 @@ src/
     osc.ts                 # OSC sequence parser
   stores/
     tabs.ts                # Tab/pane state management
-    keybindings.ts         # Keyboard shortcut registry
+    keybindings.ts         # Keyboard shortcut registry + per-OS resolver
+    keymap.ts              # Declarative keymap (all shortcuts, macOS-first)
 electron/
   main.cjs                 # Electron main process + IPC handlers
   preload.cjs              # Context bridge
