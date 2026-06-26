@@ -10,13 +10,17 @@ Ao trazer as mudanças da `main`, **mantivemos os atalhos desta cópia** e
 (drag-and-drop de painéis, barras de título, suporte a Windows, correções de
 foco, CI de release) foi incorporado normalmente.
 
-## Atalhos que ficaram como ESTÃO aqui (e divergem do upstream)
+## Atalho de barra lateral — alinhado ao upstream
 
-| Atalho | Ação (nossa) | No upstream |
-|---|---|---|
-| `⌘B` | Alterna a barra lateral | Abre+foca busca, ou fecha (tecla única) |
-| `⌘⇧B` | Abre a barra e foca a busca | Removido (virou parte do `⌘B`) |
-| `⌘⌥→` / `⌘⌥←` | Foca o painel seguinte/anterior | — |
+Adotamos o `⌘B` **unificado** do upstream: uma única tecla abre a barra e foca
+a busca, ou fecha se já estiver aberta (ao fechar, devolve o foco ao terminal).
+Com isso, o antigo `⌘⇧B` desta cópia foi **removido** — virou parte do `⌘B`.
+
+## Atalho local que mantivemos (adição, não conflita)
+
+| Atalho | Ação |
+|---|---|
+| `⌘⌥→` / `⌘⌥←` | Foca o painel seguinte/anterior |
 
 ## Atalhos do upstream que NÃO trouxemos
 
@@ -31,6 +35,8 @@ foco, CI de release) foi incorporado normalmente.
 
 ## Por quê
 
-Os atalhos locais já estavam ajustados ao fluxo de uso desta cópia. Adotar os
-do upstream mudaria teclas conhecidas (ex.: o comportamento do `⌘B`), então
-optou-se por preservar o que já era familiar.
+A barra lateral (`⌘B`) foi alinhada ao upstream por ser um ganho claro: uma
+tecla só faz abrir-com-foco e fechar. Já os atalhos de split por teclado
+(`⌘⇧S`, `⌘⇧↵`, `⌘⇧setas`) não foram adotados porque as mesmas ações já são
+acessíveis pelo mouse/UI, e preferimos não acrescentar novas combinações de
+teclado neste momento.

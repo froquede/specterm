@@ -140,20 +140,16 @@ export default function App() {
       }
     }, cmd());
 
-    // Sidebar
-    // ⌘B toggles the sidebar. When it closes (including when the folder filter
-    // currently has focus), pull focus back to the active terminal pane so you
-    // land straight back on the grid you were working in.
-    registerBinding(
-      "b",
-      () => {
-        store.toggleSidebar();
-        if (!store.state.sidebarOpen) focusActivePane();
-      },
-      { ...cmd(), allowInInput: true }
-    );
-    // ⌘⇧B — open the sidebar (if closed) and focus its folder filter field.
+    // Sidebar / search — single ⌘B: when the sidebar is closed, open it and
+    // focus the folder-filter field; when already open, close it and return
+    // focus to the active terminal pane. One key both opens-with-focus and
+    // dismisses the search.
     registerBinding("b", () => {
+      if (store.state.sidebarOpen) {
+        store.toggleSidebar();
+        focusActivePane();
+        return;
+      }
       store.openSidebar();
       // The input mounts when the sidebar opens, so retry briefly until it's
       // in the DOM, then focus and select any existing filter text.
@@ -170,7 +166,7 @@ export default function App() {
         }
       };
       focusFilter();
-    }, cmd({ shift: true }));
+    }, { ...cmd(), allowInInput: true });
 
     // Font zoom — ⌘= / ⌘+ to grow, ⌘- to shrink, ⌘0 to reset
     registerBinding("=", () => increaseFontSize(), cmd({ code: "Equal" }));

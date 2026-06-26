@@ -26,8 +26,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 | `⌘⌥→` / `⌘⌥←` | Focus next/previous grid (pane) |
 | `⌘C` | Copy selection |
 | `⌘V` | Paste |
-| `⌘B` | Toggle sidebar |
-| `⌘⇧B` | Open sidebar + focus search |
+| `⌘B` | Open sidebar + focus search, or close it if open |
 | `⌘F` | Find in markdown preview |
 | `⌘=` / `⌘-` | Increase / decrease font size |
 | `⌘0` | Reset font size |
