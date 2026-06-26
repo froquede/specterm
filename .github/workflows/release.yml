@@ -75,15 +75,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # node-pty pulls an ancient node-gyp (9.x) that only detects VS 2013/2015,
-      # so the Windows rebuild fails with "Could not find any Visual Studio
-      # installation". Drop a VS2022-aware node-gyp 10 into node_modules for the
-      # Windows runner only — @electron/rebuild resolves the hoisted copy, and 10
-      # is the version electron-builder 25's @electron/rebuild expects (node-gyp
-      # 11 deadlocks it). Other OSes build fine with the bundled node-gyp.
-      - name: Use VS2022-aware node-gyp (Windows)
+      # @electron/rebuild 3.6 pins node-gyp ^9, but node-gyp 9 can't detect
+      # Visual Studio 2022 on the windows-latest image, so the node-pty rebuild
+      # fails with "Could not find any Visual Studio installation". Force
+      # node-gyp 10 (which detects VS2022 and stays compatible with
+      # @electron/rebuild) via an override applied ONLY on the Windows runner —
+      # committing the override would also push it onto Linux/macOS, where a
+      # global node-gyp bump deadlocks @electron/rebuild's prepare step.
+      - name: Force VS2022-aware node-gyp for the rebuild (Windows)
         if: runner.os == 'Windows'
-        run: npm install --no-save node-gyp@10
+        shell: bash
+        run: |
+          npm pkg set 'overrides.node-gyp=^10.0.0'
+          npm install --no-audit --no-fund
 
       - name: Build renderer (Vite)
         run: npm run build
