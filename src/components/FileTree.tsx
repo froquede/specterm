@@ -2,6 +2,7 @@ import {
   createSignal,
   createResource,
   createEffect,
+  createMemo,
   For,
   Show,
   onMount,
@@ -77,12 +78,14 @@ export default function FileTree(props: FileTreeProps) {
     activateEntry(entry, isAccelClick(e) ? "tab" : "split");
   }
 
-  function filteredEntries(): DirEntry[] {
+  // Memoized: filter runs once per (entries, filter) change instead of on each
+  // of its call sites (For, ghost text, the selection effect, key handlers).
+  const filteredEntries = createMemo<DirEntry[]>(() => {
     const all = entries() || [];
     const q = filter().toLowerCase();
     if (!q) return all;
     return all.filter((e) => e.name.toLowerCase().includes(q));
-  }
+  });
 
   // Sugestão inline (ghost text): nome do item selecionado quando o filtro
   // é um prefixo dele — é a parte que o Tab completa.

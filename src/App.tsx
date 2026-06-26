@@ -97,7 +97,8 @@ export default function App() {
       }
     }, cmd({ shift: true, code: "BracketLeft" }));
 
-    // Splits — ⌘D side-by-side, ⌘⇧D stacked (matches Ghostty)
+    // Splits — ⌘D adds a stacked pane ("v" = column), ⌘⇧D a side-by-side one
+    // ("h" = row). (Note: inverted vs Ghostty, where ⌘D splits to the right.)
     registerBinding("d", () => {
       store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
     }, cmd());
