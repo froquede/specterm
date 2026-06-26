@@ -21,6 +21,12 @@ export interface TerminalInstance {
   unlistenExit: UnlistenFn | null;
   resizeObserver: ResizeObserver | null;
   disposed: boolean;
+  // Last OSC title reported by the shell (e.g. Claude Code's `/rename`). Stored
+  // on the instance so it survives pane remounts (split/drag) and so a fresh
+  // title-bar can read it immediately on attach. `onTitle` is the current
+  // pane's callback, re-wired on every attach.
+  title: string;
+  onTitle: ((title: string) => void) | null;
 }
 
 const instances = new Map<string, TerminalInstance>();
@@ -174,9 +180,19 @@ export async function createTerminalInstance(
     unlistenExit: null,
     resizeObserver: null,
     disposed: false,
+    title: "Terminal",
+    onTitle: opts?.onTitle ?? null,
   };
 
   instances.set(paneId, instance);
+
+  // Title is reported once here and cached on the instance, then forwarded to
+  // whichever pane is currently mounted. Wiring it on the instance (not in a
+  // pane closure) keeps `/rename` titles flowing after splits/drag remounts.
+  term.onTitleChange((title) => {
+    instance.title = title;
+    instance.onTitle?.(title);
+  });
 
   // Spawn PTY (deferred until attached to DOM)
   return instance;
@@ -197,6 +213,14 @@ export async function attachTerminal(
   }
 
   const { term, fitAddon } = instance;
+
+  // Re-point the title callback at the pane mounting now, and immediately push
+  // the cached title so a remounted (split/drag) title-bar shows the current
+  // `/rename` name without waiting for the next OSC.
+  if (opts?.onTitle) {
+    instance.onTitle = opts.onTitle;
+    opts.onTitle(instance.title);
+  }
 
   // If already attached to this container, just re-fit
   if (instance.container === container) {
@@ -288,10 +312,8 @@ export async function attachTerminal(
     }
   });
 
-  // Wire title
-  term.onTitleChange((title) => {
-    opts?.onTitle?.(title);
-  });
+  // Title is wired once in createTerminalInstance (cached on the instance and
+  // forwarded to the current pane), so nothing to wire here.
 
   // ResizeObserver
   let fitTimeout: number | null = null;

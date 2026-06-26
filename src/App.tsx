@@ -1,7 +1,7 @@
-import { Show, onMount } from "solid-js";
+import { Show, onMount, createEffect, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBinding } from "./stores/keybindings";
-import { cmd } from "./lib/platform";
+import { cmd, isMac } from "./lib/platform";
 import {
   getTerminalInstance,
   increaseFontSize,
@@ -15,6 +15,38 @@ import FileTree from "./components/FileTree";
 
 export default function App() {
   const store = useTabStore();
+
+  // Keep keyboard focus on the active pane's terminal. The active pane is the
+  // one drawn at full opacity (others are dimmed), so typing must always land
+  // there — even after splits, drag-reorders or tab switches remount panes.
+  function focusActiveTerminal() {
+    const tab = store.activeTab;
+    if (!tab) return;
+    // Don't steal focus from a real text field (e.g. the sidebar search opened
+    // by ⌘B); only xterm's hidden textarea should yield to the terminal.
+    const ae = document.activeElement;
+    if (
+      ae instanceof HTMLElement &&
+      (ae.tagName === "INPUT" ||
+        (ae.tagName === "TEXTAREA" &&
+          !ae.classList.contains("xterm-helper-textarea")))
+    ) {
+      return;
+    }
+    getTerminalInstance(tab.activePaneId)?.term.focus();
+  }
+
+  createEffect(() => {
+    const tab = store.activeTab;
+    if (!tab) return;
+    // Track the active pane id so the effect re-runs when focus moves.
+    void tab.activePaneId;
+    // Wait a frame so a just-remounted terminal is in the DOM before focusing.
+    // Cancel a still-pending frame if the active pane changes again first, so
+    // rapid tab/pane switches don't queue up stale focus calls.
+    const raf = requestAnimationFrame(focusActiveTerminal);
+    onCleanup(() => cancelAnimationFrame(raf));
+  });
 
   function handleOpenMarkdown(path: string, mode: "split" | "tab") {
     const mdPane = { kind: "markdown" as const, filePath: path };
@@ -147,6 +179,9 @@ export default function App() {
     registerBinding("0", () => resetFontSize(), cmd({ code: "Digit0" }));
 
     initKeybindings();
+
+    // When the OS window regains focus, return the cursor to the active pane.
+    window.addEventListener("focus", focusActiveTerminal);
   });
 
   return (
@@ -177,6 +212,12 @@ export default function App() {
                 onFocusPane={(id) => store.setActivePaneId(id)}
                 onResizeSplit={(splitId, ratio) =>
                   store.resizeSplit(splitId, ratio)
+                }
+                onToggleDirection={(splitId) =>
+                  store.toggleSplitDirection(splitId)
+                }
+                onDropPane={(sourceId, targetId, edge) =>
+                  store.movePane(sourceId, targetId, edge)
                 }
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}

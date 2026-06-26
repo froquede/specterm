@@ -4,7 +4,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 
 ## Features
 
-- **Split panes** -- horizontal and vertical splits with draggable resize handles
+- **Split panes** -- horizontal and vertical splits with draggable resize handles, drag-and-drop reordering via each pane's title-bar, and one-click/keyboard direction flipping
 - **Tabs** -- create, close, and cycle through terminal tabs
 - **Markdown preview** -- render `.md` files inline with Mermaid diagram support
 - **File tree sidebar** -- browse and open files from the working directory
@@ -27,6 +27,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 | `⌘C` | Copy selection |
 | `⌘V` | Paste |
 | `⌘B` | Toggle sidebar |
+| `⌘⇧B` | Open sidebar + focus search |
 | `⌘F` | Find in markdown preview |
 | `⌘=` / `⌘-` | Increase / decrease font size |
 | `⌘0` | Reset font size |
@@ -45,8 +46,26 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 
 ```bash
 npm install
+# Rebuild native modules (node-pty) against Electron's ABI — required after
+# `npm install` / `npm ci`, or the PTY fails to load and terminals won't open.
+npx electron-builder install-app-deps
 npm run dev:electron
 ```
+
+#### Windows: PowerShell shell fix
+
+`node-pty` needs a real shell to spawn. On Windows `process.env.SHELL` is
+unset, so the old `SHELL || "/bin/bash"` fallback tried to launch a binary that
+doesn't exist and the terminal died on open. The Electron main process
+(`electron/main.cjs`) now resolves the shell per platform:
+
+- **Windows:** `powershell.exe` (override with the `SPECTERM_SHELL` env var,
+  e.g. point it at `pwsh.exe` for PowerShell 7).
+- **macOS / Linux:** `$SHELL`, falling back to `/bin/bash`.
+
+The native `node-pty` addon is also kept out of the asar archive
+(`build.asarUnpack`) and must be rebuilt for Electron (see the
+`install-app-deps` step above) for the PTY to load in the packaged app.
 
 ### Tauri
 
@@ -57,11 +76,34 @@ npm install
 npm run tauri dev
 ```
 
+On Windows, see [docs/windows-setup.md](docs/windows-setup.md) for prerequisites
+and troubleshooting.
+
 ### Docker build (Tauri AppImage)
 
 ```bash
 docker build --output=. .
 ```
+
+## Releases
+
+Distributable installers are built in CI by `.github/workflows/release.yml`:
+
+- **Windows** → NSIS installer (`.exe`)
+- **macOS** → `.dmg` + `.zip` (Apple silicon, unsigned)
+
+Versioning is **semantic** (`MAJOR.MINOR.FIX`). To cut a release, bump
+`version` in `package.json`, then commit and push a matching tag — the tag push
+triggers the build and publishes a GitHub Release with both platforms' assets:
+
+```bash
+# after bumping "version" in package.json (e.g. 0.2.0)
+git commit -am "release: v0.2.0"
+git tag v0.2.0
+git push origin main --tags
+```
+
+`build.yml` runs the Tauri/Linux CI on every push/PR to `main` (no release).
 
 ## Project Structure
 

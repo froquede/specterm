@@ -1,6 +1,7 @@
 interface SplitHandleProps {
   direction: "h" | "v";
   onDrag: (delta: number, totalSize: number) => void;
+  onToggleDirection?: () => void;
 }
 
 export default function SplitHandle(props: SplitHandleProps) {
@@ -44,6 +45,18 @@ export default function SplitHandle(props: SplitHandleProps) {
       ref={handleRef}
       class={`split-handle split-handle-${props.direction}`}
       onPointerDown={onPointerDown}
-    />
+    >
+      <button
+        class="split-flip"
+        title="Toggle split direction"
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          props.onToggleDirection?.();
+        }}
+      >
+        ⇄
+      </button>
+    </div>
   );
 }

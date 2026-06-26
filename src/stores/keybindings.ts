@@ -22,6 +22,9 @@ export function registerBinding(
     meta?: boolean;
     alt?: boolean;
     code?: string;
+    // Fire even when focus is in a real text field. Use sparingly, for
+    // modifier shortcuts that must work from inside an input (e.g. the
+    // sidebar-search toggle, which itself focuses an input).
     allowInInput?: boolean;
   }
 ) {

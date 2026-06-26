@@ -1,5 +1,6 @@
-import { Show, For } from "solid-js";
+import { Show } from "solid-js";
 import type { SplitNode, PaneId } from "../types";
+import type { DropEdge } from "../lib/split-tree";
 import Pane from "./Pane";
 import SplitHandle from "./SplitHandle";
 
@@ -9,6 +10,8 @@ interface SplitContainerProps {
   tabId: string;
   onFocusPane: (id: PaneId) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
+  onToggleDirection?: (splitId: string) => void;
+  onDropPane?: (sourceId: PaneId, targetId: PaneId, edge: DropEdge) => void;
   onTitle?: (title: string) => void;
   onClosePane?: (id: PaneId) => void;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
@@ -29,6 +32,7 @@ export default function SplitContainer(props: SplitContainerProps) {
               onTitle={props.onTitle}
               onClose={() => props.onClosePane?.((leaf() as SplitNode & { type: "leaf" }).id)}
               onOpenMarkdown={props.onOpenMarkdown}
+              onDrop={props.onDropPane}
             />
           )}
         </Show>
@@ -59,6 +63,8 @@ export default function SplitContainer(props: SplitContainerProps) {
                 tabId={props.tabId}
                 onFocusPane={props.onFocusPane}
                 onResizeSplit={props.onResizeSplit}
+                onToggleDirection={props.onToggleDirection}
+                onDropPane={props.onDropPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenMarkdown={props.onOpenMarkdown}
@@ -69,6 +75,7 @@ export default function SplitContainer(props: SplitContainerProps) {
               onDrag={(pos, total) => {
                 props.onResizeSplit(split().id, pos / total);
               }}
+              onToggleDirection={() => props.onToggleDirection?.(split().id)}
             />
             <div
               style={{
@@ -83,6 +90,8 @@ export default function SplitContainer(props: SplitContainerProps) {
                 tabId={props.tabId}
                 onFocusPane={props.onFocusPane}
                 onResizeSplit={props.onResizeSplit}
+                onToggleDirection={props.onToggleDirection}
+                onDropPane={props.onDropPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenMarkdown={props.onOpenMarkdown}
