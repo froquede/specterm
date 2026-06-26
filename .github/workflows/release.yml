@@ -1,13 +1,19 @@
 name: Release
 
 # Publishes installable builds for the version being released:
-#   • Linux    → AppImage + .deb
-#   • Windows  → NSIS installer (.exe)
+#   • Linux    → AppImage + .deb   (built in an Ubuntu 20.04 container so the
+#                                   native node-pty links against glibc 2.31 and
+#                                   runs on Ubuntu 20.04+; the runner image's
+#                                   newer glibc would break older distros)
+#   • Windows  → NSIS installer (.exe)   (uses node-pty's shipped N-API prebuild)
 #   • macOS    → .dmg + .zip (Apple-silicon, unsigned)
 #
-# Triggered by pushing a semantic-version tag (vMAJOR.MINOR.FIX, e.g. v0.2.0).
-# The tag drives the GitHub Release and electron-builder uploads each platform's
-# artifacts onto it. `workflow_dispatch` allows a manual re-run for a tag.
+# node-pty is N-API (ABI-stable), so its prebuilt binaries run on Electron as-is.
+# Windows therefore skips the native rebuild entirely (npmRebuild=false), which
+# sidesteps node-gyp/Visual Studio detection. Linux has no prebuild, so it
+# compiles from source inside the container; macOS rebuilds against Electron.
+#
+# Triggered by pushing a semantic-version tag (vMAJOR.MINOR.FIX, e.g. v0.6.0).
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
@@ -29,14 +35,31 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
+            container: ubuntu:20.04
             build_args: "--linux AppImage deb"
           - os: windows-latest
-            build_args: "--win nsis"
+            build_args: "--win nsis --config.npmRebuild=false"
           - os: macos-latest
             build_args: "--mac dmg zip"
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    env:
+      # Let appimagetool run without FUSE (unavailable in the container).
+      APPIMAGE_EXTRACT_AND_RUN: "1"
 
     steps:
+      # The ubuntu:20.04 container is barebones — install the toolchain the
+      # later actions and the node-pty compile need. Building here pins the
+      # native binary to glibc 2.31, so it runs on Ubuntu 20.04 and newer.
+      - name: Install build toolchain (Linux container)
+        if: matrix.container
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            git curl ca-certificates xz-utils file \
+            build-essential python3 \
+            fakeroot dpkg libfuse2
+
       - uses: actions/checkout@v4
 
       - name: Install Node.js
@@ -45,19 +68,17 @@ jobs:
           node-version: 22
           cache: npm
 
-      # electron-builder rebuilds node-pty for Electron's ABI via node-gyp.
-      # Runners ship Python 3.12, which dropped the `distutils` module node-gyp
-      # still imports — pin 3.11 so the native rebuild works (fixes the macOS
-      # "No module named 'distutils'" failure).
-      - name: Install Python 3.11 for node-gyp
+      # macOS rebuilds node-pty via node-gyp; the runner's Python 3.12 dropped
+      # `distutils`, so pin 3.11. Linux uses the container's python3 (3.8, which
+      # still ships distutils); Windows uses the prebuild and never builds.
+      - name: Install Python 3.11 for node-gyp (macOS)
+        if: runner.os == 'macOS'
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # Cache the Electron binary + electron-builder's tooling downloads (FPM,
-      # AppImage runtime, NSIS, etc.) so they aren't re-fetched every release.
-      # Keyed on the lockfile (which pins the Electron version); paths that
-      # don't exist on a given OS are simply skipped by actions/cache.
+      # Cache the Electron binary + electron-builder tooling downloads so they
+      # aren't re-fetched every release. Paths absent on a given OS are skipped.
       - name: Cache Electron & electron-builder downloads
         uses: actions/cache@v4
         with:
@@ -75,20 +96,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # @electron/rebuild 3.6 pins node-gyp ^9, but node-gyp 9 can't detect
-      # Visual Studio 2022 on the windows-latest image, so the node-pty rebuild
-      # fails with "Could not find any Visual Studio installation". Force
-      # node-gyp 10 (which detects VS2022 and stays compatible with
-      # @electron/rebuild) via an override applied ONLY on the Windows runner —
-      # committing the override would also push it onto Linux/macOS, where a
-      # global node-gyp bump deadlocks @electron/rebuild's prepare step.
-      - name: Force VS2022-aware node-gyp for the rebuild (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          npm pkg set 'overrides.node-gyp=^10.0.0'
-          npm install --no-audit --no-fund
-
       - name: Build renderer (Vite)
         run: npm run build
 
@@ -99,7 +106,6 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No Apple Developer cert in CI — skip signing so the mac build runs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
-          GYP_MSVS_VERSION: "2022"
 
   # After every platform has uploaded its installers, rewrite the Release body
   # with a per-platform downloads table that links to each uploaded asset.
@@ -144,7 +150,8 @@ jobs:
             row "Linux (AppImage)" "*.AppImage"
             row "Linux (Debian/Ubuntu)" "*.deb"
             echo
-            echo "_Built by the release workflow from tag \`$TAG\`._"
+            echo "_Built by the release workflow from tag \`$TAG\`. Linux builds"
+            echo "target glibc 2.31 (Ubuntu 20.04+)._"
           } > body.md
 
           gh release edit "$TAG" --repo "$REPO" --notes-file body.md
