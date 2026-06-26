@@ -1,13 +1,8 @@
 import { Show, onMount, createEffect, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
-import { initKeybindings, registerBinding } from "./stores/keybindings";
-import { cmd, isMac } from "./lib/platform";
-import {
-  getTerminalInstance,
-  increaseFontSize,
-  decreaseFontSize,
-  resetFontSize,
-} from "./lib/terminal-registry";
+import { initKeybindings, registerBindings } from "./stores/keybindings";
+import { createKeymap } from "./stores/keymap";
+import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
@@ -84,109 +79,11 @@ export default function App() {
   }
 
   onMount(() => {
-    // Shortcuts are authored macOS / Ghostty-style (⌘ = primary command key).
-    // cmd() translates them per-OS: ⌘X -> Ctrl+Shift+X and ⌘⇧X -> Ctrl+Alt+X
-    // on Windows/Linux, keeping bare Ctrl+<key> free for the terminal.
-
-    // Tabs
-    registerBinding("t", () => store.createTab(), cmd());
-    registerBinding("w", () => {
-      // ⌘⇧W — close tab
-      const tab = store.activeTab;
-      if (tab) store.closeTab(tab.id);
-    }, cmd({ shift: true }));
-    registerBinding("]", () => {
-      const tabs = store.state.tabs;
-      const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
-      if (tabs.length > 1) {
-        store.setActiveTab(tabs[(idx + 1) % tabs.length].id);
-      }
-    }, cmd({ shift: true, code: "BracketRight" }));
-    registerBinding("[", () => {
-      const tabs = store.state.tabs;
-      const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
-      if (tabs.length > 1) {
-        store.setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
-      }
-    }, cmd({ shift: true, code: "BracketLeft" }));
-
-    // Splits — ⌘D adds a stacked pane ("v" = column), ⌘⇧D a side-by-side one
-    // ("h" = row). (Note: inverted vs Ghostty, where ⌘D splits to the right.)
-    registerBinding("d", () => {
-      store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
-    }, cmd());
-    registerBinding("d", () => {
-      store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
-    }, cmd({ shift: true }));
-    registerBinding("w", () => {
-      // ⌘W — close pane
-      const tab = store.activeTab;
-      if (tab) store.closePane(tab.activePaneId);
-    }, cmd());
-
-    // Pane focus — ⌘⌥→ next grid, ⌘⌥← previous grid, in layout order.
-    // After moving the active pane, pull keyboard focus into it.
-    registerBinding("ArrowRight", () => {
-      store.focusRelativePane(1);
-      focusActivePane();
-    }, { ...cmd({ code: "ArrowRight" }), alt: true });
-    registerBinding("ArrowLeft", () => {
-      store.focusRelativePane(-1);
-      focusActivePane();
-    }, { ...cmd({ code: "ArrowLeft" }), alt: true });
-
-    // Clipboard
-    registerBinding("c", () => {
-      const tab = store.activeTab;
-      if (!tab) return;
-      const inst = getTerminalInstance(tab.activePaneId);
-      if (inst && inst.term.hasSelection()) {
-        navigator.clipboard.writeText(inst.term.getSelection());
-      }
-    }, cmd());
-    registerBinding("v", async () => {
-      const tab = store.activeTab;
-      if (!tab) return;
-      const inst = getTerminalInstance(tab.activePaneId);
-      if (inst && inst.ptyId !== null) {
-        const text = await navigator.clipboard.readText();
-        if (text) writePty(inst.ptyId, text);
-      }
-    }, cmd());
-
-    // Sidebar / search — single ⌘B: when the sidebar is closed, open it and
-    // focus the folder-filter field; when already open, close it and return
-    // focus to the active terminal pane. One key both opens-with-focus and
-    // dismisses the search.
-    registerBinding("b", () => {
-      if (store.state.sidebarOpen) {
-        store.toggleSidebar();
-        focusActivePane();
-        return;
-      }
-      store.openSidebar();
-      // The input mounts when the sidebar opens, so retry briefly until it's
-      // in the DOM, then focus and select any existing filter text.
-      let tries = 0;
-      const focusFilter = () => {
-        const input = document.querySelector<HTMLInputElement>(
-          ".file-tree-search input"
-        );
-        if (input) {
-          input.focus();
-          input.select();
-        } else if (tries++ < 10) {
-          setTimeout(focusFilter, 16);
-        }
-      };
-      focusFilter();
-    }, { ...cmd(), allowInInput: true });
-
-    // Font zoom — ⌘= / ⌘+ to grow, ⌘- to shrink, ⌘0 to reset
-    registerBinding("=", () => increaseFontSize(), cmd({ code: "Equal" }));
-    registerBinding("=", () => increaseFontSize(), cmd({ shift: true, code: "Equal" }));
-    registerBinding("-", () => decreaseFontSize(), cmd({ code: "Minus" }));
-    registerBinding("0", () => resetFontSize(), cmd({ code: "Digit0" }));
+    // All shortcuts live in the keymap (src/stores/keymap.ts) — a single
+    // declarative table, authored macOS-first and resolved per-OS (with
+    // optional per-platform overrides). Handlers that need component scope
+    // (the store, focusActivePane) are threaded in here.
+    registerBindings(createKeymap({ store, focusActivePane }));
 
     initKeybindings();
 

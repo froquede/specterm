@@ -126,7 +126,8 @@ src/
     osc.ts                 # OSC sequence parser
   stores/
     tabs.ts                # Tab/pane state management
-    keybindings.ts         # Keyboard shortcut registry
+    keybindings.ts         # Keyboard shortcut registry + per-OS resolver
+    keymap.ts              # Declarative keymap (all shortcuts, macOS-first)
 electron/
   main.cjs                 # Electron main process + IPC handlers
   preload.cjs              # Context bridge

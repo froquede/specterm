@@ -1,3 +1,5 @@
+import { os, type OS } from "../lib/platform";
+
 type KeyHandler = () => void;
 
 interface Keybinding {
@@ -38,6 +40,47 @@ export function registerBinding(
     allowInInput: opts?.allowInInput,
     handler,
   });
+}
+
+// The platform-specific half of a chord: a key plus its modifiers. A keymap
+// row carries one as its default (authored Mac-first via cmd()) and may
+// override it per-OS.
+export interface Chord {
+  key: string;
+  ctrl?: boolean;
+  shift?: boolean;
+  meta?: boolean;
+  alt?: boolean;
+  // Physical key code (layout-independent). When set it matches instead of
+  // `key` — preferred for punctuation/digits that shift under other layouts.
+  code?: string;
+}
+
+// One row of the keymap: a stable id, a default Mac-first chord, what it runs,
+// and optional per-OS replacements for cases cmd() can't express on its own
+// (e.g. Windows needing a different chord than Linux). When `byOS` has an entry
+// for the host OS, it replaces the default chord wholesale.
+export interface BindingSpec extends Chord {
+  id: string;
+  run: KeyHandler;
+  label?: string;
+  allowInInput?: boolean;
+  byOS?: Partial<Record<OS, Chord>>;
+}
+
+/** Register a declarative keymap, resolving each row's chord for the host OS. */
+export function registerBindings(specs: BindingSpec[]) {
+  for (const spec of specs) {
+    const chord: Chord = spec.byOS?.[os] ?? spec;
+    registerBinding(chord.key, spec.run, {
+      ctrl: chord.ctrl,
+      shift: chord.shift,
+      meta: chord.meta,
+      alt: chord.alt,
+      code: chord.code,
+      allowInInput: spec.allowInInput,
+    });
+  }
 }
 
 // True when focus is in a real text field (filter, search) — but NOT the

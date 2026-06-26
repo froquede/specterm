@@ -10,14 +10,26 @@
 //
 // This keeps every bare Ctrl+<key> free for the terminal.
 
-function detectIsMac(): boolean {
+export type OS = "mac" | "windows" | "linux";
+
+function detectOS(): OS {
   const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
-  const platform =
-    nav.userAgentData?.platform || nav.platform || nav.userAgent || "";
-  return /mac/i.test(platform);
+  const platform = (
+    nav.userAgentData?.platform ||
+    nav.platform ||
+    nav.userAgent ||
+    ""
+  ).toLowerCase();
+  if (/mac/.test(platform)) return "mac";
+  if (/win/.test(platform)) return "windows";
+  return "linux";
 }
 
-export const isMac = detectIsMac();
+/** Host OS, resolved once. Drives per-platform keymap overrides. */
+export const os: OS = detectOS();
+
+/** The common mac-vs-rest split used by cmd() translation and labels. */
+export const isMac = os === "mac";
 
 export interface ModifierSpec {
   ctrl?: boolean;
