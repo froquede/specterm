@@ -48,16 +48,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      # On Windows, point node-gyp at the runner's Visual Studio 2022 so it
-      # finds the MSVC toolchain (fixes "Could not find any Visual Studio
-      # installation to use").
-      - name: Configure MSVC for node-gyp (Windows)
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          npm install --global node-gyp@11.2.0
-          npm config set node_gyp "$(npm root -g)/node-gyp/bin/node-gyp.js"
-          npm config set msvs_version 2022
+      # On Windows, node-gyp rebuilds node-pty against MSVC. windows-latest
+      # ships Visual Studio 2022, which node-gyp auto-detects; GYP_MSVS_VERSION
+      # (set in the build step's env) pins the toolchain version explicitly.
 
       - name: Install dependencies
         run: npm ci
@@ -73,3 +66,49 @@ jobs:
           # No Apple Developer cert in CI — skip signing so the mac build runs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
           GYP_MSVS_VERSION: "2022"
+
+  # After every platform has uploaded its installers, rewrite the Release body
+  # with a per-platform downloads table that links to each uploaded asset.
+  notes:
+    needs: release
+    if: always()
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Write downloads table into the release body
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          base="https://github.com/$REPO/releases/download/$TAG"
+
+          # Pull the asset names actually attached to this release, dropping
+          # updater metadata (.blockmap / latest*.yml) that users never download.
+          assets=$(gh release view "$TAG" --repo "$REPO" --json assets \
+            --jq '.assets[].name | select(endswith(".blockmap") or endswith(".yml") | not)')
+
+          row() { # $1=label  $2=glob
+            for a in $assets; do
+              case "$a" in
+                $2) echo "| $1 | [\`$a\`]($base/$a) |" ;;
+              esac
+            done
+          }
+
+          {
+            echo "## Downloads"
+            echo
+            echo "| Platform | File |"
+            echo "| --- | --- |"
+            row "macOS (Apple silicon)" "*-mac-*.dmg"
+            row "macOS (Apple silicon, zip)" "*-mac-*.zip"
+            row "Windows (installer)" "*.exe"
+            row "Linux (AppImage)" "*.AppImage"
+            row "Linux (Debian/Ubuntu)" "*.deb"
+            echo
+            echo "_Built by the release workflow from tag \`$TAG\`._"
+          } > body.md
+
+          gh release edit "$TAG" --repo "$REPO" --notes-file body.md
