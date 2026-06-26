@@ -7,9 +7,19 @@ import { registerOscHandler } from "./osc";
 import type { UnlistenFn } from "../backends/types";
 
 function safeFit(term: Terminal, fitAddon: FitAddon) {
-  const viewportY = term.buffer.active.viewportY;
+  const buffer = term.buffer.active;
+  // Was the viewport pinned to the bottom before the fit?
+  const atBottom = buffer.viewportY >= buffer.baseY;
+  const viewportY = buffer.viewportY;
   fitAddon.fit();
-  term.scrollToLine(viewportY);
+  // After a fit the content may reflow taller (e.g. width reduced by a new
+  // split), so a preserved viewportY would leave the view above the bottom.
+  // Always keep the bottom in view when it was visible before the resize.
+  if (atBottom) {
+    term.scrollToBottom();
+  } else {
+    term.scrollToLine(viewportY);
+  }
 }
 
 export interface TerminalInstance {
