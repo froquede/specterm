@@ -16,6 +16,12 @@ on:
 permissions:
   contents: write
 
+# A re-pushed tag (or a manual re-run) supersedes any in-flight run for the
+# same ref — cancel the old one so we don't pay for two builds of one release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   release:
     strategy:
@@ -48,13 +54,36 @@ jobs:
         with:
           python-version: "3.11"
 
-      # node-pty's transitive node-gyp was too old to detect Visual Studio 2022
-      # (it only probed VS 2013/2015), failing the Windows rebuild with "Could
-      # not find any Visual Studio installation". A `node-gyp` override in
-      # package.json pins every copy to v11, which detects VS2022;
-      # GYP_MSVS_VERSION (build step env) pins the toolset.
+      # Cache the Electron binary + electron-builder's tooling downloads (FPM,
+      # AppImage runtime, NSIS, etc.) so they aren't re-fetched every release.
+      # Keyed on the lockfile (which pins the Electron version); paths that
+      # don't exist on a given OS are simply skipped by actions/cache.
+      - name: Cache Electron & electron-builder downloads
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: ${{ runner.os }}-electron-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-electron-
+
       - name: Install dependencies
         run: npm ci
+
+      # node-pty pulls an ancient node-gyp (9.x) that only detects VS 2013/2015,
+      # so the Windows rebuild fails with "Could not find any Visual Studio
+      # installation". Drop a VS2022-aware node-gyp 10 into node_modules for the
+      # Windows runner only — @electron/rebuild resolves the hoisted copy, and 10
+      # is the version electron-builder 25's @electron/rebuild expects (node-gyp
+      # 11 deadlocks it). Other OSes build fine with the bundled node-gyp.
+      - name: Use VS2022-aware node-gyp (Windows)
+        if: runner.os == 'Windows'
+        run: npm install --no-save node-gyp@10
 
       - name: Build renderer (Vite)
         run: npm run build
@@ -72,7 +101,9 @@ jobs:
   # with a per-platform downloads table that links to each uploaded asset.
   notes:
     needs: release
-    if: always()
+    # Run whenever builds finished (even if one platform failed, so the table
+    # still lists what published) — but not if the run was cancelled.
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
