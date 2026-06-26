@@ -72,10 +72,6 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
-    "mac": {
-      "target": ["dmg", "zip"],
-      "category": "public.app-category.developer-tools"
-    },
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}"
   },
   "devDependencies": {
