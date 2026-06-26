@@ -48,9 +48,17 @@ jobs:
         with:
           python-version: "3.11"
 
-      # On Windows, node-gyp rebuilds node-pty against MSVC. windows-latest
-      # ships Visual Studio 2022, which node-gyp auto-detects; GYP_MSVS_VERSION
-      # (set in the build step's env) pins the toolchain version explicitly.
+      # node-pty's transitive node-gyp is too old to detect Visual Studio 2022
+      # (it only probes for VS 2013/2015), so the native rebuild fails on
+      # windows-latest with "Could not find any Visual Studio installation".
+      # Install a current node-gyp and point @electron/rebuild at it via
+      # npm_config_node_gyp; GYP_MSVS_VERSION (build step env) pins the toolset.
+      - name: Provide a VS2022-aware node-gyp (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          npm install --global node-gyp@11.2.0
+          echo "npm_config_node_gyp=$(npm root -g)/node-gyp/bin/node-gyp.js" >> "$GITHUB_ENV"
 
       - name: Install dependencies
         run: npm ci
