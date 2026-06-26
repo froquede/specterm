@@ -48,6 +48,19 @@ export default function App() {
     onCleanup(() => cancelAnimationFrame(raf));
   });
 
+  // Send `cd <path>` to the active pane's shell. Used by the file tree's
+  // favorites (click or the "fav-N" search token).
+  function cdActivePane(path: string) {
+    const tab = store.activeTab;
+    if (!tab) return;
+    const inst = getTerminalInstance(tab.activePaneId);
+    if (inst && inst.ptyId !== null) {
+      const quoted = "'" + path.replace(/'/g, "'\\''") + "'";
+      writePty(inst.ptyId, `cd ${quoted}\n`);
+      inst.term.focus();
+    }
+  }
+
   function handleOpenMarkdown(path: string, mode: "split" | "tab") {
     const mdPane = { kind: "markdown" as const, filePath: path };
 
@@ -197,6 +210,7 @@ export default function App() {
           open={store.state.sidebarOpen}
           width={store.state.sidebarWidth}
           onOpenFile={handleOpenMarkdown}
+          onCdPath={cdActivePane}
           onDismiss={focusActivePane}
         />
         <div class="app-content">

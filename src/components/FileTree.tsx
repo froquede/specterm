@@ -10,12 +10,20 @@ import {
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
 import { isAccelClick } from "../lib/platform";
+import { favorites, toggleFavorite, favoriteByIndex } from "../stores/favorites";
+
+// A "fav-N" token in the search box (full or partial, e.g. "fav-", "fav-2")
+// is a cd command, not a name filter — used both to suppress filtering while
+// it's being typed and to resolve it on Enter.
+const FAV_TOKEN = /^fav-\d*$/i;
 
 interface FileTreeProps {
   open: boolean;
   width: number;
   onOpenFile: (path: string, mode: "split" | "tab") => void;
-  // Devolve o foco ao grid/terminal (Esc com o filtro já vazio).
+  // Run `cd <path>` in the active terminal pane (favorite click / "fav-N").
+  onCdPath: (path: string) => void;
+  // Return focus to the grid/terminal (Esc on an already-empty filter).
   onDismiss?: () => void;
 }
 
@@ -48,6 +56,11 @@ export default function FileTree(props: FileTreeProps) {
     path ? listDir(path) : Promise.resolve([])
   );
 
+  // O(1) favorite lookups: a single derived Set instead of an O(n) array scan
+  // per cell (each row queries it 3×, and it re-runs on every toggle).
+  const favSet = createMemo(() => new Set(favorites().map((f) => f.path)));
+  const isFav = (path: string) => favSet().has(path);
+
   onMount(async () => {
     const backend = await getBackend();
     const home = await backend.getHomePath();
@@ -58,6 +71,19 @@ export default function FileTree(props: FileTreeProps) {
     setCurrentPath(path);
     setFilter("");
     setSelectedIndex(0);
+  }
+
+  // Jump to a favorite: cd the active terminal there and browse it in the tree.
+  function openFavorite(path: string) {
+    props.onCdPath(path);
+    navigateTo(path);
+  }
+
+  // "fav-N" in the search box resolves to the Nth favorite (1-based).
+  function resolveFavToken(value: string) {
+    const m = value.trim().match(/^fav-(\d+)$/i);
+    if (!m) return undefined;
+    return favoriteByIndex(parseInt(m[1], 10));
   }
 
   function navigateUp() {
@@ -82,9 +108,12 @@ export default function FileTree(props: FileTreeProps) {
   // of its call sites (For, ghost text, the selection effect, key handlers).
   const filteredEntries = createMemo<DirEntry[]>(() => {
     const all = entries() || [];
-    const q = filter().toLowerCase();
-    if (!q) return all;
-    return all.filter((e) => e.name.toLowerCase().includes(q));
+    const q = filter().trim();
+    // While a "fav-N" command is being typed, don't filter the listing — it's
+    // headed for the active terminal, not the tree, so leave the dir visible.
+    if (!q || FAV_TOKEN.test(q)) return all;
+    const lower = q.toLowerCase();
+    return all.filter((e) => e.name.toLowerCase().includes(lower));
   });
 
   // Sugestão inline (ghost text): nome do item selecionado quando o filtro
@@ -148,6 +177,13 @@ export default function FileTree(props: FileTreeProps) {
 
     if (e.key === "Enter") {
       e.preventDefault();
+      // A "fav-N" token cds the active terminal instead of opening a tree row.
+      const fav = resolveFavToken(filter());
+      if (fav) {
+        openFavorite(fav.path);
+        (e.currentTarget as HTMLInputElement).blur();
+        return;
+      }
       const sel = list[selectedIndex()];
       if (sel) activateEntry(sel, e.metaKey || e.ctrlKey ? "tab" : "split");
       return;
@@ -178,6 +214,20 @@ export default function FileTree(props: FileTreeProps) {
           <span class="file-tree-path" title={currentPath()}>
             {displayPath()}
           </span>
+          <Show when={currentPath()}>
+            <button
+              class="file-tree-fav-toggle"
+              classList={{ active: isFav(currentPath()) }}
+              title={
+                isFav(currentPath())
+                  ? "Remove this folder from favorites"
+                  : "Favorite this folder"
+              }
+              onClick={() => toggleFavorite(currentPath())}
+            >
+              {isFav(currentPath()) ? "★" : "☆"}
+            </button>
+          </Show>
           <button class="file-tree-refresh" onClick={() => refetch()}>
             ↻
           </button>
@@ -186,7 +236,7 @@ export default function FileTree(props: FileTreeProps) {
           <div class="file-tree-search-field">
             <input
               type="text"
-              placeholder="Filter..."
+              placeholder="Filter…  (fav-1, fav-2, … + Enter to cd)"
               value={filter()}
               onInput={(e) => {
                 setFilter(e.currentTarget.value);
@@ -202,6 +252,33 @@ export default function FileTree(props: FileTreeProps) {
             </Show>
           </div>
         </div>
+        <Show when={favorites().length > 0}>
+          <div class="file-tree-favorites">
+            <For each={favorites()}>
+              {(fav, i) => (
+                <div
+                  class="file-tree-fav"
+                  classList={{ active: fav.path === currentPath() }}
+                  title={fav.path}
+                  onClick={() => openFavorite(fav.path)}
+                >
+                  <span class="file-tree-fav-index">fav-{i() + 1}</span>
+                  <span class="file-tree-fav-label">{fav.label}</span>
+                  <button
+                    class="file-tree-fav-remove"
+                    title="Remove favorite"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleFavorite(fav.path);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </For>
+          </div>
+        </Show>
         <div class="file-tree-content" ref={listEl}>
           <Show when={!filter()}>
             <div class="file-tree-entry file-tree-dir" onClick={navigateUp}>
@@ -235,7 +312,24 @@ export default function FileTree(props: FileTreeProps) {
                     <span class="file-tree-icon">
                       {entry.isDirectory ? "▸" : isMd ? "◆" : "·"}
                     </span>
-                    {entry.name}
+                    <span class="file-tree-name">{entry.name}</span>
+                    <Show when={entry.isDirectory}>
+                      <button
+                        class="file-tree-entry-fav"
+                        classList={{ active: isFav(entry.path) }}
+                        title={
+                          isFav(entry.path)
+                            ? "Remove from favorites"
+                            : "Add to favorites"
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleFavorite(entry.path);
+                        }}
+                      >
+                        {isFav(entry.path) ? "★" : "☆"}
+                      </button>
+                    </Show>
                   </div>
                 );
               }}
