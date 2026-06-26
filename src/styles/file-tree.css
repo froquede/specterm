@@ -67,10 +67,128 @@
   border-color: #7aa2f7;
 }
 
+/* Favorite-current-folder toggle in the header */
+.file-tree-fav-toggle {
+  border: none;
+  background: none;
+  color: #565f89;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.file-tree-fav-toggle:hover {
+  color: #e0af68;
+}
+
+.file-tree-fav-toggle.active {
+  color: #e0af68;
+}
+
+/* Highlighted favorites strip, shown above the directory listing */
+.file-tree-favorites {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  background: #1b1c2a;
+  border-bottom: 1px solid #292e42;
+}
+
+.file-tree-fav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 12px;
+  cursor: pointer;
+  color: #c0caf5;
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+}
+
+.file-tree-fav:hover {
+  background: #292e42;
+}
+
+.file-tree-fav.active {
+  background: #2a2e45;
+}
+
+.file-tree-fav-index {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  color: #1a1b26;
+  background: #e0af68;
+  border-radius: 3px;
+  padding: 1px 5px;
+  letter-spacing: 0.3px;
+}
+
+.file-tree-fav-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree-fav-remove {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #565f89;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+}
+
+.file-tree-fav:hover .file-tree-fav-remove {
+  opacity: 1;
+}
+
+.file-tree-fav-remove:hover {
+  color: #f7768e;
+}
+
 .file-tree-content {
   flex: 1;
   overflow-y: auto;
   padding: 4px 0;
+}
+
+/* Let the name take the row and keep the per-entry star pinned right */
+.file-tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-tree-entry-fav {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: #414868;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 2px;
+  line-height: 1;
+  opacity: 0;
+}
+
+.file-tree-entry:hover .file-tree-entry-fav {
+  opacity: 1;
+}
+
+.file-tree-entry-fav.active {
+  color: #e0af68;
+  opacity: 1;
+}
+
+.file-tree-entry-fav:hover {
+  color: #e0af68;
 }
 
 .file-tree-entry {
