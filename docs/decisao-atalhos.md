@@ -26,12 +26,16 @@ Com isso, o antigo `⌘⇧B` desta cópia foi **removido** — virou parte do `�
 
 - `⌘⇧S` — novo split empilhado
 - `⌘⇧↵` — novo split lado a lado
-- `⌘⇧← → ↑ ↓` — mudar a orientação do split pelo teclado
 
-> Observação: as features ligadas a esses atalhos continuam acessíveis **pelo
-> mouse/UI** (ex.: arrastar painéis e alternar a direção do split). Só a forma
-> por teclado não foi adotada. Se um dia quisermos um atalho para isso, criamos
-> um atalho **novo e próprio**, sem importar os do upstream.
+> Observação 1: as features ligadas a esses atalhos continuam acessíveis **pelo
+> mouse/UI**. Se um dia quisermos um atalho para isso, criamos um atalho **novo
+> e próprio**, sem importar os do upstream.
+>
+> Observação 2: o upstream chegou a ter um `⌘⇧← → ↑ ↓` para mudar a orientação
+> do split pelo teclado, mas **removeu esse atalho** (commit `e13314d`) — só a
+> linha no README deles ficou desatualizada. Hoje a virada de orientação no
+> upstream é feita **pelo botão na barra de título do painel** (que veio neste
+> merge). Ou seja, não havia atalho vivo para descartar aqui.
 
 ## Por quê
 
