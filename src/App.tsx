@@ -58,6 +58,18 @@ export default function App() {
     }
   }
 
+  // Move keyboard focus back into the active tab's terminal (or, if that pane
+  // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
+  function focusActivePane() {
+    const paneId = store.activeTab?.activePaneId;
+    const term = paneId ? getTerminalInstance(paneId) : undefined;
+    if (term) {
+      term.term.focus();
+    } else if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+  }
+
   onMount(() => {
     // Shortcuts are authored macOS / Ghostty-style (⌘ = primary command key).
     // cmd() translates them per-OS: ⌘X -> Ctrl+Shift+X and ⌘⇧X -> Ctrl+Alt+X
@@ -85,7 +97,8 @@ export default function App() {
       }
     }, cmd({ shift: true, code: "BracketLeft" }));
 
-    // Splits — ⌘D side-by-side, ⌘⇧D stacked (matches Ghostty)
+    // Splits — ⌘D adds a stacked pane ("v" = column), ⌘⇧D a side-by-side one
+    // ("h" = row). (Note: inverted vs Ghostty, where ⌘D splits to the right.)
     registerBinding("d", () => {
       store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
     }, cmd());
@@ -98,18 +111,16 @@ export default function App() {
       if (tab) store.closePane(tab.activePaneId);
     }, cmd());
 
-    // New split — literal Ctrl+Shift+S / Ctrl+Shift+Enter on Win/Linux
-    // (⌘⇧S / ⌘⇧Enter on macOS): S stacks the pane (vertical), Enter places it
-    // side-by-side (horizontal).
-    const splitMods = isMac
-      ? { meta: true, shift: true }
-      : { ctrl: true, shift: true };
-    registerBinding("s", () => {
-      store.splitActivePane("v", { kind: "terminal", ptyId: null, cwd: "" });
-    }, splitMods);
-    registerBinding("enter", () => {
-      store.splitActivePane("h", { kind: "terminal", ptyId: null, cwd: "" });
-    }, splitMods);
+    // Pane focus — ⌘⌥→ next grid, ⌘⌥← previous grid, in layout order.
+    // After moving the active pane, pull keyboard focus into it.
+    registerBinding("ArrowRight", () => {
+      store.focusRelativePane(1);
+      focusActivePane();
+    }, { ...cmd({ code: "ArrowRight" }), alt: true });
+    registerBinding("ArrowLeft", () => {
+      store.focusRelativePane(-1);
+      focusActivePane();
+    }, { ...cmd({ code: "ArrowLeft" }), alt: true });
 
     // Clipboard
     registerBinding("c", () => {
@@ -130,12 +141,14 @@ export default function App() {
       }
     }, cmd());
 
-    // Sidebar / search — ⌘B (Ctrl+Shift+B on Win/Linux): when the sidebar is
-    // closed, open it and focus the folder-filter field; when already open,
-    // close it. One key both opens-with-focus and dismisses the search.
+    // Sidebar / search — single ⌘B: when the sidebar is closed, open it and
+    // focus the folder-filter field; when already open, close it and return
+    // focus to the active terminal pane. One key both opens-with-focus and
+    // dismisses the search.
     registerBinding("b", () => {
       if (store.state.sidebarOpen) {
         store.toggleSidebar();
+        focusActivePane();
         return;
       }
       store.openSidebar();
@@ -184,6 +197,7 @@ export default function App() {
           open={store.state.sidebarOpen}
           width={store.state.sidebarWidth}
           onOpenFile={handleOpenMarkdown}
+          onDismiss={focusActivePane}
         />
         <div class="app-content">
           <Show when={store.activeTab}>

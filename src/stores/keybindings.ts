@@ -59,8 +59,9 @@ export function initKeybindings() {
       const inEditable = isEditableTarget(e.target);
 
       for (const binding of directBindings) {
-        // In a real text field, only bindings that opt in may fire — keeps
-        // typing and native ⌘C/⌘V working everywhere else.
+        // In a real text field we let native editing win, EXCEPT for bindings
+        // explicitly flagged to work everywhere (e.g. ⌘B to close the sidebar
+        // and jump back to the terminal).
         if (inEditable && !binding.allowInInput) continue;
 
         const ctrlMatch = binding.ctrl ? e.ctrlKey : !e.ctrlKey;

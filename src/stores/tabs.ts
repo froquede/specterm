@@ -59,7 +59,7 @@ function splitPaneInTree(
   root: SplitNode,
   paneId: PaneId,
   direction: "h" | "v",
-  newPane: PaneType
+  newLeaf: SplitNode
 ): SplitNode {
   if (root.type === "leaf") {
     if (root.id === paneId) {
@@ -68,7 +68,7 @@ function splitPaneInTree(
         id: nanoid(8),
         direction,
         first: root,
-        second: createLeaf(newPane),
+        second: newLeaf,
         ratio: 0.5,
       };
     }
@@ -76,8 +76,8 @@ function splitPaneInTree(
   }
   return {
     ...root,
-    first: splitPaneInTree(root.first, paneId, direction, newPane),
-    second: splitPaneInTree(root.second, paneId, direction, newPane),
+    first: splitPaneInTree(root.first, paneId, direction, newLeaf),
+    second: splitPaneInTree(root.second, paneId, direction, newLeaf),
   };
 }
 
@@ -191,19 +191,18 @@ export function useTabStore() {
       if (idx === -1) return;
 
       const tab = s.tabs[idx];
-      const before = new Set(collectLeaves(tab.root).map((l) => l.id));
-      const newRoot = splitPaneInTree(tab.root, tab.activePaneId, direction, newPane);
-      // Focus the freshly created pane so typing lands there (focus = opacity 1).
-      const newLeaf = collectLeaves(newRoot).find((l) => !before.has(l.id));
+      // Pre-build the new leaf so we know its id and can make it the active
+      // pane — the freshly split terminal is where typing should land.
+      const newLeaf = createLeaf(newPane);
+      const newRoot = splitPaneInTree(tab.root, tab.activePaneId, direction, newLeaf);
 
       update(() => ({
         ...s,
         tabs: s.tabs.map((t, i) =>
-          i === idx
-            ? { ...t, root: newRoot, activePaneId: newLeaf?.id ?? t.activePaneId }
-            : t
+          i === idx ? { ...t, root: newRoot, activePaneId: newLeaf.id } : t
         ),
       }));
+      return newLeaf.id;
     },
 
     closePane(paneId: PaneId) {
@@ -245,6 +244,30 @@ export function useTabStore() {
         ...s,
         tabs: s.tabs.map((t, i) =>
           i === idx ? { ...t, activePaneId: paneId } : t
+        ),
+      }));
+    },
+
+    // Cycle the active pane within the current tab, in left-to-right /
+    // first-to-second layout order (the same order collectLeaves yields).
+    // delta = +1 moves to the next grid, -1 to the previous, wrapping around.
+    focusRelativePane(delta: number) {
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const tab = s.tabs[idx];
+      const leaves = collectLeaves(tab.root);
+      if (leaves.length < 2) return;
+
+      const cur = leaves.findIndex((l) => l.id === tab.activePaneId);
+      const base = cur === -1 ? 0 : cur;
+      const nextId = leaves[(base + delta + leaves.length) % leaves.length].id;
+
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) =>
+          i === idx ? { ...t, activePaneId: nextId } : t
         ),
       }));
     },
