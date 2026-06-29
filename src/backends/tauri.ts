@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readTextFile, readDir as tauriReadDir } from "@tauri-apps/plugin-fs";
 import type { Backend, SpawnPtyOptions, FileEntry, UnlistenFn } from "./types";
 
@@ -59,5 +60,24 @@ export class TauriBackend implements Backend {
 
   async getHomePath(): Promise<string> {
     return invoke<string>("get_home_path");
+  }
+
+  async isFullscreen(): Promise<boolean> {
+    return getCurrentWindow().isFullscreen();
+  }
+
+  async setFullscreen(value: boolean): Promise<void> {
+    return getCurrentWindow().setFullscreen(value);
+  }
+
+  async onFullscreenChange(
+    cb: (value: boolean) => void
+  ): Promise<UnlistenFn> {
+    // Tauri has no dedicated fullscreen event; resize fires on enter/leave, so
+    // re-read the state from there.
+    const win = getCurrentWindow();
+    return win.onResized(async () => {
+      cb(await win.isFullscreen());
+    });
   }
 }

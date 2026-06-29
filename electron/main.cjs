@@ -75,6 +75,15 @@ function createWindow() {
     }
   });
 
+  // Notify the renderer when the OS fullscreen state changes (e.g. macOS green
+  // button, F11, or our own toggle) so the tab-bar icon stays in sync.
+  mainWindow.on("enter-full-screen", () => {
+    mainWindow?.webContents.send("fullscreen-change", true);
+  });
+  mainWindow.on("leave-full-screen", () => {
+    mainWindow?.webContents.send("fullscreen-change", false);
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -192,6 +201,18 @@ ipcMain.handle("unwatch-dir", () => {
   if (fsWatcher) {
     fsWatcher.close();
     fsWatcher = null;
+  }
+});
+
+// === Window IPC ===
+
+ipcMain.handle("is-fullscreen", () => {
+  return mainWindow ? mainWindow.isFullScreen() : false;
+});
+
+ipcMain.handle("set-fullscreen", (_event, value) => {
+  if (mainWindow) {
+    mainWindow.setFullScreen(Boolean(value));
   }
 });
 

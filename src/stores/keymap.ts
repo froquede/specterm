@@ -21,6 +21,8 @@ export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
   // Pull keyboard focus back into the active pane's terminal.
   focusActivePane: () => void;
+  // Open/close the settings panel.
+  toggleSettings: () => void;
 }
 
 const newTerminal = () =>
@@ -35,8 +37,21 @@ const kitty = (key: string): { windows: Chord; linux: Chord } => {
   return { windows: chord, linux: chord };
 };
 
-export function createKeymap({ store, focusActivePane }: KeymapContext): BindingSpec[] {
+export function createKeymap({
+  store,
+  focusActivePane,
+  toggleSettings,
+}: KeymapContext): BindingSpec[] {
   return [
+    // Settings — ⌘, on macOS (the platform convention); Ctrl+Shift+, elsewhere.
+    {
+      id: "settings.toggle",
+      key: ",",
+      ...cmd({ code: "Comma" }),
+      allowInInput: true,
+      label: "Open settings",
+      run: () => toggleSettings(),
+    },
     // Tabs
     {
       id: "tab.new",

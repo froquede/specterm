@@ -186,6 +186,121 @@ body,
   color: #c0caf5;
 }
 
+.tab-settings {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  background: none;
+  color: #565f89;
+  font-size: 15px;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: color 0.15s;
+}
+
+.tab-settings:hover {
+  color: #c0caf5;
+}
+
+/* Settings panel — modal overlay above the whole app. */
+.settings-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.settings-panel {
+  width: 380px;
+  max-width: calc(100vw - 32px);
+  background: #1a1b26;
+  border: 1px solid #292e42;
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  color: #c0caf5;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #292e42;
+}
+
+.settings-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-close {
+  border: none;
+  background: none;
+  color: #565f89;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+
+.settings-close:hover {
+  color: #c0caf5;
+}
+
+.settings-section {
+  padding: 14px;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.settings-label {
+  font-size: 13px;
+}
+
+.settings-value {
+  font-size: 13px;
+  color: #7aa2f7;
+  font-variant-numeric: tabular-nums;
+}
+
+.settings-slider {
+  width: 100%;
+  margin: 10px 0 6px;
+  accent-color: #7aa2f7;
+  cursor: pointer;
+}
+
+.settings-hint {
+  font-size: 11px;
+  color: #565f89;
+}
+
+.settings-reset {
+  border: none;
+  background: none;
+  color: #7aa2f7;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0;
+  white-space: nowrap;
+}
+
+.settings-reset:hover {
+  text-decoration: underline;
+}
+
 /* Split handle */
 .split-handle {
   flex-shrink: 0;
@@ -329,17 +444,9 @@ body,
   transition: opacity 0.15s;
 }
 
-/* Active-pane border drawn as an overlay above the terminal canvas, so it
-   wraps the full box instead of being covered by the opaque xterm/WebGL
-   surface (which leaves the old inset outline only visible in the fit gap). */
-.pane-active::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 1px solid #7aa2f7;
-  pointer-events: none;
-  z-index: 30;
-}
+/* No active-pane border: the unfocused-split dimming (above) is the only focus
+   cue, Ghostty-style. The wash on the other panes already signals which one is
+   active, so an extra outline would be redundant. */
 
 /* Drop-zone indicator shown over the hovered target pane during a drag. */
 .drop-indicator {

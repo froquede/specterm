@@ -25,4 +25,9 @@ export interface Backend {
   readDir(path: string): Promise<FileEntry[]>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
+
+  // Window
+  isFullscreen(): Promise<boolean>;
+  setFullscreen(value: boolean): Promise<void>;
+  onFullscreenChange(cb: (value: boolean) => void): Promise<UnlistenFn>;
 }

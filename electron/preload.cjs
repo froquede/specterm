@@ -38,4 +38,15 @@ contextBridge.exposeInMainWorld("specterm", {
       ipcRenderer.invoke("unwatch-dir");
     };
   },
+
+  // Window
+  isFullscreen: () => ipcRenderer.invoke("is-fullscreen"),
+
+  setFullscreen: (value) => ipcRenderer.invoke("set-fullscreen", value),
+
+  onFullscreenChange: (cb) => {
+    const handler = (_event, value) => cb(value);
+    ipcRenderer.on("fullscreen-change", handler);
+    return () => ipcRenderer.removeListener("fullscreen-change", handler);
+  },
 });

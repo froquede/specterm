@@ -12,6 +12,9 @@ interface SpectermAPI {
   readDir(path: string): Promise<FileEntry[]>;
   watchDir(path: string, cb: () => void): () => void;
   getHomePath(): Promise<string>;
+  isFullscreen(): Promise<boolean>;
+  setFullscreen(value: boolean): Promise<void>;
+  onFullscreenChange(cb: (value: boolean) => void): () => void;
 }
 
 declare global {
@@ -68,5 +71,19 @@ export class ElectronBackend implements Backend {
 
   async getHomePath(): Promise<string> {
     return this.api.getHomePath();
+  }
+
+  async isFullscreen(): Promise<boolean> {
+    return this.api.isFullscreen();
+  }
+
+  async setFullscreen(value: boolean): Promise<void> {
+    return this.api.setFullscreen(value);
+  }
+
+  async onFullscreenChange(
+    cb: (value: boolean) => void
+  ): Promise<UnlistenFn> {
+    return this.api.onFullscreenChange(cb);
   }
 }
