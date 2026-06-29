@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.6.1 — 2026-06-29
+
+### Adicionado
+- Painel de Configurações (ícone ⚙, atalho `⌘,`) com opacidade dos painéis
+  inativos customizável e persistida
+
+### Corrigido
+- Tela cheia voltou a funcionar no Electron (usava a API de janela do Tauri, que
+  não existe no nosso build principal) — agora roteada pelo backend
+- Slider de configurações: arrastar o controle deixou de ser cancelado a cada
+  movimento (reescrita do `value` durante o `input` matava o drag no Chromium)
+
+### Alterado
+- Painel ativo sem borda: o destaque agora vem só do escurecimento dos demais
+  (estilo Ghostty)
+
 ## 0.3.0 — 2026-06-26
 
 ### Adicionado

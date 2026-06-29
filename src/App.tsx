@@ -1,15 +1,18 @@
-import { Show, onMount, createEffect, onCleanup } from "solid-js";
+import { Show, onMount, createEffect, onCleanup, createSignal } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
+import { initSettings } from "./stores/settings";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
+import SettingsPanel from "./components/SettingsPanel";
 
 export default function App() {
   const store = useTabStore();
+  const [settingsOpen, setSettingsOpen] = createSignal(false);
 
   // Keep keyboard focus on the active pane's terminal. The active pane is the
   // one drawn at full opacity (others are dimmed), so typing must always land
@@ -83,9 +86,19 @@ export default function App() {
     // declarative table, authored macOS-first and resolved per-OS (with
     // optional per-platform overrides). Handlers that need component scope
     // (the store, focusActivePane) are threaded in here.
-    registerBindings(createKeymap({ store, focusActivePane }));
+    registerBindings(
+      createKeymap({
+        store,
+        focusActivePane,
+        toggleSettings: () => setSettingsOpen((v) => !v),
+      })
+    );
 
     initKeybindings();
+
+    // Apply persisted appearance settings (e.g. unfocused-pane opacity) to the
+    // DOM before the first paint settles.
+    initSettings();
 
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);
@@ -101,6 +114,7 @@ export default function App() {
         onClose={(id) => store.closeTab(id)}
         onCreate={() => store.createTab()}
         onToggleSidebar={() => store.toggleSidebar()}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <div class="app-body">
         <FileTree
@@ -135,6 +149,7 @@ export default function App() {
           </Show>
         </div>
       </div>
+      <SettingsPanel open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

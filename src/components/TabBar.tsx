@@ -1,5 +1,5 @@
 import { createSignal, For, onMount, onCleanup } from "solid-js";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { getBackend, type UnlistenFn } from "../backends";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -10,24 +10,30 @@ interface TabBarProps {
   onClose: (tabId: string) => void;
   onCreate: () => void;
   onToggleSidebar: () => void;
+  onOpenSettings: () => void;
 }
 
 export default function TabBar(props: TabBarProps) {
   const [isFullscreen, setIsFullscreen] = createSignal(false);
 
   async function toggleFullscreen() {
-    const win = getCurrentWindow();
-    const current = await win.isFullscreen();
-    await win.setFullscreen(!current);
-    setIsFullscreen(!current);
+    const backend = await getBackend();
+    const next = !(await backend.isFullscreen());
+    await backend.setFullscreen(next);
+    setIsFullscreen(next);
   }
 
   onMount(async () => {
-    const win = getCurrentWindow();
-    const unlisten = await win.onResized(async () => {
-      setIsFullscreen(await win.isFullscreen());
-    });
-    onCleanup(() => unlisten());
+    const backend = await getBackend();
+    setIsFullscreen(await backend.isFullscreen());
+    let unlisten: UnlistenFn | undefined;
+    try {
+      unlisten = await backend.onFullscreenChange(setIsFullscreen);
+    } catch (_) {
+      // Backend without a fullscreen-change signal — the icon still flips on
+      // our own toggle, just not on OS-driven changes.
+    }
+    onCleanup(() => unlisten?.());
   });
 
   return (
@@ -78,6 +84,13 @@ export default function TabBar(props: TabBarProps) {
         title={isFullscreen() ? "Exit fullscreen" : "Fullscreen"}
       >
         {isFullscreen() ? "⊡" : "⊞"}
+      </button>
+      <button
+        class="tab-settings"
+        onClick={props.onOpenSettings}
+        title="Settings"
+      >
+        ⚙
       </button>
     </div>
   );
