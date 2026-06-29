@@ -2,37 +2,37 @@
 
 ## 0.6.1 — 2026-06-29
 
-### Adicionado
-- Painel de Configurações (ícone ⚙, atalho `⌘,`) com opacidade dos painéis
-  inativos customizável e persistida
+### Added
+- Settings panel (⚙ icon, `⌘,` shortcut) with a customizable, persisted
+  unfocused-pane opacity
 
-### Corrigido
-- Tela cheia voltou a funcionar no Electron (usava a API de janela do Tauri, que
-  não existe no nosso build principal) — agora roteada pelo backend
-- Slider de configurações: arrastar o controle deixou de ser cancelado a cada
-  movimento (reescrita do `value` durante o `input` matava o drag no Chromium)
+### Fixed
+- Fullscreen works again on Electron (it was calling the Tauri window API, which
+  doesn't exist in the main build) — window controls now go through the backend
+- Settings slider: dragging the handle is no longer cancelled on every move
+  (rewriting `value` during the `input` event was killing the drag in Chromium)
 
-### Alterado
-- Painel ativo sem borda: o destaque agora vem só do escurecimento dos demais
-  (estilo Ghostty)
+### Changed
+- Active pane has no border anymore — focus is signaled solely by dimming the
+  others (Ghostty-style)
 
 ## 0.3.0 — 2026-06-26
 
-### Adicionado
-- Drag-and-drop para reordenar painéis + botão pra alternar a orientação do split
-- Barras de título em cada painel
-- Suporte a Windows (resolução nativa de shell no backend Tauri)
-- Árvore de arquivos com busca, navegação por teclado e autocomplete
-- Scripts de instalação no macOS (`install:mac`)
+### Added
+- Drag-and-drop to reorder panes + a button to toggle the split orientation
+- Per-pane title bars
+- Windows support (native shell resolution in the Tauri backend)
+- File tree with search, keyboard navigation and autocomplete
+- macOS install scripts (`install:mac`)
 
-### Corrigido
-- Terminais que viravam tela branca ao exceder o limite de contextos WebGL
-  (agora caem pro renderizador DOM em vez de congelar)
-- Foco vai para o painel recém-criado ao dividir
-- Título do painel (ex.: `/rename` do Claude) preservado após remontagens
-- Chave `mac` duplicada no `package.json`
+### Fixed
+- Terminals turning into a white screen when exceeding the WebGL context limit
+  (they now fall back to the DOM renderer instead of freezing)
+- Focus moves to the newly created pane on split
+- Pane title (e.g. Claude's `/rename`) preserved across remounts
+- Duplicate `mac` key in `package.json`
 
-### Alterado
-- `⌘B` unificado: abre a barra + foca a busca, ou fecha
-- Atalhos locais preservados; atalhos de split do upstream (`⌘⇧S`, `⌘⇧↵`) não
-  adotados (ver `docs/decisao-atalhos.md`)
+### Changed
+- Unified `⌘B`: opens the sidebar + focuses search, or closes it
+- Local shortcuts preserved; upstream split shortcuts (`⌘⇧S`, `⌘⇧↵`) not
+  adopted (see `docs/decisao-atalhos.md`)
