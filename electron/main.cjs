@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, clipboard } = require("electron");
 const path = require("path");
 const os = require("os");
 const pty = require("node-pty");
@@ -170,6 +170,14 @@ ipcMain.handle("read-dir", async (_event, dirPath) => {
     name: e.name,
     isDirectory: e.isDirectory(),
   }));
+});
+
+// True when the OS clipboard holds a bitmap. The renderer uses this to decide
+// whether Ctrl+Shift+V should trigger Claude Code's inline image paste (by
+// forwarding its Alt+V/Ctrl+V escape) or fall back to a normal text paste.
+// Nothing is written to disk — the foreground app reads the clipboard itself.
+ipcMain.handle("clipboard-has-image", () => {
+  return !clipboard.readImage().isEmpty();
 });
 
 ipcMain.handle("watch-dir", (_event, dirPath) => {
