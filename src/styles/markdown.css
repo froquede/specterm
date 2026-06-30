@@ -5,7 +5,7 @@
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #1a1b26;
+  background: var(--bg);
 }
 
 .markdown-toolbar {
@@ -14,10 +14,10 @@
   justify-content: space-between;
   height: 32px;
   padding: 0 12px;
-  background: #16161e;
-  border-bottom: 1px solid #292e42;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
   font-size: 12px;
-  color: #565f89;
+  color: var(--fg-muted);
   flex-shrink: 0;
 }
 
@@ -38,7 +38,7 @@
 .markdown-toolbar-btn {
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 12px;
   cursor: pointer;
   padding: 2px 8px;
@@ -47,8 +47,8 @@
 }
 
 .markdown-toolbar-btn:hover {
-  color: #c0caf5;
-  background: #292e42;
+  color: var(--fg);
+  background: var(--bg-hover);
 }
 
 /* Search bar */
@@ -57,34 +57,34 @@
   align-items: center;
   gap: 4px;
   padding: 4px 12px;
-  background: #16161e;
-  border-bottom: 1px solid #292e42;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
 }
 
 .markdown-search input {
   flex: 1;
-  background: #1a1b26;
-  border: 1px solid #292e42;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 8px;
   font-size: 12px;
   font-family: inherit;
-  color: #c0caf5;
+  color: var(--fg);
   outline: none;
 }
 
 .markdown-search input::placeholder {
-  color: #414868;
+  color: var(--fg-faint);
 }
 
 .markdown-search input:focus {
-  border-color: #7aa2f7;
+  border-color: var(--accent);
 }
 
 .markdown-search-btn {
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 14px;
   cursor: pointer;
   padding: 2px 6px;
@@ -93,13 +93,13 @@
 }
 
 .markdown-search-btn:hover {
-  color: #c0caf5;
-  background: #292e42;
+  color: var(--fg);
+  background: var(--bg-hover);
 }
 
 .markdown-search-count {
   font-size: 11px;
-  color: #565f89;
+  color: var(--fg-muted);
   white-space: nowrap;
   min-width: 60px;
   text-align: center;
@@ -107,20 +107,20 @@
 
 /* Search highlights */
 mark.search-highlight {
-  background: #e0af6844;
+  background: color-mix(in srgb, var(--ansi-yellow) 27%, transparent);
   color: inherit;
   border-radius: 2px;
   padding: 0 1px;
 }
 
 mark.search-highlight.search-active {
-  background: #e0af68;
-  color: #1a1b26;
+  background: var(--ansi-yellow);
+  color: var(--accent-fg);
 }
 
 .markdown-error {
   padding: 16px;
-  color: #f7768e;
+  color: var(--danger);
   font-size: 13px;
   white-space: pre-wrap;
 }
@@ -133,37 +133,37 @@ mark.search-highlight.search-active {
      use em units, so they follow this base size. */
   font-size: calc(14px * var(--md-font-scale, 1));
   line-height: 1.7;
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 /* Markdown element styles */
 .markdown-content h1 {
   font-size: 2em;
-  border-bottom: 1px solid #292e42;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.3em;
   margin: 0.67em 0;
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .markdown-content h2 {
   font-size: 1.5em;
-  border-bottom: 1px solid #292e42;
+  border-bottom: 1px solid var(--border);
   padding-bottom: 0.3em;
   margin: 0.83em 0;
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .markdown-content h3 {
   font-size: 1.25em;
   margin: 1em 0;
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .markdown-content h4,
 .markdown-content h5,
 .markdown-content h6 {
   margin: 1em 0;
-  color: #a9b1d6;
+  color: var(--fg-bright);
 }
 
 .markdown-content p {
@@ -171,7 +171,7 @@ mark.search-highlight.search-active {
 }
 
 .markdown-content a {
-  color: #7aa2f7;
+  color: var(--accent);
   text-decoration: none;
 }
 
@@ -180,7 +180,7 @@ mark.search-highlight.search-active {
 }
 
 .markdown-content code {
-  background: #292e42;
+  background: var(--bg-hover);
   padding: 0.2em 0.4em;
   border-radius: 3px;
   font-size: 0.85em;
@@ -188,8 +188,8 @@ mark.search-highlight.search-active {
 }
 
 .markdown-content pre {
-  background: #16161e;
-  border: 1px solid #292e42;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
   border-radius: 6px;
   padding: 16px;
   overflow-x: auto;
@@ -210,9 +210,9 @@ mark.search-highlight.search-active {
 }
 
 .markdown-content blockquote {
-  border-left: 3px solid #7aa2f7;
+  border-left: 3px solid var(--accent);
   padding: 0 16px;
-  color: #a9b1d6;
+  color: var(--fg-bright);
   margin: 1em 0;
 }
 
@@ -224,18 +224,18 @@ mark.search-highlight.search-active {
 
 .markdown-content th,
 .markdown-content td {
-  border: 1px solid #292e42;
+  border: 1px solid var(--border);
   padding: 8px 12px;
   text-align: left;
 }
 
 .markdown-content th {
-  background: #16161e;
+  background: var(--bg-chrome);
   font-weight: 600;
 }
 
 .markdown-content tr:nth-child(even) {
-  background: rgba(41, 46, 66, 0.3);
+  background: color-mix(in srgb, var(--border) 30%, transparent);
 }
 
 .markdown-content ul,
@@ -250,7 +250,7 @@ mark.search-highlight.search-active {
 
 .markdown-content hr {
   border: none;
-  border-top: 1px solid #292e42;
+  border-top: 1px solid var(--border);
   margin: 2em 0;
 }
 
@@ -270,9 +270,9 @@ mark.search-highlight.search-active {
   overflow: hidden;
   min-height: 200px;
   cursor: grab;
-  border: 1px solid #292e42;
+  border: 1px solid var(--border);
   border-radius: 6px;
-  background: #16161e;
+  background: var(--bg-chrome);
 }
 
 .mermaid-viewport {

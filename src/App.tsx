@@ -3,6 +3,7 @@ import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
 import { initSettings } from "./stores/settings";
+import { initTheme, importBase16Theme } from "./stores/theme";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import TabBar from "./components/TabBar";
@@ -100,8 +101,37 @@ export default function App() {
     // DOM before the first paint settles.
     initSettings();
 
+    // Apply the persisted color theme (CSS variables + terminal palette).
+    initTheme();
+
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);
+
+    // Drag a base16 theme file (.yaml/.json) onto the window to import it. Only
+    // OS file drops are intercepted — internal pane drags don't carry a "Files"
+    // type, so they fall through to the pane drag-and-drop logic untouched. The
+    // preventDefault on dragover is required, or the drop navigates the window
+    // to the file instead of firing our handler.
+    const isFileDrag = (e: DragEvent) =>
+      Array.from(e.dataTransfer?.types ?? []).includes("Files");
+    const onDragOver = (e: DragEvent) => {
+      if (isFileDrag(e)) e.preventDefault();
+    };
+    const onDrop = async (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      const file = e.dataTransfer?.files?.[0];
+      if (!file) return;
+      if (!importBase16Theme(await file.text())) {
+        console.warn(`[theme] "${file.name}" is not a valid base16 scheme`);
+      }
+    };
+    window.addEventListener("dragover", onDragOver);
+    window.addEventListener("drop", onDrop);
+    onCleanup(() => {
+      window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("drop", onDrop);
+    });
   });
 
   return (

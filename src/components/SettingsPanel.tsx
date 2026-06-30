@@ -1,4 +1,4 @@
-import { Show, onMount, onCleanup } from "solid-js";
+import { Show, For, createSignal, createMemo, onMount, onCleanup } from "solid-js";
 import {
   unfocusedOpacity,
   setUnfocusedOpacity,
@@ -7,10 +7,25 @@ import {
   UNFOCUSED_OPACITY_MAX,
   UNFOCUSED_OPACITY_DEFAULT,
 } from "../stores/settings";
+import {
+  activeTheme,
+  availableThemes,
+  galleryThemes,
+  setActiveTheme,
+  importBase16Theme,
+  removeCustomTheme,
+} from "../stores/theme";
+import type { Theme } from "../lib/theme";
 
 interface SettingsPanelProps {
   open: boolean;
   onClose: () => void;
+}
+
+// Six representative swatches for a gallery row: background, accent, and the
+// four most recognizable ANSI hues.
+function swatches(t: Theme): string[] {
+  return [t.ui.bg, t.ui.accent, t.ansi.red, t.ansi.green, t.ansi.yellow, t.ui.fg];
 }
 
 // Modal settings panel — the first preferences surface. Rendered as an overlay
@@ -23,6 +38,22 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // input uncontrolled lets the native drag run; we still mirror every change
   // into the signal for the live preview, the % label and persistence.
   let sliderRef: HTMLInputElement | undefined;
+  let fileRef: HTMLInputElement | undefined;
+
+  // base16 paste import: a collapsible textarea so the panel stays compact.
+  const [importOpen, setImportOpen] = createSignal(false);
+  const [importText, setImportText] = createSignal("");
+  const [importError, setImportError] = createSignal<string | null>(null);
+
+  // Gallery browser (the 325 bundled base16 schemes), with a name filter.
+  const [galleryOpen, setGalleryOpen] = createSignal(false);
+  const [query, setQuery] = createSignal("");
+
+  const filteredGallery = createMemo(() => {
+    const q = query().trim().toLowerCase();
+    const all = galleryThemes();
+    return q ? all.filter((t) => t.name.toLowerCase().includes(q)) : all;
+  });
 
   function onKeyDown(e: KeyboardEvent) {
     if (e.key === "Escape" && props.open) {
@@ -39,7 +70,33 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     if (sliderRef) sliderRef.value = String(UNFOCUSED_OPACITY_DEFAULT);
   }
 
+  function applyImport() {
+    const theme = importBase16Theme(importText());
+    if (!theme) {
+      setImportError("Not a valid base16 scheme (need base00–base0F).");
+      return;
+    }
+    setImportError(null);
+    setImportText("");
+    setImportOpen(false);
+  }
+
+  async function onFilePicked(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = ""; // allow re-picking the same file later
+    if (!file) return;
+    const theme = importBase16Theme(await file.text());
+    if (!theme) {
+      setImportError(`"${file.name}" isn't a valid base16 scheme.`);
+      setImportOpen(true);
+    } else {
+      setImportError(null);
+    }
+  }
+
   const pct = () => Math.round(unfocusedOpacity() * 100);
+  const activeIsCustom = () => !activeTheme().builtin && !activeTheme().id.startsWith("gallery-");
 
   return (
     <Show when={props.open}>
@@ -56,6 +113,122 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               ×
             </button>
           </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="theme-select">
+                Theme
+              </label>
+              <Show when={activeIsCustom()}>
+                <button
+                  class="settings-reset"
+                  onClick={() => removeCustomTheme(activeTheme().id)}
+                >
+                  Remove
+                </button>
+              </Show>
+            </div>
+            <select
+              id="theme-select"
+              class="settings-select"
+              value={activeTheme().id}
+              onChange={(e) => setActiveTheme(e.currentTarget.value)}
+            >
+              <For each={availableThemes()}>
+                {(t) => <option value={t.id}>{t.name}</option>}
+              </For>
+              {/* Keep the picker showing the active gallery theme by name. */}
+              <Show when={activeTheme().id.startsWith("gallery-")}>
+                <option value={activeTheme().id}>{activeTheme().name}</option>
+              </Show>
+            </select>
+
+            <div class="settings-actions">
+              <button
+                class="settings-action"
+                onClick={() => setGalleryOpen((v) => !v)}
+              >
+                {galleryOpen() ? "Hide gallery" : `Browse gallery (${galleryThemes().length})`}
+              </button>
+              <button class="settings-action" onClick={() => fileRef?.click()}>
+                Open file…
+              </button>
+              <button class="settings-action" onClick={() => setImportOpen((v) => !v)}>
+                {importOpen() ? "Cancel paste" : "Paste…"}
+              </button>
+            </div>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".yaml,.yml,.json,.txt"
+              style={{ display: "none" }}
+              onChange={onFilePicked}
+            />
+
+            <Show when={galleryOpen()}>
+              <input
+                class="settings-search"
+                type="text"
+                placeholder="Filter themes…"
+                value={query()}
+                onInput={(e) => setQuery(e.currentTarget.value)}
+              />
+              <div class="theme-gallery">
+                <For each={filteredGallery()}>
+                  {(t) => (
+                    <button
+                      class="theme-gallery-item"
+                      classList={{ active: t.id === activeTheme().id }}
+                      title={t.name}
+                      onClick={() => setActiveTheme(t.id)}
+                    >
+                      <span class="theme-swatches">
+                        <For each={swatches(t)}>
+                          {(color) => (
+                            <span class="theme-swatch" style={{ background: color }} />
+                          )}
+                        </For>
+                      </span>
+                      <span class="theme-gallery-name">{t.name}</span>
+                    </button>
+                  )}
+                </For>
+                <Show when={filteredGallery().length === 0}>
+                  <div class="settings-hint">No themes match “{query()}”.</div>
+                </Show>
+              </div>
+            </Show>
+
+            <Show when={importOpen()}>
+              <textarea
+                class="settings-textarea"
+                placeholder="Paste a base16 scheme (YAML or JSON)…"
+                value={importText()}
+                onInput={(e) => setImportText(e.currentTarget.value)}
+                rows={6}
+              />
+              <div class="settings-row">
+                <span class="settings-hint">base00–base0F → terminal + chrome.</span>
+                <button
+                  class="settings-reset"
+                  disabled={!importText().trim()}
+                  onClick={applyImport}
+                >
+                  Apply theme
+                </button>
+              </div>
+            </Show>
+
+            <Show when={importError()}>
+              <div class="settings-error">{importError()}</div>
+            </Show>
+            <div class="settings-hint">
+              Drag a base16 file onto the window, or browse hundreds of schemes
+              above. Imports recolor the terminal and the app.
+            </div>
+          </div>
+
+          <div class="settings-divider" />
 
           <div class="settings-section">
             <div class="settings-row">
