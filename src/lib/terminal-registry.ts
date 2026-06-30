@@ -1,10 +1,29 @@
 import { Terminal } from "@xterm/xterm";
+import type { ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
 import { registerOscHandler } from "./osc";
+import { themeToXterm, DEFAULT_THEME } from "./theme";
 import type { UnlistenFn } from "../backends/types";
+
+// Active xterm palette, applied to new terminals at creation and pushed into
+// every live terminal by setTerminalTheme. Seeded with the default so terminals
+// render correctly before stores/theme.ts applies the persisted choice. The
+// background stays transparent (see themeToXterm) so the .app layer shows
+// through and the unfocused-split overlay can tint without a repaint.
+let currentXtermTheme: ITheme = themeToXterm(DEFAULT_THEME);
+
+// Swap the palette for every open terminal and for any created afterwards.
+// Called by stores/theme.ts whenever the user changes theme.
+export function setTerminalTheme(theme: ITheme) {
+  currentXtermTheme = theme;
+  for (const instance of instances.values()) {
+    if (instance.disposed) continue;
+    instance.term.options.theme = theme;
+  }
+}
 
 function safeFit(term: Terminal, fitAddon: FitAddon) {
   const buffer = term.buffer.active;
@@ -137,33 +156,7 @@ export async function createTerminalInstance(
     fontSize: currentFontSize,
     fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
     allowTransparency: true,
-    theme: {
-      // Specterm's default theme (Tokyo Night). Transparent background so the
-      // pane/.app layer (opaque #1a1b26) shows through — this lets the
-      // unfocused-split dimming overlay tint the terminal without repainting it.
-      background: "rgba(0, 0, 0, 0)",
-      foreground: "#c0caf5",
-      cursor: "#c0caf5",
-      cursorAccent: "#1a1b26",
-      selectionBackground: "#33467c",
-      selectionForeground: "#c0caf5",
-      black: "#15161e",
-      red: "#f7768e",
-      green: "#9ece6a",
-      yellow: "#e0af68",
-      blue: "#7aa2f7",
-      magenta: "#bb9af7",
-      cyan: "#7dcfff",
-      white: "#a9b1d6",
-      brightBlack: "#414868",
-      brightRed: "#f7768e",
-      brightGreen: "#9ece6a",
-      brightYellow: "#e0af68",
-      brightBlue: "#7aa2f7",
-      brightMagenta: "#bb9af7",
-      brightCyan: "#7dcfff",
-      brightWhite: "#c0caf5",
-    },
+    theme: currentXtermTheme,
     allowProposedApi: true,
   });
 

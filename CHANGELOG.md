@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0 — 2026-06-30
+
+### Added
+- Color themes — pick from five built-ins (Tokyo Night, Catppuccin Mocha,
+  Gruvbox Dark, Nord, Catppuccin Latte) in the Settings panel. The choice is
+  persisted and recolors both the terminal and the whole app at once
+- Theme gallery — browse and apply 325 bundled base16 schemes from Settings,
+  with a name filter and color swatches. Bundled offline (no network needed);
+  refresh with `node scripts/fetch-base16-schemes.mjs`
+- base16 theme import — three ways to add your own: paste a scheme (YAML/JSON),
+  open a `.yaml`/`.json` file, or drag a scheme file onto the window. Imported
+  themes can be removed
+- Light-theme support — the chrome now adapts to light palettes (Catppuccin
+  Latte ships as the first light built-in)
+
+### Changed
+- The Tokyo Night palette is no longer hardcoded: the app chrome is driven by
+  CSS variables on `:root` and the terminal palette comes from a single theme
+  model (`src/lib/theme.ts`), so a theme change updates every surface in sync
+
 ## 0.6.1 — 2026-06-29
 
 ### Added

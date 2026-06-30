@@ -10,8 +10,8 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: #1a1b26;
-  color: #c0caf5;
+  background: var(--bg);
+  color: var(--fg);
   font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
 }
 
@@ -21,7 +21,7 @@ body,
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: #1a1b26;
+  background: var(--bg);
 }
 
 .app-body {
@@ -41,8 +41,8 @@ body,
   display: flex;
   align-items: center;
   height: 36px;
-  background: #16161e;
-  border-bottom: 1px solid #292e42;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-app-region: drag;
 }
@@ -79,22 +79,22 @@ body,
   padding: 0 12px;
   height: 36px;
   font-size: 12px;
-  color: #565f89;
+  color: var(--fg-muted);
   cursor: pointer;
-  border-right: 1px solid #292e42;
+  border-right: 1px solid var(--border);
   white-space: nowrap;
   transition: color 0.15s, background 0.15s;
 }
 
 .tab:hover {
-  color: #c0caf5;
-  background: #292e42;
+  color: var(--fg);
+  background: var(--bg-hover);
 }
 
 .tab.active {
-  color: #c0caf5;
-  background: #1a1b26;
-  border-bottom: 2px solid #7aa2f7;
+  color: var(--fg);
+  background: var(--bg);
+  border-bottom: 2px solid var(--accent);
 }
 
 .tab-title {
@@ -125,8 +125,8 @@ body,
 }
 
 .tab-close:hover {
-  background: #33467c;
-  color: #c0caf5;
+  background: var(--selection);
+  color: var(--fg);
 }
 
 .tab-sidebar-toggle {
@@ -137,7 +137,7 @@ body,
   height: 36px;
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 16px;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -145,7 +145,7 @@ body,
 }
 
 .tab-sidebar-toggle:hover {
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .tab-new {
@@ -156,7 +156,7 @@ body,
   height: 36px;
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 18px;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -164,7 +164,7 @@ body,
 }
 
 .tab-new:hover {
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .tab-fullscreen {
@@ -175,7 +175,7 @@ body,
   height: 36px;
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 16px;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -183,7 +183,7 @@ body,
 }
 
 .tab-fullscreen:hover {
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .tab-settings {
@@ -194,7 +194,7 @@ body,
   height: 36px;
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 15px;
   cursor: pointer;
   -webkit-app-region: no-drag;
@@ -202,7 +202,7 @@ body,
 }
 
 .tab-settings:hover {
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 /* Settings panel — modal overlay above the whole app. */
@@ -219,11 +219,11 @@ body,
 .settings-panel {
   width: 380px;
   max-width: calc(100vw - 32px);
-  background: #1a1b26;
-  border: 1px solid #292e42;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  color: #c0caf5;
+  color: var(--fg);
   overflow: hidden;
 }
 
@@ -232,7 +232,7 @@ body,
   align-items: center;
   justify-content: space-between;
   padding: 10px 14px;
-  border-bottom: 1px solid #292e42;
+  border-bottom: 1px solid var(--border);
 }
 
 .settings-title {
@@ -243,7 +243,7 @@ body,
 .settings-close {
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 18px;
   line-height: 1;
   cursor: pointer;
@@ -251,7 +251,7 @@ body,
 }
 
 .settings-close:hover {
-  color: #c0caf5;
+  color: var(--fg);
 }
 
 .settings-section {
@@ -271,26 +271,26 @@ body,
 
 .settings-value {
   font-size: 13px;
-  color: #7aa2f7;
+  color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 
 .settings-slider {
   width: 100%;
   margin: 10px 0 6px;
-  accent-color: #7aa2f7;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
 .settings-hint {
   font-size: 11px;
-  color: #565f89;
+  color: var(--fg-muted);
 }
 
 .settings-reset {
   border: none;
   background: none;
-  color: #7aa2f7;
+  color: var(--accent);
   font-size: 11px;
   cursor: pointer;
   padding: 0;
@@ -301,10 +301,164 @@ body,
   text-decoration: underline;
 }
 
+.settings-reset:disabled {
+  opacity: 0.4;
+  cursor: default;
+  text-decoration: none;
+}
+
+/* Visually separates the settings groups (Theme / Panes). */
+.settings-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 0 14px;
+}
+
+.settings-select {
+  width: 100%;
+  margin: 10px 0 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.settings-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-textarea {
+  width: 100%;
+  margin: 10px 0 6px;
+  padding: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  resize: vertical;
+}
+
+.settings-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.settings-error {
+  font-size: 11px;
+  color: var(--danger);
+  margin: 6px 0;
+}
+
+/* Row of small text-buttons under the theme picker (gallery / file / paste). */
+.settings-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 6px;
+}
+
+.settings-action {
+  flex: 1 1 auto;
+  padding: 5px 8px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.settings-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.settings-search {
+  width: 100%;
+  margin: 8px 0 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.settings-search:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Scrollable list of gallery themes (the 325 bundled base16 schemes). */
+.theme-gallery {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+  padding-right: 2px;
+}
+
+.theme-gallery-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.theme-gallery-item:hover {
+  background: var(--bg-hover);
+}
+
+.theme-gallery-item.active {
+  border-color: var(--accent);
+}
+
+.theme-swatches {
+  flex: 0 0 auto;
+  display: inline-flex;
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+
+.theme-swatch {
+  width: 12px;
+  height: 14px;
+}
+
+.theme-gallery-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Split handle */
 .split-handle {
   flex-shrink: 0;
-  background: #292e42;
+  background: var(--bg-hover);
   transition: background 0.15s;
   z-index: 10;
   position: relative;
@@ -314,7 +468,7 @@ body,
 }
 
 .split-handle:hover {
-  background: #7aa2f7;
+  background: var(--accent);
 }
 
 .split-handle-h {
@@ -335,8 +489,8 @@ body,
   height: 20px;
   border: none;
   border-radius: 4px;
-  background: #292e42;
-  color: #c0caf5;
+  background: var(--bg-hover);
+  color: var(--fg);
   font-size: 12px;
   line-height: 1;
   display: flex;
@@ -353,20 +507,46 @@ body,
 }
 
 .split-flip:hover {
-  background: #7aa2f7;
-  color: #1a1b26;
+  background: var(--accent);
+  color: var(--accent-fg);
 }
 
 .split-handle-v .split-flip {
   transform: rotate(90deg);
 }
 
-/* Pane */
+/* Theme variables. These defaults are Tokyo Night (Specterm's built-in
+   default) so the stylesheet renders correctly before any JS runs. At startup
+   stores/theme.ts overwrites them on documentElement with the persisted theme;
+   src/lib/theme.ts is the source of truth for every built-in palette. */
 :root {
+  color-scheme: dark;
+
+  --bg: #1a1b26;
+  --bg-chrome: #16161e;
+  --bg-hover: #292e42;
+  --border: #292e42;
+  --selection: #33467c;
+  --unfocused-fill: #15161e;
+  --fg: #c0caf5;
+  --fg-muted: #565f89;
+  --fg-faint: #414868;
+  --fg-bright: #a9b1d6;
+  --accent: #7aa2f7;
+  --accent-fg: #1a1b26;
+  --danger: #f7768e;
+
+  --ansi-red: #f7768e;
+  --ansi-green: #9ece6a;
+  --ansi-yellow: #e0af68;
+  --ansi-blue: #7aa2f7;
+  --ansi-magenta: #bb9af7;
+  --ansi-cyan: #7dcfff;
+
   /* Ghostty: unfocused-split-opacity = 0.35. Wash inactive panes out by
      blending a darker base over them. */
   --unfocused-split-opacity: 0.35;
-  --unfocused-split-fill: #15161e;
+  --unfocused-split-fill: var(--unfocused-fill);
 }
 
 .pane {
@@ -388,9 +568,9 @@ body,
   align-items: center;
   gap: 6px;
   padding: 0 6px;
-  background: #16161e;
-  border-bottom: 1px solid #292e42;
-  color: #565f89;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  color: var(--fg-muted);
   font-size: 12px;
   cursor: grab;
   user-select: none;
@@ -403,8 +583,8 @@ body,
 }
 
 .pane-active .pane-titlebar {
-  color: #c0caf5;
-  background: #1a1b26;
+  color: var(--fg);
+  background: var(--bg);
 }
 
 .pane-grip {
@@ -451,8 +631,8 @@ body,
 /* Drop-zone indicator shown over the hovered target pane during a drag. */
 .drop-indicator {
   position: absolute;
-  background: rgba(122, 162, 247, 0.28);
-  border: 1px solid #7aa2f7;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+  border: 1px solid var(--accent);
   pointer-events: none;
   z-index: 40;
   transition: inset 0.08s ease;
@@ -480,7 +660,7 @@ body,
   height: 18px;
   border: none;
   background: none;
-  color: #565f89;
+  color: var(--fg-muted);
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
@@ -492,8 +672,8 @@ body,
 }
 
 .pane-close-btn:hover {
-  background: #f7768e;
-  color: #1a1b26;
+  background: var(--danger);
+  color: var(--accent-fg);
 }
 
 /* Scrollbar */
@@ -502,10 +682,10 @@ body,
 }
 
 ::-webkit-scrollbar-track {
-  background: #1a1b26;
+  background: var(--bg);
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #414868;
+  background: var(--fg-faint);
   border-radius: 4px;
 }
