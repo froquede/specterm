@@ -213,6 +213,34 @@ function insertBeside(
 }
 
 /**
+ * Drag-and-drop relocation onto the *outer* layout edge: prune the source and
+ * wrap the whole remaining tree in a new split, so the source spans the full
+ * width/height of that side (a full column or row) rather than splitting just
+ * one neighbour. Used when the drop lands on a pane edge that sits flush
+ * against the workspace boundary.
+ */
+export function moveLeafToRootEdge(
+  root: SplitNode,
+  sourceId: PaneId,
+  edge: Exclude<DropEdge, "center">
+): SplitNode {
+  const source = findLeafNode(root, sourceId);
+  if (!source) return root;
+  const pruned = closePane(root, sourceId);
+  if (pruned === null) return root; // source was the only pane
+  const direction: "h" | "v" = edge === "left" || edge === "right" ? "h" : "v";
+  const before = edge === "left" || edge === "top";
+  return {
+    type: "split",
+    id: nanoid(8),
+    direction,
+    first: before ? source : pruned,
+    second: before ? pruned : source,
+    ratio: 0.5,
+  };
+}
+
+/**
  * Drag-and-drop relocation. `center` swaps source and target; an edge prunes
  * the source from the tree and re-splits the target with the source attached
  * to that side.

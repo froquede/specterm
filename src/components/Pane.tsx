@@ -3,12 +3,15 @@ import type { PaneType, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
 import MarkdownPane from "./MarkdownPane";
+import TerminalSearch from "./TerminalSearch";
+import { searchPaneId } from "../stores/terminal-search";
 import {
   draggingPaneId,
   setDraggingPaneId,
   dropTarget,
   setDropTarget,
   computeDropEdge,
+  isFlushWithRoot,
 } from "../stores/pane-drag";
 
 interface PaneProps {
@@ -19,7 +22,12 @@ interface PaneProps {
   onTitle?: (title: string) => void;
   onClose?: () => void;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
-  onDrop?: (sourceId: PaneId, targetId: PaneId, edge: DropEdge) => void;
+  onDrop?: (
+    sourceId: PaneId,
+    targetId: PaneId,
+    edge: DropEdge,
+    atRoot?: boolean
+  ) => void;
 }
 
 export default function Pane(props: PaneProps) {
@@ -57,7 +65,10 @@ export default function Pane(props: PaneProps) {
         ev.clientY,
         paneEl.getBoundingClientRect()
       );
-      setDropTarget({ paneId: targetId, edge });
+      // An edge flush with the workspace boundary becomes a full column/row
+      // at the layout root rather than a split of just this pane.
+      const atRoot = edge !== "center" && isFlushWithRoot(paneEl, edge);
+      setDropTarget({ paneId: targetId, edge, root: atRoot });
     }
 
     function onUp() {
@@ -67,7 +78,7 @@ export default function Pane(props: PaneProps) {
       const dt = dropTarget();
       setDraggingPaneId(null);
       setDropTarget(null);
-      if (dt) props.onDrop?.(props.id, dt.paneId, dt.edge);
+      if (dt) props.onDrop?.(props.id, dt.paneId, dt.edge, dt.root);
     }
 
     bar.addEventListener("pointermove", onMove);
@@ -78,7 +89,8 @@ export default function Pane(props: PaneProps) {
   const isDropHere = () =>
     draggingPaneId() !== null &&
     draggingPaneId() !== props.id &&
-    dropTarget()?.paneId === props.id;
+    dropTarget()?.paneId === props.id &&
+    !dropTarget()?.root;
 
   return (
     <div
@@ -121,7 +133,10 @@ export default function Pane(props: PaneProps) {
           )}
         </Show>
         <Show when={props.pane.kind === "markdown" ? (props.pane as PaneType & { kind: "markdown" }).filePath : null} keyed>
-          {(filePath) => <MarkdownPane filePath={filePath} onOpenMarkdown={props.onOpenMarkdown} />}
+          {(filePath) => <MarkdownPane filePath={filePath} isActive={props.isActive} onOpenMarkdown={props.onOpenMarkdown} />}
+        </Show>
+        <Show when={props.pane.kind === "terminal" && searchPaneId() === props.id}>
+          <TerminalSearch paneId={props.id} />
         </Show>
       </div>
       <Show when={isDropHere()}>

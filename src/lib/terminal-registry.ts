@@ -3,6 +3,7 @@ import type { ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { SearchAddon } from "@xterm/addon-search";
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
 import { registerOscHandler } from "./osc";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
@@ -44,6 +45,7 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
 export interface TerminalInstance {
   term: Terminal;
   fitAddon: FitAddon;
+  searchAddon: SearchAddon;
   ptyId: number | null;
   container: HTMLDivElement | null;
   unlistenOutput: UnlistenFn | null;
@@ -162,6 +164,8 @@ export async function createTerminalInstance(
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
+  const searchAddon = new SearchAddon();
+  term.loadAddon(searchAddon);
   term.loadAddon(new WebLinksAddon((event, uri) => {
     event.preventDefault();
     window.getSelection()?.removeAllRanges();
@@ -177,6 +181,7 @@ export async function createTerminalInstance(
   const instance: TerminalInstance = {
     term,
     fitAddon,
+    searchAddon,
     ptyId: null,
     container: null,
     unlistenOutput: null,
