@@ -6,7 +6,7 @@
 // everything. Where a platform must diverge, a row adds a `byOS` override —
 // here, Linux/Windows keep the original Kitty "Ctrl+Shift+<key>" chords (see
 // `kitty()` below) while macOS uses the ⌘ scheme.
-import { cmd } from "../lib/platform";
+import { cmd, isMac } from "../lib/platform";
 import type { BindingSpec, Chord } from "./keybindings";
 import type { useTabStore } from "./tabs";
 import {
@@ -15,8 +15,37 @@ import {
   decreaseFontSize,
   resetFontSize,
 } from "../lib/terminal-registry";
-import { writePty } from "../lib/pty";
+import { writePty, clipboardHasImage } from "../lib/pty";
 import { searchPaneId, openSearch, closeSearch } from "./terminal-search";
+
+// Keystroke that makes Claude Code read an image straight from the OS clipboard
+// and drop it inline: Alt+V (ESC v) on Windows/Linux, Ctrl+V (0x16) on macOS —
+// its `chat:imagePaste` trigger per platform. We forward the byte; the app
+// fetches the bitmap itself, so nothing touches the PTY or disk.
+const IMAGE_PASTE_SEQ = isMac ? "\x16" : "\x1bv";
+
+// Smart paste into a PTY. When the clipboard holds an image, forward Claude
+// Code's inline image-paste keystroke so it ingests the bitmap directly. Plain
+// text falls back to a normal text paste. We only ask whether an image exists
+// (a boolean) — the image bytes never enter the renderer.
+async function pasteClipboard(ptyId: number) {
+  try {
+    if (await clipboardHasImage()) {
+      writePty(ptyId, IMAGE_PASTE_SEQ);
+      return;
+    }
+  } catch (err) {
+    // Backend/preload not ready — log and fall through to a text paste so the
+    // shortcut never silently dies.
+    console.warn("[paste] clipboard image check failed, using text:", err);
+  }
+  try {
+    const text = await navigator.clipboard.readText();
+    if (text) writePty(ptyId, text);
+  } catch (err) {
+    console.warn("[paste] clipboard text read failed:", err);
+  }
+}
 
 export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
@@ -203,21 +232,49 @@ export function createKeymap({
         }
       },
     },
+    // Paste — ⌘⇧V on macOS, Ctrl+Shift+V on Windows/Linux. A literal chord
+    // (not the cmd() ⌘⇧→Ctrl+Alt mapping) so both platforms use Shift+V, and
+    // bare ⌘V / Ctrl+V still flow to the terminal's native text paste. When the
+    // clipboard holds an image it triggers Claude Code's inline image paste,
+    // otherwise it pastes text.
     {
       id: "clipboard.paste",
       key: "v",
-      ...cmd(),
-      label: "Paste",
+      meta: true,
+      shift: true,
+      byOS: kitty("v"),
+      label: "Paste (image inline, else text)",
       run: async () => {
         const tab = store.activeTab;
         if (!tab) return;
         const inst = getTerminalInstance(tab.activePaneId);
         if (inst && inst.ptyId !== null) {
-          const text = await navigator.clipboard.readText();
-          if (text) writePty(inst.ptyId, text);
+          await pasteClipboard(inst.ptyId);
         }
       },
     },
+    // Inline image paste — forward Alt+V to the PTY as ESC+v so Claude Code's
+    // `chat:imagePaste` fires and reads the bitmap straight from the clipboard
+    // (its native Windows/Linux shortcut). We bind it ourselves so Electron's
+    // Alt menu-mnemonic doesn't swallow the key before xterm sees it. macOS is
+    // excluded: there ⌥V types a glyph and Claude Code uses Ctrl+V instead,
+    // which already passes through untouched.
+    ...(isMac
+      ? []
+      : [
+          {
+            id: "clipboard.pasteImageInline",
+            key: "v",
+            alt: true,
+            label: "Paste image inline (Claude Code Alt+V)",
+            run: () => {
+              const tab = store.activeTab;
+              if (!tab) return;
+              const inst = getTerminalInstance(tab.activePaneId);
+              if (inst && inst.ptyId !== null) writePty(inst.ptyId, "\x1bv");
+            },
+          } satisfies BindingSpec,
+        ]),
 
     // Sidebar / search — single ⌘B: closed → open and focus the filter; open →
     // close it and return focus to the active terminal. Fires from inside the
