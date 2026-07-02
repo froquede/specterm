@@ -654,6 +654,67 @@ body,
   inset: 50% 0 0 0;
 }
 
+/* In-terminal find bar (⌘F / Ctrl+Shift+F), floated over the active pane. */
+.term-search {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: #16161e;
+  border: 1px solid #292e42;
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.45);
+}
+
+.term-search-input {
+  width: 160px;
+  padding: 3px 7px;
+  background: #1a1b26;
+  border: 1px solid #292e42;
+  border-radius: 4px;
+  color: #c0caf5;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.term-search-input:focus {
+  border-color: #7aa2f7;
+}
+
+.term-search-count {
+  min-width: 34px;
+  text-align: center;
+  color: #565f89;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.term-search-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #a9b1d6;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+}
+.term-search-btn:hover {
+  background: #292e42;
+}
+.term-search-btn-active {
+  color: #7aa2f7;
+  background: rgba(122, 162, 247, 0.15);
+}
+
 .pane-close-btn {
   flex: 0 0 auto;
   width: 18px;
