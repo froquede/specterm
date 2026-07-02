@@ -25,6 +25,8 @@ export interface Backend {
   readDir(path: string): Promise<FileEntry[]>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
+  // True when the OS clipboard holds an image — drives image-vs-text paste.
+  clipboardHasImage(): Promise<boolean>;
 
   // Window
   isFullscreen(): Promise<boolean>;

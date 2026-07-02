@@ -11,6 +11,10 @@ export const [draggingPaneId, setDraggingPaneId] = createSignal<string | null>(
 export const [dropTarget, setDropTarget] = createSignal<{
   paneId: string;
   edge: DropEdge;
+  // True when `edge` is flush against the workspace boundary, so the drop
+  // should span the whole layout side (a full column/row) instead of
+  // splitting only the pane under the cursor.
+  root?: boolean;
 } | null>(null);
 
 // Edge thresholds: the central 40% box is "center" (swap); otherwise the
@@ -33,4 +37,41 @@ export function computeDropEdge(
     (best, edge) => (dist[edge] < dist[best] ? edge : best),
     "left" as Exclude<DropEdge, "center">
   );
+}
+
+// True when a drop on the pane's `edge` should span the whole workspace side (a
+// full column/row) instead of splitting just this pane. That requires two
+// things: the pane is flush against the root on that edge, AND it already spans
+// the full extent *perpendicular* to the resulting split. Without the second
+// check, a side-by-side (all-horizontal) layout — where every pane is flush top
+// AND bottom — would treat every top/bottom drop as a root-span, making it
+// impossible to stack one pane above a single neighbour (the whole tree gets
+// wrapped and unrelated panes are displaced).
+export function isFlushWithRoot(
+  paneEl: HTMLElement,
+  edge: Exclude<DropEdge, "center">
+): boolean {
+  const rootEl = paneEl.closest<HTMLElement>("[data-split-root]");
+  if (!rootEl) return false;
+  const r = paneEl.getBoundingClientRect();
+  const root = rootEl.getBoundingClientRect();
+  const TOL = 2; // px slack so sub-pixel layout still counts as flush
+  const flushLeft = Math.abs(r.left - root.left) <= TOL;
+  const flushRight = Math.abs(r.right - root.right) <= TOL;
+  const flushTop = Math.abs(r.top - root.top) <= TOL;
+  const flushBottom = Math.abs(r.bottom - root.bottom) <= TOL;
+  const spansWidth = flushLeft && flushRight;
+  const spansHeight = flushTop && flushBottom;
+  switch (edge) {
+    // A left/right root drop makes a full-height column, so only span the root
+    // when the pane already fills the full height. Transposed for top/bottom.
+    case "left":
+      return flushLeft && spansHeight;
+    case "right":
+      return flushRight && spansHeight;
+    case "top":
+      return flushTop && spansWidth;
+    case "bottom":
+      return flushBottom && spansWidth;
+  }
 }

@@ -1,20 +1,43 @@
-const { app, BrowserWindow, ipcMain, shell, Menu } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, clipboard, session } = require("electron");
 const path = require("path");
 const os = require("os");
 const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
 
-// Pick the shell to spawn for each platform. On Windows `process.env.SHELL`
-// is normally unset, so the old `|| "/bin/bash"` fallback spawned a binary
-// that doesn't exist and the terminal died instantly. Use PowerShell there
-// (pwsh 7+ if the user points us at it, otherwise the bundled Windows
-// PowerShell), falling back to ComSpec/cmd if PowerShell is missing.
+// Locate PowerShell 7+ (pwsh.exe), which defaults to UTF-8. The built-in
+// Windows PowerShell 5.1 instead defaults to the system code page (e.g. CP1252
+// on pt-BR installs), which mangles accented/Unicode input on paste.
+function findPwsh() {
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+  const candidate = path.join(programFiles, "PowerShell", "7", "pwsh.exe");
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+// Pick the shell to spawn for each platform and any args it needs. On Windows
+// `process.env.SHELL` is normally unset, so the old `|| "/bin/bash"` fallback
+// spawned a binary that doesn't exist and the terminal died instantly. Prefer
+// pwsh 7+ (UTF-8 by default); if only the legacy powershell.exe is available,
+// force its console encoding to UTF-8 so accents survive.
 function resolveShell() {
   if (process.platform === "win32") {
-    return process.env.SPECTERM_SHELL || "powershell.exe";
+    if (process.env.SPECTERM_SHELL) {
+      return { shell: process.env.SPECTERM_SHELL, args: [] };
+    }
+    const pwsh = findPwsh();
+    if (pwsh) {
+      return { shell: pwsh, args: [] };
+    }
+    return {
+      shell: "powershell.exe",
+      args: [
+        "-NoExit",
+        "-Command",
+        "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
+      ],
+    };
   }
-  return process.env.SHELL || "/bin/bash";
+  return { shell: process.env.SHELL || "/bin/bash", args: [] };
 }
 
 // PTY instance management
@@ -92,18 +115,28 @@ function createWindow() {
 // === IPC Handlers ===
 
 ipcMain.handle("spawn-pty", (_event, opts) => {
-  const shell = resolveShell();
+  const { shell, args } = resolveShell();
   const id = nextPtyId++;
 
-  const ptyProcess = pty.spawn(shell, [], {
+  const env = Object.assign({}, process.env, {
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+  });
+  // On Unix the shell renders input/output per the locale. GUI apps launched
+  // from Finder/Dock don't inherit LANG, so the shell falls back to the C
+  // locale and shows UTF-8 accents as mojibake. Force a UTF-8 locale when none
+  // is set. (Windows uses code pages instead — handled in resolveShell.)
+  if (process.platform !== "win32") {
+    env.LANG = process.env.LANG || "en_US.UTF-8";
+    env.LC_CTYPE = process.env.LC_CTYPE || env.LANG;
+  }
+
+  const ptyProcess = pty.spawn(shell, args, {
     name: "xterm-256color",
     cols: opts.cols,
     rows: opts.rows,
     cwd: opts.cwd || os.homedir(),
-    env: Object.assign({}, process.env, {
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    }),
+    env,
   });
 
   ptyInstances.set(id, { process: ptyProcess, disposed: false });
@@ -170,6 +203,14 @@ ipcMain.handle("read-dir", async (_event, dirPath) => {
     name: e.name,
     isDirectory: e.isDirectory(),
   }));
+});
+
+// True when the OS clipboard holds a bitmap. The renderer uses this to decide
+// whether Ctrl+Shift+V should trigger Claude Code's inline image paste (by
+// forwarding its Alt+V/Ctrl+V escape) or fall back to a normal text paste.
+// Nothing is written to disk — the foreground app reads the clipboard itself.
+ipcMain.handle("clipboard-has-image", () => {
+  return !clipboard.readImage().isEmpty();
 });
 
 ipcMain.handle("watch-dir", (_event, dirPath) => {
@@ -253,7 +294,24 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 
+// The renderer only ever loads bundled local content, so we grant the handful
+// of web permissions the UI actually uses rather than the default deny: the
+// Local Font Access API (system font list for the terminal font picker) and
+// clipboard read/write (smart paste + copy). Everything else stays denied.
+const GRANTED_PERMISSIONS = new Set([
+  "local-fonts",
+  "clipboard-read",
+  "clipboard-sanitized-write",
+]);
+
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler(
+    (_wc, permission, callback) => callback(GRANTED_PERMISSIONS.has(permission))
+  );
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+    GRANTED_PERMISSIONS.has(permission)
+  );
+
   buildAppMenu();
   createWindow();
 });

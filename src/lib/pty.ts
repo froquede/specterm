@@ -37,3 +37,8 @@ export function onPtyOutput(
 export function onPtyExit(callback: (id: number) => void): Promise<UnlistenFn> {
   return getBackend().then((b) => b.onPtyExit(callback));
 }
+
+export async function clipboardHasImage(): Promise<boolean> {
+  const backend = await getBackend();
+  return backend.clipboardHasImage();
+}

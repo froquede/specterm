@@ -10,6 +10,7 @@ interface SpectermAPI {
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
   readDir(path: string): Promise<FileEntry[]>;
+  clipboardHasImage(): Promise<boolean>;
   watchDir(path: string, cb: () => void): () => void;
   getHomePath(): Promise<string>;
   isFullscreen(): Promise<boolean>;
@@ -62,6 +63,10 @@ export class ElectronBackend implements Backend {
 
   async readDir(path: string): Promise<FileEntry[]> {
     return this.api.readDir(path);
+  }
+
+  async clipboardHasImage(): Promise<boolean> {
+    return this.api.clipboardHasImage();
   }
 
   async onFsChange(cb: () => void): Promise<UnlistenFn> {

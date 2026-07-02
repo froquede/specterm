@@ -58,6 +58,11 @@ export class TauriBackend implements Backend {
     return listen("fs-change", () => cb());
   }
 
+  async clipboardHasImage(): Promise<boolean> {
+    // Not yet wired on the Tauri backend; image paste is Electron-only for now.
+    return false;
+  }
+
   async getHomePath(): Promise<string> {
     return invoke<string>("get_home_path");
   }

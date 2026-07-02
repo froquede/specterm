@@ -5,6 +5,9 @@ import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
 
 interface MarkdownPaneProps {
   filePath: string;
+  // Whether this pane is the focused one. ⌘F only acts on the active pane so a
+  // single keypress doesn't toggle search in every open markdown pane at once.
+  isActive?: boolean;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
 }
 
@@ -220,6 +223,9 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   }
 
   function handleKeyDown(e: KeyboardEvent) {
+    // Ignore when another pane is focused: the listener is global (window), so
+    // without this guard every mounted markdown pane would react to one ⌘F.
+    if (!props.isActive) return;
     if (matchesCmd(e) && e.key.toLowerCase() === "f") {
       e.preventDefault();
       e.stopPropagation();

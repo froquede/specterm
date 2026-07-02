@@ -10,6 +10,8 @@ import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
 import SettingsPanel from "./components/SettingsPanel";
+import { draggingPaneId, dropTarget } from "./stores/pane-drag";
+import { closeSearch, searchPaneId } from "./stores/terminal-search";
 
 export default function App() {
   const store = useTabStore();
@@ -45,6 +47,14 @@ export default function App() {
     // rapid tab/pane switches don't queue up stale focus calls.
     const raf = requestAnimationFrame(focusActiveTerminal);
     onCleanup(() => cancelAnimationFrame(raf));
+  });
+
+  // Close the find bar when focus leaves the pane it was opened on (pane
+  // switch, tab switch), so it never lingers over a dimmed split.
+  createEffect(() => {
+    const active = store.activeTab?.activePaneId;
+    const searching = searchPaneId();
+    if (searching && searching !== active) closeSearch();
   });
 
   // Send `cd <path>` to the active pane's shell. Used by the file tree's
@@ -154,7 +164,7 @@ export default function App() {
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
         />
-        <div class="app-content">
+        <div class="app-content" data-split-root>
           <Show when={store.activeTab}>
             {(tab) => (
               <SplitContainer
@@ -168,14 +178,25 @@ export default function App() {
                 onToggleDirection={(splitId) =>
                   store.toggleSplitDirection(splitId)
                 }
-                onDropPane={(sourceId, targetId, edge) =>
-                  store.movePane(sourceId, targetId, edge)
+                onDropPane={(sourceId, targetId, edge, atRoot) =>
+                  store.movePane(sourceId, targetId, edge, atRoot)
                 }
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenMarkdown={handleOpenMarkdown}
               />
             )}
+          </Show>
+          {/* Full-span preview when a drag lands on the outer layout edge:
+              drops there become a whole column/row at the root. */}
+          <Show
+            when={
+              draggingPaneId() !== null && dropTarget()?.root
+                ? dropTarget()
+                : null
+            }
+          >
+            {(dt) => <div class={`drop-indicator drop-indicator-${dt().edge}`} />}
           </Show>
         </div>
       </div>

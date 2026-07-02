@@ -11,7 +11,12 @@ interface SplitContainerProps {
   onFocusPane: (id: PaneId) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
   onToggleDirection?: (splitId: string) => void;
-  onDropPane?: (sourceId: PaneId, targetId: PaneId, edge: DropEdge) => void;
+  onDropPane?: (
+    sourceId: PaneId,
+    targetId: PaneId,
+    edge: DropEdge,
+    atRoot?: boolean
+  ) => void;
   onTitle?: (title: string) => void;
   onClosePane?: (id: PaneId) => void;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
