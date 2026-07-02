@@ -6,6 +6,7 @@ import {
   collectLeaves,
   firstLeafId,
   moveLeaf,
+  moveLeafToRootEdge,
   findParentSplit,
   setSplitDirection,
   toggleSplitDirection,
@@ -287,13 +288,22 @@ export function useTabStore() {
       }));
     },
 
-    movePane(sourceId: PaneId, targetId: PaneId, edge: DropEdge) {
+    movePane(
+      sourceId: PaneId,
+      targetId: PaneId,
+      edge: DropEdge,
+      atRoot = false
+    ) {
       const s = state();
       const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
       if (idx === -1) return;
 
-      const newRoot = moveLeaf(s.tabs[idx].root, sourceId, targetId, edge);
-      if (newRoot === s.tabs[idx].root) return;
+      const root = s.tabs[idx].root;
+      const newRoot =
+        atRoot && edge !== "center"
+          ? moveLeafToRootEdge(root, sourceId, edge)
+          : moveLeaf(root, sourceId, targetId, edge);
+      if (newRoot === root) return;
 
       update(() => ({
         ...s,

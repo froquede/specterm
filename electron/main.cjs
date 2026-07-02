@@ -5,16 +5,39 @@ const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
 
-// Pick the shell to spawn for each platform. On Windows `process.env.SHELL`
-// is normally unset, so the old `|| "/bin/bash"` fallback spawned a binary
-// that doesn't exist and the terminal died instantly. Use PowerShell there
-// (pwsh 7+ if the user points us at it, otherwise the bundled Windows
-// PowerShell), falling back to ComSpec/cmd if PowerShell is missing.
+// Locate PowerShell 7+ (pwsh.exe), which defaults to UTF-8. The built-in
+// Windows PowerShell 5.1 instead defaults to the system code page (e.g. CP1252
+// on pt-BR installs), which mangles accented/Unicode input on paste.
+function findPwsh() {
+  const programFiles = process.env.ProgramFiles || "C:\\Program Files";
+  const candidate = path.join(programFiles, "PowerShell", "7", "pwsh.exe");
+  return fs.existsSync(candidate) ? candidate : null;
+}
+
+// Pick the shell to spawn for each platform and any args it needs. On Windows
+// `process.env.SHELL` is normally unset, so the old `|| "/bin/bash"` fallback
+// spawned a binary that doesn't exist and the terminal died instantly. Prefer
+// pwsh 7+ (UTF-8 by default); if only the legacy powershell.exe is available,
+// force its console encoding to UTF-8 so accents survive.
 function resolveShell() {
   if (process.platform === "win32") {
-    return process.env.SPECTERM_SHELL || "powershell.exe";
+    if (process.env.SPECTERM_SHELL) {
+      return { shell: process.env.SPECTERM_SHELL, args: [] };
+    }
+    const pwsh = findPwsh();
+    if (pwsh) {
+      return { shell: pwsh, args: [] };
+    }
+    return {
+      shell: "powershell.exe",
+      args: [
+        "-NoExit",
+        "-Command",
+        "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
+      ],
+    };
   }
-  return process.env.SHELL || "/bin/bash";
+  return { shell: process.env.SHELL || "/bin/bash", args: [] };
 }
 
 // PTY instance management
@@ -92,18 +115,28 @@ function createWindow() {
 // === IPC Handlers ===
 
 ipcMain.handle("spawn-pty", (_event, opts) => {
-  const shell = resolveShell();
+  const { shell, args } = resolveShell();
   const id = nextPtyId++;
 
-  const ptyProcess = pty.spawn(shell, [], {
+  const env = Object.assign({}, process.env, {
+    TERM: "xterm-256color",
+    COLORTERM: "truecolor",
+  });
+  // On Unix the shell renders input/output per the locale. GUI apps launched
+  // from Finder/Dock don't inherit LANG, so the shell falls back to the C
+  // locale and shows UTF-8 accents as mojibake. Force a UTF-8 locale when none
+  // is set. (Windows uses code pages instead — handled in resolveShell.)
+  if (process.platform !== "win32") {
+    env.LANG = process.env.LANG || "en_US.UTF-8";
+    env.LC_CTYPE = process.env.LC_CTYPE || env.LANG;
+  }
+
+  const ptyProcess = pty.spawn(shell, args, {
     name: "xterm-256color",
     cols: opts.cols,
     rows: opts.rows,
     cwd: opts.cwd || os.homedir(),
-    env: Object.assign({}, process.env, {
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-    }),
+    env,
   });
 
   ptyInstances.set(id, { process: ptyProcess, disposed: false });

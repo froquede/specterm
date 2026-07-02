@@ -16,6 +16,7 @@ import {
   resetFontSize,
 } from "../lib/terminal-registry";
 import { writePty, clipboardHasImage } from "../lib/pty";
+import { searchPaneId, openSearch, closeSearch } from "./terminal-search";
 
 // Keystroke that makes Claude Code read an image straight from the OS clipboard
 // and drop it inline: Alt+V (ESC v) on Windows/Linux, Ctrl+V (0x16) on macOS —
@@ -188,10 +189,46 @@ export function createKeymap({
       label: "Copy selection",
       run: () => {
         const tab = store.activeTab;
-        if (!tab) return;
-        const inst = getTerminalInstance(tab.activePaneId);
+        const inst = tab && getTerminalInstance(tab.activePaneId);
         if (inst && inst.term.hasSelection()) {
           navigator.clipboard.writeText(inst.term.getSelection());
+          return;
+        }
+        // No terminal selection: copy the current DOM selection (e.g. text
+        // picked in a markdown pane). This app ships no Edit menu — on purpose,
+        // so ⌘C reaches the renderer for terminal copy — which on macOS means
+        // Electron's native ⌘C never fires. So we write the selection here.
+        const domSel = window.getSelection()?.toString();
+        if (domSel) navigator.clipboard.writeText(domSel);
+      },
+    },
+    // Find in the active terminal — ⌘F (Ctrl+Shift+F on Win/Linux). Toggles a
+    // find bar over the active pane (like ⌘B for the sidebar): open with focus,
+    // or close and return to the terminal. No-op when the pane isn't a terminal
+    // (a markdown pane has its own ⌘F). allowInInput so a second ⌘F from inside
+    // the find box still closes it.
+    {
+      id: "terminal.search",
+      key: "f",
+      ...cmd(),
+      allowInInput: true,
+      label: "Find in terminal",
+      run: () => {
+        const paneId = store.activeTab?.activePaneId;
+        const inst = paneId ? getTerminalInstance(paneId) : undefined;
+        if (!paneId || !inst) return;
+        if (searchPaneId() === paneId) {
+          closeSearch();
+          inst.term.focus();
+          return;
+        }
+        openSearch(paneId);
+        const input = document.querySelector<HTMLInputElement>(
+          ".term-search-input"
+        );
+        if (input) {
+          input.focus();
+          input.select();
         }
       },
     },
