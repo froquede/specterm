@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "author": "Roque Francisco <roquefsd@gmail.com>",
   "contributors": [
