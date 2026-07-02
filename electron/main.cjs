@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, clipboard } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, clipboard, session } = require("electron");
 const path = require("path");
 const os = require("os");
 const pty = require("node-pty");
@@ -294,7 +294,24 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 
+// The renderer only ever loads bundled local content, so we grant the handful
+// of web permissions the UI actually uses rather than the default deny: the
+// Local Font Access API (system font list for the terminal font picker) and
+// clipboard read/write (smart paste + copy). Everything else stays denied.
+const GRANTED_PERMISSIONS = new Set([
+  "local-fonts",
+  "clipboard-read",
+  "clipboard-sanitized-write",
+]);
+
 app.whenReady().then(() => {
+  session.defaultSession.setPermissionRequestHandler(
+    (_wc, permission, callback) => callback(GRANTED_PERMISSIONS.has(permission))
+  );
+  session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
+    GRANTED_PERMISSIONS.has(permission)
+  );
+
   buildAppMenu();
   createWindow();
 });

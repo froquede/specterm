@@ -1,3 +1,4 @@
+import { createSignal } from "solid-js";
 import { Terminal } from "@xterm/xterm";
 import type { ITheme } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -135,6 +136,61 @@ document.documentElement.style.setProperty(
   (currentFontSize / DEFAULT_FONT_SIZE).toString()
 );
 
+// Terminal font family. Unlike zoom (driven by keyboard), this is a persisted
+// preference the Settings panel binds to, so it's a reactive signal. An empty
+// value means "use the bundled default stack".
+const DEFAULT_FONT_FAMILY =
+  "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace";
+const FONT_FAMILY_STORAGE_KEY = "specterm.fontFamily";
+
+function loadFontFamily(): string {
+  try {
+    return localStorage.getItem(FONT_FAMILY_STORAGE_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+const [terminalFontFamily, setTerminalFontFamilySignal] = createSignal<string>(
+  loadFontFamily()
+);
+export { terminalFontFamily };
+
+// The concrete CSS font-family handed to xterm: the user's pick with a
+// monospace fallback, or the bundled default stack when unset.
+function xtermFontFamily(): string {
+  const fam = terminalFontFamily().trim();
+  return fam ? `'${fam.replace(/'/g, "")}', monospace` : DEFAULT_FONT_FAMILY;
+}
+
+function persistFontFamily() {
+  try {
+    localStorage.setItem(FONT_FAMILY_STORAGE_KEY, terminalFontFamily());
+  } catch {
+    // localStorage unavailable — selection just won't persist this session
+  }
+}
+
+// Swap the font on every open terminal and refit (glyph metrics change the
+// column/row count), mirroring applyFontSize. `family` is a bare family name
+// (e.g. "Menlo") or "" to restore the default.
+export function setTerminalFontFamily(family: string) {
+  setTerminalFontFamilySignal(family);
+  persistFontFamily();
+  const next = xtermFontFamily();
+  for (const instance of instances.values()) {
+    if (instance.disposed) continue;
+    instance.term.options.fontFamily = next;
+    if (instance.container) {
+      try {
+        safeFit(instance.term, instance.fitAddon);
+      } catch {
+        // container not measurable right now — ignore
+      }
+    }
+  }
+}
+
 export function getTerminalInstance(paneId: string): TerminalInstance | undefined {
   return instances.get(paneId);
 }
@@ -156,7 +212,7 @@ export async function createTerminalInstance(
   const term = new Terminal({
     cursorBlink: true,
     fontSize: currentFontSize,
-    fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace",
+    fontFamily: xtermFontFamily(),
     allowTransparency: true,
     theme: currentXtermTheme,
     allowProposedApi: true,

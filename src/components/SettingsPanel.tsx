@@ -16,6 +16,11 @@ import {
   removeCustomTheme,
 } from "../stores/theme";
 import type { Theme } from "../lib/theme";
+import {
+  terminalFontFamily,
+  setTerminalFontFamily,
+} from "../lib/terminal-registry";
+import { detectMonospaceFonts } from "../lib/fonts";
 
 interface SettingsPanelProps {
   open: boolean;
@@ -48,6 +53,17 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // Gallery browser (the 325 bundled base16 schemes), with a name filter.
   const [galleryOpen, setGalleryOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
+
+  // Installed monospace fonts, detected lazily when the panel first mounts.
+  const [fonts, setFonts] = createSignal<string[]>([]);
+  const [fontsLoading, setFontsLoading] = createSignal(true);
+  onMount(async () => {
+    try {
+      setFonts(await detectMonospaceFonts());
+    } finally {
+      setFontsLoading(false);
+    }
+  });
 
   const filteredGallery = createMemo(() => {
     const q = query().trim().toLowerCase();
@@ -225,6 +241,56 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             <div class="settings-hint">
               Drag a base16 file onto the window, or browse hundreds of schemes
               above. Imports recolor the terminal and the app.
+            </div>
+          </div>
+
+          <div class="settings-divider" />
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="font-select">
+                Terminal font
+              </label>
+              <Show when={terminalFontFamily() !== ""}>
+                <button
+                  class="settings-reset"
+                  onClick={() => setTerminalFontFamily("")}
+                >
+                  Reset
+                </button>
+              </Show>
+            </div>
+            <select
+              id="font-select"
+              class="settings-select"
+              value={terminalFontFamily()}
+              onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
+            >
+              <option value="">Default (bundled)</option>
+              {/* Keep a persisted pick visible even if detection hasn't run or
+                  no longer lists it (e.g. font uninstalled). */}
+              <Show
+                when={
+                  terminalFontFamily() &&
+                  !fonts().includes(terminalFontFamily())
+                }
+              >
+                <option value={terminalFontFamily()}>
+                  {terminalFontFamily()}
+                </option>
+              </Show>
+              <For each={fonts()}>
+                {(f) => (
+                  <option value={f} style={{ "font-family": `'${f}', monospace` }}>
+                    {f}
+                  </option>
+                )}
+              </For>
+            </select>
+            <div class="settings-hint">
+              {fontsLoading()
+                ? "Detecting installed monospace fonts…"
+                : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
             </div>
           </div>
 
