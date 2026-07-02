@@ -31,6 +31,14 @@ interface PaneProps {
 }
 
 export default function Pane(props: PaneProps) {
+  // A pane's id is stable for its whole lifetime, so capture it once. Reading
+  // `props.id` re-invokes a reactive getter that dereferences the backing leaf
+  // node — and during teardown (a split replaces this leaf with a split
+  // subtree, or the pane closes) that node is already null. Reading it then
+  // threw "Cannot read properties of null (reading 'id')" from inside onCleanup,
+  // which propagated through Solid's disposal and poisoned the whole reactive
+  // render — freezing new tabs, splits, the sidebar toggle and resize refits.
+  const paneId = props.id;
   const [termTitle, setTermTitle] = createSignal("Terminal");
 
   // Label shown in the title-bar: the shell-reported title for terminals, the
@@ -48,7 +56,7 @@ export default function Pane(props: PaneProps) {
   function onBarPointerDown(e: PointerEvent) {
     const bar = e.currentTarget as HTMLElement;
     bar.setPointerCapture(e.pointerId);
-    setDraggingPaneId(props.id);
+    setDraggingPaneId(paneId);
 
     function onMove(ev: PointerEvent) {
       // Overlays are pointer-events:none, so this resolves to the pane under
@@ -56,7 +64,7 @@ export default function Pane(props: PaneProps) {
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
       const paneEl = el?.closest<HTMLElement>("[data-pane-id]");
       const targetId = paneEl?.getAttribute("data-pane-id");
-      if (!paneEl || !targetId || targetId === props.id) {
+      if (!paneEl || !targetId || targetId === paneId) {
         setDropTarget(null);
         return;
       }
@@ -78,7 +86,7 @@ export default function Pane(props: PaneProps) {
       const dt = dropTarget();
       setDraggingPaneId(null);
       setDropTarget(null);
-      if (dt) props.onDrop?.(props.id, dt.paneId, dt.edge, dt.root);
+      if (dt) props.onDrop?.(paneId, dt.paneId, dt.edge, dt.root);
     }
 
     bar.addEventListener("pointermove", onMove);
@@ -91,7 +99,7 @@ export default function Pane(props: PaneProps) {
   // Clear the shared drag state here so the remaining panes don't stay stuck in
   // the dimmed drag/drop-overlay state.
   onCleanup(() => {
-    if (draggingPaneId() === props.id) {
+    if (draggingPaneId() === paneId) {
       setDraggingPaneId(null);
       setDropTarget(null);
     }
@@ -99,14 +107,14 @@ export default function Pane(props: PaneProps) {
 
   const isDropHere = () =>
     draggingPaneId() !== null &&
-    draggingPaneId() !== props.id &&
-    dropTarget()?.paneId === props.id &&
+    draggingPaneId() !== paneId &&
+    dropTarget()?.paneId === paneId &&
     !dropTarget()?.root;
 
   return (
     <div
       class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""}`}
-      data-pane-id={props.id}
+      data-pane-id={paneId}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}
     >
@@ -130,24 +138,22 @@ export default function Pane(props: PaneProps) {
         </button>
       </div>
       <div class="pane-content">
-        <Show when={props.pane.kind === "terminal" ? props.id : null} keyed>
-          {(paneId) => (
-            <TerminalPane
-              paneId={paneId}
-              onTitle={(t) => {
-                setTermTitle(t);
-                props.onTitle?.(t);
-              }}
-              onExit={props.onClose}
-              onOpenMarkdown={props.onOpenMarkdown}
-            />
-          )}
+        <Show when={props.pane.kind === "terminal"}>
+          <TerminalPane
+            paneId={paneId}
+            onTitle={(t) => {
+              setTermTitle(t);
+              props.onTitle?.(t);
+            }}
+            onExit={props.onClose}
+            onOpenMarkdown={props.onOpenMarkdown}
+          />
         </Show>
         <Show when={props.pane.kind === "markdown" ? (props.pane as PaneType & { kind: "markdown" }).filePath : null} keyed>
           {(filePath) => <MarkdownPane filePath={filePath} isActive={props.isActive} onOpenMarkdown={props.onOpenMarkdown} />}
         </Show>
-        <Show when={props.pane.kind === "terminal" && searchPaneId() === props.id}>
-          <TerminalSearch paneId={props.id} />
+        <Show when={props.pane.kind === "terminal" && searchPaneId() === paneId}>
+          <TerminalSearch paneId={paneId} />
         </Show>
       </div>
       <Show when={isDropHere()}>

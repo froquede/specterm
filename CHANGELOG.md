@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.1 — 2026-07-02
+
+### Fixed
+- Splitting a pane, opening a tab, toggling the sidebar and refitting terminals
+  on window resize all stopped working after the first pane teardown. The pane
+  component's cleanup read `props.id`, a reactive getter that dereferences the
+  backing split-tree leaf — already `null` once the pane is unmounting (e.g. a
+  split replaces the leaf with a split subtree). The resulting
+  `Cannot read properties of null (reading 'id')` threw inside Solid's disposal
+  and poisoned the whole reactive render, freezing every subsequent update. The
+  id is now captured once at mount, since a pane's id never changes for its
+  lifetime
+
 ## 0.7.0 — 2026-06-30
 
 ### Added
