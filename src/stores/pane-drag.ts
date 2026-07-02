@@ -39,9 +39,14 @@ export function computeDropEdge(
   );
 }
 
-// True when the pane element's `edge` side sits flush against the workspace
-// root boundary (the [data-split-root] ancestor). A drop there spans the whole
-// layout edge instead of splitting just this pane.
+// True when a drop on the pane's `edge` should span the whole workspace side (a
+// full column/row) instead of splitting just this pane. That requires two
+// things: the pane is flush against the root on that edge, AND it already spans
+// the full extent *perpendicular* to the resulting split. Without the second
+// check, a side-by-side (all-horizontal) layout — where every pane is flush top
+// AND bottom — would treat every top/bottom drop as a root-span, making it
+// impossible to stack one pane above a single neighbour (the whole tree gets
+// wrapped and unrelated panes are displaced).
 export function isFlushWithRoot(
   paneEl: HTMLElement,
   edge: Exclude<DropEdge, "center">
@@ -51,14 +56,22 @@ export function isFlushWithRoot(
   const r = paneEl.getBoundingClientRect();
   const root = rootEl.getBoundingClientRect();
   const TOL = 2; // px slack so sub-pixel layout still counts as flush
+  const flushLeft = Math.abs(r.left - root.left) <= TOL;
+  const flushRight = Math.abs(r.right - root.right) <= TOL;
+  const flushTop = Math.abs(r.top - root.top) <= TOL;
+  const flushBottom = Math.abs(r.bottom - root.bottom) <= TOL;
+  const spansWidth = flushLeft && flushRight;
+  const spansHeight = flushTop && flushBottom;
   switch (edge) {
+    // A left/right root drop makes a full-height column, so only span the root
+    // when the pane already fills the full height. Transposed for top/bottom.
     case "left":
-      return Math.abs(r.left - root.left) <= TOL;
+      return flushLeft && spansHeight;
     case "right":
-      return Math.abs(r.right - root.right) <= TOL;
+      return flushRight && spansHeight;
     case "top":
-      return Math.abs(r.top - root.top) <= TOL;
+      return flushTop && spansWidth;
     case "bottom":
-      return Math.abs(r.bottom - root.bottom) <= TOL;
+      return flushBottom && spansWidth;
   }
 }

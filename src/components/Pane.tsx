@@ -1,4 +1,4 @@
-import { Show, createSignal } from "solid-js";
+import { Show, createSignal, onCleanup } from "solid-js";
 import type { PaneType, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
@@ -85,6 +85,17 @@ export default function Pane(props: PaneProps) {
     bar.addEventListener("pointerup", onUp);
     bar.addEventListener("pointercancel", onUp);
   }
+
+  // If this pane unmounts mid-drag (e.g. its PTY exits and closePane removes
+  // it), the captured title-bar element is gone so pointerup/onUp never fire.
+  // Clear the shared drag state here so the remaining panes don't stay stuck in
+  // the dimmed drag/drop-overlay state.
+  onCleanup(() => {
+    if (draggingPaneId() === props.id) {
+      setDraggingPaneId(null);
+      setDropTarget(null);
+    }
+  });
 
   const isDropHere = () =>
     draggingPaneId() !== null &&

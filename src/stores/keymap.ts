@@ -24,26 +24,32 @@ import { searchPaneId, openSearch, closeSearch } from "./terminal-search";
 // fetches the bitmap itself, so nothing touches the PTY or disk.
 const IMAGE_PASTE_SEQ = isMac ? "\x16" : "\x1bv";
 
-// Smart paste into a PTY. When the clipboard holds an image, forward Claude
-// Code's inline image-paste keystroke so it ingests the bitmap directly. Plain
-// text falls back to a normal text paste. We only ask whether an image exists
-// (a boolean) — the image bytes never enter the renderer.
+// Smart paste into a PTY. Text wins whenever the clipboard carries any: many
+// sources (spreadsheets, browsers) put BOTH a bitmap and text on the clipboard,
+// and this chord is the everyday paste on Linux/Windows (Ctrl+Shift+V), so a
+// data table must paste as text rather than injecting a stray escape sequence
+// into whatever program is in the foreground. Only a text-less clipboard falls
+// through to Claude Code's inline image paste; explicit image-inline paste also
+// has its own dedicated shortcut (Alt+V, or Ctrl+V on macOS). We only ever ask
+// whether an image exists (a boolean) — the image bytes never enter the renderer.
 async function pasteClipboard(ptyId: number) {
   try {
-    if (await clipboardHasImage()) {
-      writePty(ptyId, IMAGE_PASTE_SEQ);
+    const text = await navigator.clipboard.readText();
+    if (text) {
+      writePty(ptyId, text);
       return;
     }
   } catch (err) {
-    // Backend/preload not ready — log and fall through to a text paste so the
+    // Clipboard text read failed — fall through to the image path so the
     // shortcut never silently dies.
-    console.warn("[paste] clipboard image check failed, using text:", err);
+    console.warn("[paste] clipboard text read failed:", err);
   }
   try {
-    const text = await navigator.clipboard.readText();
-    if (text) writePty(ptyId, text);
+    if (await clipboardHasImage()) {
+      writePty(ptyId, IMAGE_PASTE_SEQ);
+    }
   } catch (err) {
-    console.warn("[paste] clipboard text read failed:", err);
+    console.warn("[paste] clipboard image check failed:", err);
   }
 }
 
@@ -211,9 +217,21 @@ export function createKeymap({
       id: "terminal.search",
       key: "f",
       ...cmd(),
+      // allowInInput so a second ⌘F from inside the find box still closes it —
+      // but bail if focus is in some *other* real text field (e.g. the sidebar
+      // filter), so the shortcut doesn't yank focus out of unrelated editing.
       allowInInput: true,
       label: "Find in terminal",
       run: () => {
+        const active = document.activeElement;
+        if (
+          active instanceof HTMLElement &&
+          (active.tagName === "INPUT" || active.tagName === "TEXTAREA") &&
+          !active.classList.contains("xterm-helper-textarea") &&
+          !active.classList.contains("term-search-input")
+        ) {
+          return;
+        }
         const paneId = store.activeTab?.activePaneId;
         const inst = paneId ? getTerminalInstance(paneId) : undefined;
         if (!paneId || !inst) return;
@@ -233,10 +251,11 @@ export function createKeymap({
       },
     },
     // Paste — ⌘⇧V on macOS, Ctrl+Shift+V on Windows/Linux. A literal chord
-    // (not the cmd() ⌘⇧→Ctrl+Alt mapping) so both platforms use Shift+V, and
-    // bare ⌘V / Ctrl+V still flow to the terminal's native text paste. When the
-    // clipboard holds an image it triggers Claude Code's inline image paste,
-    // otherwise it pastes text.
+    // (not the cmd() ⌘⇧→Ctrl+Alt mapping) so both platforms use Shift+V. When
+    // the clipboard holds only an image it triggers Claude Code's inline image
+    // paste, otherwise it pastes text. On Windows/Linux bare Ctrl+V still flows
+    // to xterm's native text paste; macOS has no native path, so bare ⌘V is
+    // bound explicitly below.
     {
       id: "clipboard.paste",
       key: "v",
@@ -253,6 +272,32 @@ export function createKeymap({
         }
       },
     },
+    // macOS-only bare ⌘V — plain text paste. The app ships no Edit menu with a
+    // paste role and xterm registers no paste handler, so without this ⌘V would
+    // do nothing on macOS. Mirrors the native Ctrl+V text paste on Win/Linux
+    // (image-inline stays on ⌘⇧V / Claude Code's Ctrl+V, not here).
+    ...(isMac
+      ? [
+          {
+            id: "clipboard.pasteText",
+            key: "v",
+            meta: true,
+            label: "Paste text",
+            run: async () => {
+              const tab = store.activeTab;
+              if (!tab) return;
+              const inst = getTerminalInstance(tab.activePaneId);
+              if (!inst || inst.ptyId === null) return;
+              try {
+                const text = await navigator.clipboard.readText();
+                if (text) writePty(inst.ptyId, text);
+              } catch (err) {
+                console.warn("[paste] clipboard text read failed:", err);
+              }
+            },
+          } satisfies BindingSpec,
+        ]
+      : []),
     // Inline image paste — forward Alt+V to the PTY as ESC+v so Claude Code's
     // `chat:imagePaste` fires and reads the bitmap straight from the clipboard
     // (its native Windows/Linux shortcut). We bind it ourselves so Electron's
