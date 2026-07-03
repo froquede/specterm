@@ -37,6 +37,26 @@ export default function App() {
     getTerminalInstance(tab.activePaneId)?.term.focus();
   }
 
+  // Deterministically move keyboard focus into a pane after an *explicit* action
+  // (a drag-drop). Unlike focusActiveTerminal this ignores the input guard —
+  // dropping a pane is an unambiguous intent to focus it — and it verifies the
+  // focus actually landed. `term.focus()` silently no-ops when the terminal
+  // element was just moved in the DOM and hasn't been laid out yet, which would
+  // leave typing focus on the previously focused pane while the active-pane
+  // highlight (state-driven) already moved — the exact drag-drop focus glitch.
+  // So: focus, check synchronously, and retry on the next frame until the helper
+  // textarea holds focus, capped so a non-terminal pane (markdown) or a torn-down
+  // pane doesn't retry forever.
+  function focusPaneReliably(paneId: string, attempts = 3) {
+    const inst = getTerminalInstance(paneId);
+    if (!inst || inst.disposed) return; // no terminal to focus (e.g. markdown)
+    inst.term.focus();
+    // focus() is synchronous: activeElement reflects success on this same tick.
+    if (document.activeElement === inst.term.textarea) return;
+    if (attempts <= 1) return; // give up quietly instead of looping forever
+    requestAnimationFrame(() => focusPaneReliably(paneId, attempts - 1));
+  }
+
   createEffect(() => {
     const tab = store.activeTab;
     if (!tab) return;
@@ -178,9 +198,13 @@ export default function App() {
                 onToggleDirection={(splitId) =>
                   store.toggleSplitDirection(splitId)
                 }
-                onDropPane={(sourceId, targetId, edge, atRoot) =>
-                  store.movePane(sourceId, targetId, edge, atRoot)
-                }
+                onDropPane={(sourceId, targetId, edge, atRoot) => {
+                  store.movePane(sourceId, targetId, edge, atRoot);
+                  // The state update already moved the active-pane highlight to
+                  // sourceId; pull keyboard focus there too, deterministically,
+                  // once the moved terminal has settled into its new DOM slot.
+                  requestAnimationFrame(() => focusPaneReliably(sourceId));
+                }}
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenMarkdown={handleOpenMarkdown}
