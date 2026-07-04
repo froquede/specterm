@@ -7,6 +7,7 @@ import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
 import { startupPath } from "../stores/settings";
+import { os } from "./platform";
 import { registerOscHandler } from "./osc";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
@@ -211,6 +212,24 @@ const CD_FAV_RE = /^cd\s+fav-(\d+)$/;
 // POSIX single-quote a path so spaces and shell metacharacters survive intact.
 function shellQuote(p: string): string {
   return `'${p.replace(/'/g, "'\\''")}'`;
+}
+
+// Build the `cd fav-N` expansion for the host shell. A real directory literally
+// named `fav-N` in the cwd wins — try it first, fall back to the favorite path.
+// The default Windows shell is PowerShell, where the POSIX `cd x 2>/dev/null ||`
+// form is a parse error, so it needs its own Test-Path form.
+function cdFavCommand(dir: string, favPath: string): string {
+  if (os === "windows") {
+    // PowerShell escapes a single quote by doubling it; -LiteralPath avoids
+    // glob/[] interpretation of the path.
+    const q = (p: string) => `'${p.replace(/'/g, "''")}'`;
+    return (
+      `if (Test-Path -LiteralPath ${q(dir)}) ` +
+      `{ Set-Location -LiteralPath ${q(dir)} } ` +
+      `else { Set-Location -LiteralPath ${q(favPath)} }`
+    );
+  }
+  return `cd ${shellQuote(dir)} 2>/dev/null || cd ${shellQuote(favPath)}`;
 }
 
 // Fold a chunk of terminal input into the mirrored line buffer. Returns the new
@@ -425,16 +444,23 @@ export async function attachTerminal(
     if (data === "\r" || data === "\n") {
       const m = lineTracked ? CD_FAV_RE.exec(lineBuffer.trim()) : null;
       const fav = m ? favoriteByIndex(Number(m[1])) : undefined;
+      const typedLen = lineBuffer.length;
       lineBuffer = "";
       lineTracked = true;
       if (m && fav) {
-        // Kill the typed `cd fav-N` (cursor is at end since the mirror only
-        // tracks plain typing), then submit the expansion. A real directory
-        // literally named `fav-N` in the cwd wins: we let the shell try it
-        // first and only fall back to the favorite path when that cd fails.
+        // Erase the echoed `cd fav-N` from the shell's input line, then submit
+        // the expansion. A real directory literally named `fav-N` in the cwd
+        // wins: the expansion tries it first and only falls back to the
+        // favorite path when that cd fails.
+        //
+        // Erase with backspaces (DEL, \x7f) rather than Ctrl-U (\x15): PowerShell
+        // (the Windows default) doesn't kill the input line on \x15, which left
+        // the typed text prepended to the expansion and broke the command. The
+        // cursor is at end (the mirror only tracks plain typing), so one DEL per
+        // typed char clears the line on every shell.
         const dir = `fav-${m[1]}`;
-        writePty(ptyId, "\x15");
-        writePty(ptyId, `cd ${dir} 2>/dev/null || cd ${shellQuote(fav.path)}\r`);
+        writePty(ptyId, "\x7f".repeat(typedLen));
+        writePty(ptyId, `${cdFavCommand(dir, fav.path)}\r`);
         return;
       }
       writePty(ptyId, data);

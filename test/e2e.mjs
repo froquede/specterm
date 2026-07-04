@@ -97,6 +97,18 @@ async function terminalCwd(win, marker, timeoutMs = 12000) {
 const userDataDir = path.join(os.tmpdir(), `specterm-e2e-${process.pid}-${Date.now()}`);
 fs.mkdirSync(userDataDir, { recursive: true });
 
+// Which key splits a pane side-by-side. macOS uses the ⌘-scheme (⌘⇧D); Windows
+// and Linux keep the original "kitty" chord (Ctrl+Shift+Enter). See keymap.ts.
+const SPLIT_SIDE = process.platform === "darwin" ? "Meta+Shift+D" : "Control+Shift+Enter";
+
+// Read the transient drop-preview state mid-drag. A root-span preview is a
+// direct child of the split root; a local split preview lives inside a pane.
+const readDrop = (win) =>
+  win.evaluate(() => ({
+    rootIndicator: !!document.querySelector("[data-split-root] > .drop-indicator"),
+    localIndicator: !!document.querySelector(".pane .drop-indicator"),
+  }));
+
 // --- run -------------------------------------------------------------------
 let app;
 try {
@@ -193,6 +205,75 @@ try {
   } else {
     skip("cd control moves the terminal", "no safe subdirectory to cd into");
     skip("Backspace (empty filter) goes up", "no safe subdirectory to cd into");
+  }
+
+  // 6b) PR #17 — "cd fav-N" typed at the shell prompt expands to a real cd into
+  // the pinned favorite. Favorite a folder, cd the terminal to a *different*
+  // dir, then type `cd fav-1` and confirm the shell landed in the favorite.
+  const sf = await state(win);
+  const favBase = sf.crumbTitle;
+  const favDir =
+    ["Windows", "usr", "etc", "Users", "home"].find((n) => sf.dirNames.includes(n)) ||
+    sf.dirNames.find((n) => n && n !== ".." && !n.startsWith("$") && !n.startsWith("."));
+  if (favDir) {
+    const entry = win
+      .locator(".file-tree-content .file-tree-entry", {
+        has: win.locator(".file-tree-name", { hasText: rx(favDir) }),
+      })
+      .first();
+    await entry.hover();
+    await entry.locator(".file-tree-entry-fav").click({ force: true });
+    // cd the active terminal to favBase (so the fav-N jump is a visible change).
+    const favLS = await win.evaluate(() => localStorage.getItem("specterm.favorites"));
+    await win.locator(".file-tree-cd-here").click();
+    await win.waitForTimeout(1200);
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type("cd fav-1");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(1500);
+    const cwdFav = await terminalCwd(win, "favN");
+    check("cd fav-N expands to the favorite path", eqPath(cwdFav, joinPath(favBase, favDir)), `expected=${joinPath(favBase, favDir)} cwd=${cwdFav} favs=${favLS}`);
+  } else {
+    skip("cd fav-N expands to the favorite path", "no favoritable subdirectory");
+  }
+
+  // 6c) PR #16 — root-edge drag-and-drop. Split side-by-side, then drag the
+  // right pane's titlebar: over the outer strip it previews a full-span root
+  // drop; over an inner edge it previews a local split.
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+  const paneN = await win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
+  if (paneN >= 2) {
+    const geo = await win.evaluate(() => {
+      const rootEl = document.querySelector("[data-split-root]").getBoundingClientRect();
+      const panes = Array.from(document.querySelectorAll("[data-pane-id]")).map((p) => {
+        const r = p.getBoundingClientRect();
+        const tb = p.querySelector(".pane-titlebar").getBoundingClientRect();
+        return { r: { left: r.left, right: r.right, top: r.top, height: r.height, cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 }, tb: { x: tb.left + 28, y: (tb.top + tb.bottom) / 2 } };
+      });
+      return { root: { left: rootEl.left, right: rootEl.right }, panes };
+    });
+    const [p0, p1] = geo.panes;
+    await win.mouse.move(p1.tb.x, p1.tb.y);
+    await win.mouse.down();
+    await win.mouse.move(geo.root.left + 6, p0.r.cy, { steps: 8 }); // outer-left strip
+    const d1 = await readDrop(win);
+    check("outer-edge drag previews a root-span drop", d1.rootIndicator && !d1.localIndicator, JSON.stringify(d1));
+    // Inner top of the left pane: past the outer band (so not a root drop) yet
+    // in the top zone (so a real edge, not a center swap) and clear of the divider.
+    await win.mouse.move(p0.r.cx, p0.r.top + p0.r.height * 0.2, { steps: 8 });
+    const d2 = await readDrop(win);
+    check("inner-edge drag previews a local split", d2.localIndicator && !d2.rootIndicator, JSON.stringify(d2));
+    await win.mouse.move(geo.root.left + 6, p0.r.cy, { steps: 6 });
+    await win.mouse.up();
+    await win.waitForTimeout(600);
+    const paneN2 = await win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
+    check("root-edge drop rearranges without adding panes", paneN2 === paneN, `before=${paneN} after=${paneN2}`);
+  } else {
+    skip("outer-edge drag previews a root-span drop", "split shortcut did not create a second pane");
+    skip("inner-edge drag previews a local split", "split shortcut did not create a second pane");
+    skip("root-edge drop rearranges without adding panes", "split shortcut did not create a second pane");
   }
 
   // 7) Default terminal path: set via UI, confirm persistence, reload, verify
