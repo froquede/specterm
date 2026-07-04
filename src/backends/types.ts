@@ -11,6 +11,13 @@ export interface FileEntry {
   isDirectory: boolean;
 }
 
+// A mounted volume on Windows (e.g. { name: "C:", path: "C:\\" }). Empty on
+// other platforms, which have a single "/" root.
+export interface DriveEntry {
+  name: string;
+  path: string;
+}
+
 export interface Backend {
   // PTY
   spawnPty(opts: SpawnPtyOptions): Promise<number>;
@@ -23,6 +30,8 @@ export interface Backend {
   // Filesystem
   readTextFile(path: string): Promise<string>;
   readDir(path: string): Promise<FileEntry[]>;
+  // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
+  listDrives(): Promise<DriveEntry[]>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.

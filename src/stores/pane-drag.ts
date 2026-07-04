@@ -39,39 +39,37 @@ export function computeDropEdge(
   );
 }
 
-// True when a drop on the pane's `edge` should span the whole workspace side (a
-// full column/row) instead of splitting just this pane. That requires two
-// things: the pane is flush against the root on that edge, AND it already spans
-// the full extent *perpendicular* to the resulting split. Without the second
-// check, a side-by-side (all-horizontal) layout — where every pane is flush top
-// AND bottom — would treat every top/bottom drop as a root-span, making it
-// impossible to stack one pane above a single neighbour (the whole tree gets
-// wrapped and unrelated panes are displaced).
-export function isFlushWithRoot(
+// True when a drop should span the whole workspace side (a full column/row)
+// instead of splitting just the pane under the cursor. The trigger is a thin
+// band along the workspace's *outer* boundary: dropping in that strip, on an
+// edge that is flush with the root, makes a full-height column (left/right) or
+// full-width row (top/bottom). Dropping further inward returns false and falls
+// through to a local pane split. This keeps both gestures reachable from any
+// layout — e.g. in a side-by-side row you can still stack one pane above a
+// single neighbour (inner drop) yet also drop a full-width row across the top
+// (outer strip) — which a pure flush-with-edge test could not distinguish.
+export function isRootEdgeDrop(
   paneEl: HTMLElement,
-  edge: Exclude<DropEdge, "center">
+  edge: Exclude<DropEdge, "center">,
+  x: number,
+  y: number
 ): boolean {
   const rootEl = paneEl.closest<HTMLElement>("[data-split-root]");
   if (!rootEl) return false;
   const r = paneEl.getBoundingClientRect();
   const root = rootEl.getBoundingClientRect();
   const TOL = 2; // px slack so sub-pixel layout still counts as flush
-  const flushLeft = Math.abs(r.left - root.left) <= TOL;
-  const flushRight = Math.abs(r.right - root.right) <= TOL;
-  const flushTop = Math.abs(r.top - root.top) <= TOL;
-  const flushBottom = Math.abs(r.bottom - root.bottom) <= TOL;
-  const spansWidth = flushLeft && flushRight;
-  const spansHeight = flushTop && flushBottom;
+  // Outer-strip thickness, scaled to the workspace so it stays a comfortable
+  // target at any window size, clamped to a sane px floor/ceiling.
+  const band = (extent: number) => Math.min(Math.max(extent * 0.12, 32), 140);
   switch (edge) {
-    // A left/right root drop makes a full-height column, so only span the root
-    // when the pane already fills the full height. Transposed for top/bottom.
     case "left":
-      return flushLeft && spansHeight;
+      return Math.abs(r.left - root.left) <= TOL && x - root.left <= band(root.width);
     case "right":
-      return flushRight && spansHeight;
+      return Math.abs(r.right - root.right) <= TOL && root.right - x <= band(root.width);
     case "top":
-      return flushTop && spansWidth;
+      return Math.abs(r.top - root.top) <= TOL && y - root.top <= band(root.height);
     case "bottom":
-      return flushBottom && spansWidth;
+      return Math.abs(r.bottom - root.bottom) <= TOL && root.bottom - y <= band(root.height);
   }
 }

@@ -2,7 +2,13 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { readTextFile, readDir as tauriReadDir } from "@tauri-apps/plugin-fs";
-import type { Backend, SpawnPtyOptions, FileEntry, UnlistenFn } from "./types";
+import type {
+  Backend,
+  SpawnPtyOptions,
+  FileEntry,
+  DriveEntry,
+  UnlistenFn,
+} from "./types";
 
 interface PtyOutput {
   id: number;
@@ -52,6 +58,13 @@ export class TauriBackend implements Backend {
       name: e.name,
       isDirectory: e.isDirectory,
     }));
+  }
+
+  async listDrives(): Promise<DriveEntry[]> {
+    // TODO: implement a `list_drives` Tauri command (probe C:..Z: existence in
+    // Rust) once the Tauri backend is completed. Electron is the shipping
+    // Windows target today, so this stub keeps the interface satisfied.
+    return [];
   }
 
   async onFsChange(cb: () => void): Promise<UnlistenFn> {

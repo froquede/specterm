@@ -6,7 +6,10 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
+import { startupPath } from "../stores/settings";
+import { os } from "./platform";
 import { registerOscHandler } from "./osc";
+import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import type { UnlistenFn } from "../backends/types";
 
@@ -195,6 +198,70 @@ export function getTerminalInstance(paneId: string): TerminalInstance | undefine
   return instances.get(paneId);
 }
 
+// --- "cd fav-N" expansion -------------------------------------------------
+// Typing `cd fav-1` at the shell prompt and pressing Enter is rewritten into a
+// real `cd <path>` for the favorite pinned at that 1-based index, mirroring the
+// sidebar-search "fav-N" token. To do this we shadow the current input line by
+// mirroring the user's keystrokes (append printable chars, pop on backspace).
+// Anything we can't model — arrow keys, history recall, tab-completion — flips
+// the line "untracked" so we never rewrite a line we don't fully understand.
+// The mirror resets on every Enter/Ctrl-C/Ctrl-U.
+
+const CD_FAV_RE = /^cd\s+fav-(\d+)$/;
+
+// POSIX single-quote a path so spaces and shell metacharacters survive intact.
+function shellQuote(p: string): string {
+  return `'${p.replace(/'/g, "'\\''")}'`;
+}
+
+// Build the `cd fav-N` expansion for the host shell. A real directory literally
+// named `fav-N` in the cwd wins — try it first, fall back to the favorite path.
+// The default Windows shell is PowerShell, where the POSIX `cd x 2>/dev/null ||`
+// form is a parse error, so it needs its own Test-Path form.
+function cdFavCommand(dir: string, favPath: string): string {
+  if (os === "windows") {
+    // PowerShell escapes a single quote by doubling it; -LiteralPath avoids
+    // glob/[] interpretation of the path.
+    const q = (p: string) => `'${p.replace(/'/g, "''")}'`;
+    return (
+      `if (Test-Path -LiteralPath ${q(dir)}) ` +
+      `{ Set-Location -LiteralPath ${q(dir)} } ` +
+      `else { Set-Location -LiteralPath ${q(favPath)} }`
+    );
+  }
+  return `cd ${shellQuote(dir)} 2>/dev/null || cd ${shellQuote(favPath)}`;
+}
+
+// Fold a chunk of terminal input into the mirrored line buffer. Returns the new
+// buffer text plus whether it's still a faithful mirror of the prompt line.
+function foldInput(
+  buffer: string,
+  tracked: boolean,
+  data: string
+): { buffer: string; tracked: boolean } {
+  // Backspace / DEL — drop the last char.
+  if (data === "\x7f" || data === "\x08") {
+    return { buffer: buffer.slice(0, -1), tracked };
+  }
+  // Ctrl-U (kill line) — clear the mirror but keep tracking.
+  if (data === "\x15") {
+    return { buffer: "", tracked: true };
+  }
+  // A run of purely printable text (single keystroke or a bracketed paste
+  // without newlines) — append it verbatim.
+  if (data.length > 0 && !/[\x00-\x1f\x7f]/.test(data)) {
+    return { buffer: buffer + data, tracked };
+  }
+  // Ctrl-C / Ctrl-D and friends — the line is abandoned, reset the mirror.
+  if (data === "\x03" || data === "\x04") {
+    return { buffer: "", tracked: true };
+  }
+  // Escape sequences (arrows, history, home/end), tab-completion, or any other
+  // control input we can't faithfully replay — stop trusting the mirror until
+  // the next line.
+  return { buffer, tracked: false };
+}
+
 export async function createTerminalInstance(
   paneId: string,
   opts?: {
@@ -341,10 +408,13 @@ export async function attachTerminal(
 
   fitAddon.fit();
 
-  // Spawn PTY
+  // Spawn PTY. The configured startup directory (Settings) is passed through as
+  // cwd; blank → undefined, and the main process falls back to the OS home. A
+  // stale/deleted path is guarded main-side so spawning can't crash.
   instance.ptyId = await spawnPty({
     cols: term.cols,
     rows: term.rows,
+    cwd: startupPath() || undefined,
   });
 
   // Wire output
@@ -362,11 +432,45 @@ export async function attachTerminal(
     }
   });
 
-  // Wire input
+  // Wire input. A mirrored line buffer lets us expand `cd fav-N` into a real
+  // `cd <path>` at the moment Enter is pressed (see foldInput above).
+  let lineBuffer = "";
+  let lineTracked = true;
   term.onData((data) => {
-    if (instance!.ptyId !== null) {
-      writePty(instance!.ptyId, data);
+    if (instance!.ptyId === null) return;
+    const ptyId = instance!.ptyId;
+
+    // Enter — try to expand the line before it reaches the shell.
+    if (data === "\r" || data === "\n") {
+      const m = lineTracked ? CD_FAV_RE.exec(lineBuffer.trim()) : null;
+      const fav = m ? favoriteByIndex(Number(m[1])) : undefined;
+      const typedLen = lineBuffer.length;
+      lineBuffer = "";
+      lineTracked = true;
+      if (m && fav) {
+        // Erase the echoed `cd fav-N` from the shell's input line, then submit
+        // the expansion. A real directory literally named `fav-N` in the cwd
+        // wins: the expansion tries it first and only falls back to the
+        // favorite path when that cd fails.
+        //
+        // Erase with backspaces (DEL, \x7f) rather than Ctrl-U (\x15): PowerShell
+        // (the Windows default) doesn't kill the input line on \x15, which left
+        // the typed text prepended to the expansion and broke the command. The
+        // cursor is at end (the mirror only tracks plain typing), so one DEL per
+        // typed char clears the line on every shell.
+        const dir = `fav-${m[1]}`;
+        writePty(ptyId, "\x7f".repeat(typedLen));
+        writePty(ptyId, `${cdFavCommand(dir, fav.path)}\r`);
+        return;
+      }
+      writePty(ptyId, data);
+      return;
     }
+
+    const next = foldInput(lineBuffer, lineTracked, data);
+    lineBuffer = next.buffer;
+    lineTracked = next.tracked;
+    writePty(ptyId, data);
   });
 
   // Wire resize

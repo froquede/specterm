@@ -11,7 +11,7 @@ import {
   dropTarget,
   setDropTarget,
   computeDropEdge,
-  isFlushWithRoot,
+  isRootEdgeDrop,
 } from "../stores/pane-drag";
 
 interface PaneProps {
@@ -73,9 +73,10 @@ export default function Pane(props: PaneProps) {
         ev.clientY,
         paneEl.getBoundingClientRect()
       );
-      // An edge flush with the workspace boundary becomes a full column/row
-      // at the layout root rather than a split of just this pane.
-      const atRoot = edge !== "center" && isFlushWithRoot(paneEl, edge);
+      // A drop in the thin outer strip of the workspace becomes a full
+      // column/row at the layout root rather than a split of just this pane.
+      const atRoot =
+        edge !== "center" && isRootEdgeDrop(paneEl, edge, ev.clientX, ev.clientY);
       setDropTarget({ paneId: targetId, edge, root: atRoot });
     }
 

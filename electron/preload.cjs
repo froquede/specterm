@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("specterm", {
 
   readDir: (path) => ipcRenderer.invoke("read-dir", path),
 
+  listDrives: () => ipcRenderer.invoke("list-drives"),
+
   clipboardHasImage: () => ipcRenderer.invoke("clipboard-has-image"),
 
   getHomePath: () => ipcRenderer.invoke("get-home-path"),
