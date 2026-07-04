@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.8.2 — 2026-07-03
+
+### Added
+- `cd fav-N` expansion — typing `cd fav-1` (or any favorite index) at the shell
+  prompt now expands to a real `cd` into the path pinned at that 1-based
+  favorite, mirroring the sidebar-search `fav-N` token. A real directory named
+  `fav-N` in the current folder wins: the shell tries it first
+  (`cd fav-N 2>/dev/null || cd '<favpath>'`) and only falls back to the favorite
+  path when that fails. Only plain-typed lines expand — arrows, history recall
+  and tab-completion leave the line untouched
+
 ## 0.8.1 — 2026-07-02
 
 ### Fixed
