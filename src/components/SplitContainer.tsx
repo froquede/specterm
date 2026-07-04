@@ -27,19 +27,45 @@ export default function SplitContainer(props: SplitContainerProps) {
     <Show
       when={props.node.type === "split" ? props.node : null}
       fallback={
-        <Show when={props.node.type === "leaf" ? props.node : null}>
-          {(leaf) => (
-            <Pane
-              id={(leaf() as SplitNode & { type: "leaf" }).id}
-              pane={(leaf() as SplitNode & { type: "leaf" }).pane}
-              isActive={(leaf() as SplitNode & { type: "leaf" }).id === props.activePaneId}
-              onFocus={() => props.onFocusPane((leaf() as SplitNode & { type: "leaf" }).id)}
-              onTitle={props.onTitle}
-              onClose={() => props.onClosePane?.((leaf() as SplitNode & { type: "leaf" }).id)}
-              onOpenMarkdown={props.onOpenMarkdown}
-              onDrop={props.onDropPane}
-            />
-          )}
+        // Key the leaf by its id (not the node object) so Solid recreates the
+        // Pane when this slot's leaf changes, instead of reusing the same Pane
+        // with a stale captured id. The reuse was what bound a pane to the wrong
+        // terminal after a drag — surfacing as focus landing on another pane and
+        // a drop-highlight rendered twice (the same id matching two slots).
+        <Show
+          when={
+            props.node.type === "leaf"
+              ? (props.node as SplitNode & { type: "leaf" }).id
+              : null
+          }
+          keyed
+        >
+          {(leafId) => {
+            // While this child is alive the slot holds this exact leaf; the
+            // keyed Show above disposes/recreates it otherwise. The inner Show
+            // guards the teardown frame so `l().pane` never derefs a node that
+            // has already stopped being this leaf.
+            const leaf = () => {
+              const n = props.node;
+              return n.type === "leaf" && n.id === leafId ? n : null;
+            };
+            return (
+              <Show when={leaf()}>
+                {(l) => (
+                  <Pane
+                    id={leafId}
+                    pane={l().pane}
+                    isActive={leafId === props.activePaneId}
+                    onFocus={() => props.onFocusPane(leafId)}
+                    onTitle={props.onTitle}
+                    onClose={() => props.onClosePane?.(leafId)}
+                    onOpenMarkdown={props.onOpenMarkdown}
+                    onDrop={props.onDropPane}
+                  />
+                )}
+              </Show>
+            );
+          }}
         </Show>
       }
     >
