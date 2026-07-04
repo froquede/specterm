@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { basename, normalize, equalPath } from "../lib/fspath";
 
 // Favorite directories the user pins from the file tree. Persisted to
 // localStorage so they survive restarts. Order is meaningful: the first entry
@@ -12,12 +13,6 @@ export interface Favorite {
   label: string;
 }
 
-function basename(p: string): string {
-  const trimmed = p.replace(/\/+$/, "");
-  const i = trimmed.lastIndexOf("/");
-  return (i >= 0 ? trimmed.slice(i + 1) : trimmed) || "/";
-}
-
 function load(): Favorite[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -27,7 +22,9 @@ function load(): Favorite[] {
     return parsed
       .filter((f) => f && typeof f.path === "string")
       .map((f) => ({
-        path: f.path as string,
+        // Normalize on load: older favorites were saved with "/" separators, so
+        // on Windows they must be converted to "\" to match freshly-built paths.
+        path: normalize(f.path as string),
         label:
           typeof f.label === "string" && f.label
             ? f.label
@@ -57,16 +54,17 @@ function commit(list: Favorite[]) {
 export { favorites };
 
 export function isFavorite(path: string): boolean {
-  return favorites().some((f) => f.path === path);
+  return favorites().some((f) => equalPath(f.path, path));
 }
 
 export function addFavorite(path: string, label?: string) {
-  if (isFavorite(path)) return;
-  commit([...favorites(), { path, label: label || basename(path) }]);
+  const p = normalize(path);
+  if (isFavorite(p)) return;
+  commit([...favorites(), { path: p, label: label || basename(p) }]);
 }
 
 export function removeFavorite(path: string) {
-  commit(favorites().filter((f) => f.path !== path));
+  commit(favorites().filter((f) => !equalPath(f.path, path)));
 }
 
 export function toggleFavorite(path: string, label?: string) {

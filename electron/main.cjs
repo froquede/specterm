@@ -131,11 +131,17 @@ ipcMain.handle("spawn-pty", (_event, opts) => {
     env.LC_CTYPE = process.env.LC_CTYPE || env.LANG;
   }
 
+  // Guard against a stale/deleted configured cwd — node-pty throws if the
+  // directory doesn't exist, which would kill terminal creation. Fall back to
+  // home when the path is blank or gone.
+  const cwd =
+    opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : os.homedir();
+
   const ptyProcess = pty.spawn(shell, args, {
     name: "xterm-256color",
     cols: opts.cols,
     rows: opts.rows,
-    cwd: opts.cwd || os.homedir(),
+    cwd,
     env,
   });
 
@@ -203,6 +209,27 @@ ipcMain.handle("read-dir", async (_event, dirPath) => {
     name: e.name,
     isDirectory: e.isDirectory(),
   }));
+});
+
+// Enumerate mounted volumes so the sidebar can offer a "This PC" drive picker.
+// Windows only — probe A:..Z: in parallel (fs.access is cheap and needs no
+// child_process, unlike the deprecated wmic). Other platforms have a single "/"
+// root and get an empty list.
+ipcMain.handle("list-drives", async () => {
+  if (process.platform !== "win32") return [];
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
+  const checks = await Promise.all(
+    letters.map(async (letter) => {
+      const root = `${letter}:\\`;
+      try {
+        await fs.promises.access(root);
+        return { name: `${letter}:`, path: root };
+      } catch {
+        return null;
+      }
+    })
+  );
+  return checks.filter(Boolean);
 });
 
 // True when the OS clipboard holds a bitmap. The renderer uses this to decide

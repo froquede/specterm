@@ -1,4 +1,10 @@
-import type { Backend, SpawnPtyOptions, FileEntry, UnlistenFn } from "./types";
+import type {
+  Backend,
+  SpawnPtyOptions,
+  FileEntry,
+  DriveEntry,
+  UnlistenFn,
+} from "./types";
 
 // The preload script exposes window.specterm via contextBridge
 interface SpectermAPI {
@@ -10,6 +16,7 @@ interface SpectermAPI {
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
   readDir(path: string): Promise<FileEntry[]>;
+  listDrives(): Promise<DriveEntry[]>;
   clipboardHasImage(): Promise<boolean>;
   watchDir(path: string, cb: () => void): () => void;
   getHomePath(): Promise<string>;
@@ -63,6 +70,10 @@ export class ElectronBackend implements Backend {
 
   async readDir(path: string): Promise<FileEntry[]> {
     return this.api.readDir(path);
+  }
+
+  async listDrives(): Promise<DriveEntry[]> {
+    return this.api.listDrives();
   }
 
   async clipboardHasImage(): Promise<boolean> {

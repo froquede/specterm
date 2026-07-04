@@ -6,6 +6,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
+import { startupPath } from "../stores/settings";
 import { registerOscHandler } from "./osc";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import type { UnlistenFn } from "../backends/types";
@@ -341,10 +342,13 @@ export async function attachTerminal(
 
   fitAddon.fit();
 
-  // Spawn PTY
+  // Spawn PTY. The configured startup directory (Settings) is passed through as
+  // cwd; blank → undefined, and the main process falls back to the OS home. A
+  // stale/deleted path is guarded main-side so spawning can't crash.
   instance.ptyId = await spawnPty({
     cols: term.cols,
     rows: term.rows,
+    cwd: startupPath() || undefined,
   });
 
   // Wire output

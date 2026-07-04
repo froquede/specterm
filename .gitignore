@@ -146,3 +146,7 @@ build-output/
 .DS_Store
 *.swp
 *.swo
+
+# E2E test artifacts (regenerated each run)
+test/shot-*.png
+test/e2e-result.json

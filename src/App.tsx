@@ -6,6 +6,7 @@ import { initSettings } from "./stores/settings";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
+import { shellQuoteCd } from "./lib/fspath";
 import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
@@ -64,8 +65,15 @@ export default function App() {
     if (!tab) return;
     const inst = getTerminalInstance(tab.activePaneId);
     if (inst && inst.ptyId !== null) {
-      const quoted = "'" + path.replace(/'/g, "'\\''") + "'";
-      writePty(inst.ptyId, `cd ${quoted}\n`);
+      // Quote/escape per the host shell — PowerShell (the Windows default) needs
+      // Set-Location, not the POSIX `cd 'x'` form. See lib/fspath.
+      //
+      // Submit with a carriage return, not "\n": that's the byte a real Enter
+      // key sends, and ConPTY/PowerShell on Windows does NOT execute the line on
+      // a bare "\n" (it just sits at the prompt). CR works on POSIX shells too
+      // (the pty line discipline maps CR→NL), so it's the correct cross-platform
+      // submit.
+      writePty(inst.ptyId, `${shellQuoteCd(path)}\r`);
       inst.term.focus();
     }
   }

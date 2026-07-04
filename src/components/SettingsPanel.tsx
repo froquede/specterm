@@ -6,7 +6,10 @@ import {
   UNFOCUSED_OPACITY_MIN,
   UNFOCUSED_OPACITY_MAX,
   UNFOCUSED_OPACITY_DEFAULT,
+  startupPath,
+  setStartupPath,
 } from "../stores/settings";
+import { getBackend } from "../backends";
 import {
   activeTheme,
   availableThemes,
@@ -53,6 +56,31 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // Gallery browser (the 325 bundled base16 schemes), with a name filter.
   const [galleryOpen, setGalleryOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
+
+  // Startup-directory field: a local draft so the user can type freely; the
+  // store (and terminal/sidebar behavior) only updates on commit (blur/Enter),
+  // where we also validate that the path is readable.
+  const [startupDraft, setStartupDraft] = createSignal(startupPath());
+  const [startupError, setStartupError] = createSignal<string | null>(null);
+
+  async function commitStartupPath() {
+    const value = startupDraft().trim();
+    setStartupDraft(value);
+    if (!value) {
+      setStartupError(null);
+      setStartupPath("");
+      return;
+    }
+    try {
+      const backend = await getBackend();
+      await backend.readDir(value);
+      setStartupError(null);
+      setStartupPath(value);
+    } catch (_) {
+      // Keep the draft visible but don't persist an unreadable path.
+      setStartupError("That folder can't be read — leaving the previous value.");
+    }
+  }
 
   // Installed monospace fonts, detected lazily when the panel first mounts.
   const [fonts, setFonts] = createSignal<string[]>([]);
@@ -291,6 +319,47 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               {fontsLoading()
                 ? "Detecting installed monospace fonts…"
                 : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
+            </div>
+          </div>
+
+          <div class="settings-divider" />
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="startup-path">
+                Default terminal path
+              </label>
+              <Show when={startupPath() !== ""}>
+                <button
+                  class="settings-reset"
+                  onClick={() => {
+                    setStartupDraft("");
+                    setStartupError(null);
+                    setStartupPath("");
+                  }}
+                >
+                  Reset
+                </button>
+              </Show>
+            </div>
+            <input
+              id="startup-path"
+              class="settings-select"
+              type="text"
+              placeholder="Leave blank for home directory"
+              value={startupDraft()}
+              onInput={(e) => setStartupDraft(e.currentTarget.value)}
+              onBlur={commitStartupPath}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+            />
+            <Show when={startupError()}>
+              <div class="settings-error">{startupError()}</div>
+            </Show>
+            <div class="settings-hint">
+              Where new terminals open and the file sidebar starts. Blank uses
+              your home directory.
             </div>
           </div>
 

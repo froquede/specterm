@@ -9,8 +9,16 @@ import {
 } from "solid-js";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
-import { isAccelClick } from "../lib/platform";
+import { isAccelClick, os } from "../lib/platform";
+import { join, dirname, normalize, equalPath } from "../lib/fspath";
 import { favorites, toggleFavorite, favoriteByIndex } from "../stores/favorites";
+import {
+  startupPath,
+  lastBrowsedPath,
+  setLastBrowsedPath,
+} from "../stores/settings";
+
+const WIN = os === "windows";
 
 // A "fav-N" token in the search box (full or partial, e.g. "fav-", "fav-2")
 // is a cd command, not a name filter — used both to suppress filtering while
@@ -21,7 +29,8 @@ interface FileTreeProps {
   open: boolean;
   width: number;
   onOpenFile: (path: string, mode: "split" | "tab") => void;
-  // Run `cd <path>` in the active terminal pane (favorite click / "fav-N").
+  // Run `cd <path>` in the active terminal pane (favorite click / "fav-N" /
+  // the "open terminal here" button).
   onCdPath: (path: string) => void;
   // Return focus to the grid/terminal (Esc on an already-empty filter).
   onDismiss?: () => void;
@@ -31,6 +40,12 @@ interface DirEntry extends FileEntry {
   path: string;
 }
 
+interface Crumb {
+  label: string;
+  path?: string; // navigate here; absent = current (non-clickable) segment
+  drives?: boolean; // "This PC" — open the drive list instead
+}
+
 async function listDir(dirPath: string): Promise<DirEntry[]> {
   const backend = await getBackend();
   const entries = await backend.readDir(dirPath);
@@ -38,7 +53,7 @@ async function listDir(dirPath: string): Promise<DirEntry[]> {
   return entries
     .map((e) => ({
       ...e,
-      path: dirPath + "/" + e.name,
+      path: join(dirPath, e.name),
     }))
     .sort((a, b) => {
       if (a.isDirectory && !b.isDirectory) return -1;
@@ -47,28 +62,92 @@ async function listDir(dirPath: string): Promise<DirEntry[]> {
     });
 }
 
+// True when `p` is `h` itself or a descendant of it (separator-aware,
+// case-insensitive on Windows). Used to collapse the home prefix to "~".
+function underHome(p: string, h: string): boolean {
+  const hn = normalize(h).replace(/[\\/]+$/, "");
+  if (!hn) return false;
+  const pn = normalize(p);
+  if (equalPath(pn, hn)) return true;
+  const boundary = pn.charAt(hn.length);
+  return (
+    (boundary === "\\" || boundary === "/") &&
+    equalPath(pn.slice(0, hn.length), hn)
+  );
+}
+
 export default function FileTree(props: FileTreeProps) {
   const [currentPath, setCurrentPath] = createSignal("");
+  const [drivesView, setDrivesView] = createSignal(false);
+  const [home, setHome] = createSignal("");
   const [filter, setFilter] = createSignal("");
   const [selectedIndex, setSelectedIndex] = createSignal(0);
   let listEl: HTMLDivElement | undefined;
-  const [entries, { refetch }] = createResource(currentPath, (path) =>
-    path ? listDir(path) : Promise.resolve([])
+
+  // Directory listing — skipped (falsy source) while the drive list is showing.
+  const [entries, { refetch }] = createResource(
+    () => (drivesView() ? "" : currentPath()),
+    (path) => (path ? listDir(path) : Promise.resolve([]))
   );
+
+  // Mounted volumes for the "This PC" view (Windows; [] elsewhere).
+  const [drives, { refetch: refetchDrives }] = createResource(
+    drivesView,
+    (on) => (on ? getBackend().then((b) => b.listDrives()) : Promise.resolve([]))
+  );
+
+  // Unified row list so keyboard nav, selection, click and favoriting work the
+  // same whether we're browsing a directory or the drive list. Drives present
+  // as directories that navigate into their root.
+  const rows = createMemo<DirEntry[]>(() => {
+    if (drivesView()) {
+      return (drives() || []).map((d) => ({
+        name: d.name,
+        isDirectory: true,
+        path: d.path,
+      }));
+    }
+    // Reading entries() while errored re-throws — guard on .error first.
+    return entries.error ? [] : entries() || [];
+  });
 
   // O(1) favorite lookups: a single derived Set instead of an O(n) array scan
   // per cell (each row queries it 3×, and it re-runs on every toggle).
-  const favSet = createMemo(() => new Set(favorites().map((f) => f.path)));
-  const isFav = (path: string) => favSet().has(path);
+  const favSet = createMemo(() => new Set(favorites().map((f) => normalize(f.path))));
+  const isFav = (path: string) => favSet().has(normalize(path));
 
   onMount(async () => {
     const backend = await getBackend();
-    const home = await backend.getHomePath();
-    setCurrentPath(home);
+    const homePath = await backend.getHomePath();
+    setHome(homePath);
+
+    // Reopen where it makes sense: the last-browsed folder, else the configured
+    // startup path, else home — each only if it's actually readable, so a stale
+    // or deleted setting silently falls through to the next.
+    for (const candidate of [lastBrowsedPath(), startupPath()]) {
+      if (!candidate) continue;
+      try {
+        await backend.readDir(candidate);
+        navigateTo(candidate);
+        return;
+      } catch {
+        // unreadable — try the next candidate
+      }
+    }
+    navigateTo(homePath);
   });
 
   function navigateTo(path: string) {
-    setCurrentPath(path);
+    const p = normalize(path);
+    setDrivesView(false);
+    setCurrentPath(p);
+    setFilter("");
+    setSelectedIndex(0);
+    if (p) setLastBrowsedPath(p);
+  }
+
+  function enterDrives() {
+    setDrivesView(true);
     setFilter("");
     setSelectedIndex(0);
   }
@@ -87,8 +166,14 @@ export default function FileTree(props: FileTreeProps) {
   }
 
   function navigateUp() {
-    const current = currentPath();
-    const parent = current.substring(0, current.lastIndexOf("/")) || "/";
+    if (drivesView()) return; // already at the top
+    const parent = dirname(currentPath());
+    if (!parent) {
+      // No parent path: on Windows that means "above a drive root" → show the
+      // volume list; on POSIX we're already at "/", so stay put.
+      if (WIN) enterDrives();
+      return;
+    }
     navigateTo(parent);
   }
 
@@ -104,10 +189,10 @@ export default function FileTree(props: FileTreeProps) {
     activateEntry(entry, isAccelClick(e) ? "tab" : "split");
   }
 
-  // Memoized: filter runs once per (entries, filter) change instead of on each
+  // Memoized: filter runs once per (rows, filter) change instead of on each
   // of its call sites (For, ghost text, the selection effect, key handlers).
   const filteredEntries = createMemo<DirEntry[]>(() => {
-    const all = entries() || [];
+    const all = rows();
     const q = filter().trim();
     // While a "fav-N" command is being typed, don't filter the listing — it's
     // headed for the active terminal, not the tree, so leave the dir visible.
@@ -130,6 +215,15 @@ export default function FileTree(props: FileTreeProps) {
 
   function handleFilterKeyDown(e: KeyboardEvent) {
     const list = filteredEntries();
+
+    // With an empty filter, Backspace / Left go up a level — a quick keyboard
+    // counterpart to clicking "..". Guarded on empty so normal editing is
+    // unaffected.
+    if (!filter() && (e.key === "Backspace" || e.key === "ArrowLeft")) {
+      e.preventDefault();
+      navigateUp();
+      return;
+    }
 
     if (e.key === "Escape") {
       // Esc progressivo: 1º limpa o filtro (mantendo o foco pra refiltrar);
@@ -198,23 +292,80 @@ export default function FileTree(props: FileTreeProps) {
     node?.scrollIntoView({ block: "nearest" });
   });
 
-  function displayPath(): string {
-    const p = currentPath();
-    const home = p.match(/^\/home\/[^/]+/)?.[0];
-    if (home && p.startsWith(home)) {
-      return "~" + p.slice(home.length);
+  // Clickable breadcrumb segments. A leading "This PC" crumb (Windows) opens the
+  // drive list; the home prefix collapses to "~"; the last segment is the
+  // current folder (rendered inert).
+  const crumbs = createMemo<Crumb[]>(() => {
+    const out: Crumb[] = [];
+    if (WIN) out.push({ label: "This PC", drives: true });
+    if (drivesView()) return out;
+
+    const p = normalize(currentPath());
+    if (!p) return out;
+
+    let rest = p;
+    let acc = "";
+    const h = home();
+    if (h && underHome(p, h)) {
+      const hn = normalize(h).replace(/[\\/]+$/, "");
+      out.push({ label: "~", path: hn });
+      acc = hn;
+      rest = p.slice(hn.length).replace(/^[\\/]+/, "");
+    } else if (!WIN) {
+      out.push({ label: "/", path: "/" });
+      rest = p.replace(/^\/+/, "");
     }
-    return p;
+
+    for (const part of rest ? rest.split(/[\\/]+/).filter(Boolean) : []) {
+      acc = acc ? join(acc, part) : WIN ? part : "/" + part;
+      out.push({ label: part, path: acc });
+    }
+    return out;
+  });
+
+  function onCrumb(c: Crumb, isLast: boolean) {
+    if (isLast) return;
+    if (c.drives) enterDrives();
+    else if (c.path) navigateTo(c.path);
   }
+
+  const loading = () => (drivesView() ? drives.loading : entries.loading);
+  const headerPath = () => (drivesView() ? "This PC" : currentPath());
 
   return (
     <Show when={props.open}>
       <div class="file-tree" style={{ width: `${props.width}px` }}>
         <div class="file-tree-header">
-          <span class="file-tree-path" title={currentPath()}>
-            {displayPath()}
-          </span>
-          <Show when={currentPath()}>
+          <div class="file-tree-crumbs" title={headerPath()}>
+            <For each={crumbs()}>
+              {(c, i) => {
+                const isLast = () => i() === crumbs().length - 1;
+                return (
+                  <>
+                    <Show when={i() > 0}>
+                      <span class="file-tree-crumb-sep">{WIN ? "\\" : "/"}</span>
+                    </Show>
+                    <button
+                      class="file-tree-crumb"
+                      classList={{ current: isLast() }}
+                      disabled={isLast()}
+                      onClick={() => onCrumb(c, isLast())}
+                    >
+                      {c.label}
+                    </button>
+                  </>
+                );
+              }}
+            </For>
+          </div>
+          <Show when={!drivesView() && currentPath()}>
+            <button
+              class="file-tree-cd-here"
+              title="Open the active terminal here (cd)"
+              onClick={() => props.onCdPath(currentPath())}
+            >
+              ⌁
+            </button>
             <button
               class="file-tree-fav-toggle"
               classList={{ active: isFav(currentPath()) }}
@@ -228,7 +379,10 @@ export default function FileTree(props: FileTreeProps) {
               {isFav(currentPath()) ? "★" : "☆"}
             </button>
           </Show>
-          <button class="file-tree-refresh" onClick={() => refetch()}>
+          <button
+            class="file-tree-refresh"
+            onClick={() => (drivesView() ? refetchDrives() : refetch())}
+          >
             ↻
           </button>
         </div>
@@ -258,7 +412,7 @@ export default function FileTree(props: FileTreeProps) {
               {(fav, i) => (
                 <div
                   class="file-tree-fav"
-                  classList={{ active: fav.path === currentPath() }}
+                  classList={{ active: equalPath(fav.path, currentPath()) }}
                   title={fav.path}
                   onClick={() => openFavorite(fav.path)}
                 >
@@ -280,7 +434,7 @@ export default function FileTree(props: FileTreeProps) {
           </div>
         </Show>
         <div class="file-tree-content" ref={listEl}>
-          <Show when={!filter()}>
+          <Show when={!drivesView() && currentPath() && !filter()}>
             <div class="file-tree-entry file-tree-dir" onClick={navigateUp}>
               <span class="file-tree-icon">▴</span>
               ..
@@ -288,57 +442,73 @@ export default function FileTree(props: FileTreeProps) {
           </Show>
 
           <Show
-            when={!entries.loading}
-            fallback={<div class="file-tree-loading">Loading...</div>}
-          >
-            <For each={filteredEntries()}>
-              {(entry, index) => {
-                const isMd = !entry.isDirectory && entry.name.endsWith(".md");
-                const isClickable = entry.isDirectory || isMd;
+            when={!drivesView() && entries.error}
+            fallback={
+              <Show
+                when={!loading()}
+                fallback={<div class="file-tree-loading">Loading...</div>}
+              >
+                <For each={filteredEntries()}>
+                  {(entry, index) => {
+                    const isMd = !entry.isDirectory && entry.name.endsWith(".md");
+                    const isClickable = entry.isDirectory || isMd;
 
-                return (
-                  <div
-                    class={`file-tree-entry ${
-                      entry.isDirectory
-                        ? "file-tree-dir"
-                        : isMd
-                          ? "file-tree-md"
-                          : "file-tree-other"
-                    }${index() === selectedIndex() ? " is-selected" : ""}`}
-                    onClick={(e) => isClickable && handleClick(entry, e)}
-                    onMouseEnter={() => setSelectedIndex(index())}
-                    title={entry.path}
-                  >
-                    <span class="file-tree-icon">
-                      {entry.isDirectory ? "▸" : isMd ? "◆" : "·"}
-                    </span>
-                    <span class="file-tree-name">{entry.name}</span>
-                    <Show when={entry.isDirectory}>
-                      <button
-                        class="file-tree-entry-fav"
-                        classList={{ active: isFav(entry.path) }}
-                        title={
-                          isFav(entry.path)
-                            ? "Remove from favorites"
-                            : "Add to favorites"
-                        }
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleFavorite(entry.path);
-                        }}
+                    return (
+                      <div
+                        class={`file-tree-entry ${
+                          entry.isDirectory
+                            ? "file-tree-dir"
+                            : isMd
+                              ? "file-tree-md"
+                              : "file-tree-other"
+                        }${index() === selectedIndex() ? " is-selected" : ""}`}
+                        onClick={(e) => isClickable && handleClick(entry, e)}
+                        onMouseEnter={() => setSelectedIndex(index())}
+                        title={entry.path}
                       >
-                        {isFav(entry.path) ? "★" : "☆"}
-                      </button>
-                    </Show>
+                        <span class="file-tree-icon">
+                          {entry.isDirectory ? "▸" : isMd ? "◆" : "·"}
+                        </span>
+                        <span class="file-tree-name">{entry.name}</span>
+                        <Show when={entry.isDirectory}>
+                          <button
+                            class="file-tree-entry-fav"
+                            classList={{ active: isFav(entry.path) }}
+                            title={
+                              isFav(entry.path)
+                                ? "Remove from favorites"
+                                : "Add to favorites"
+                            }
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              toggleFavorite(entry.path);
+                            }}
+                          >
+                            {isFav(entry.path) ? "★" : "☆"}
+                          </button>
+                        </Show>
+                      </div>
+                    );
+                  }}
+                </For>
+                <Show when={filteredEntries().length === 0}>
+                  <div class="file-tree-empty">
+                    {filter()
+                      ? "No matches"
+                      : drivesView()
+                        ? "No drives found"
+                        : "Empty directory"}
                   </div>
-                );
-              }}
-            </For>
-            <Show when={filteredEntries().length === 0}>
-              <div class="file-tree-empty">
-                {filter() ? "No matches" : "Empty directory"}
+                </Show>
+              </Show>
+            }
+          >
+            <div class="file-tree-empty">
+              Can’t read this folder — you may not have permission.
+              <div class="file-tree-error-up" onClick={navigateUp}>
+                ← Go up
               </div>
-            </Show>
+            </div>
           </Show>
         </div>
       </div>
