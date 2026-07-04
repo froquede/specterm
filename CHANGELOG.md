@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.9.0 — 2026-07-04
+
+### Added
+- Windows partition navigation — the file sidebar can now cross into any drive.
+  Going up past a drive root opens a "This PC" view listing every mounted volume
+  (C:, D:, …); previously the tree was stuck on the drive the app runs from.
+- Configurable default terminal path (Settings) — new terminals and the sidebar
+  open here; blank uses the home directory. The sidebar reopens at the
+  last-browsed folder, falling back to the configured path, then home.
+- "Open terminal here" sidebar control — cd the active terminal into the folder
+  currently browsed in the tree.
+- Clickable breadcrumb path, Backspace / ← to go up a level, a graceful "can't
+  read this folder" state, and Windows-aware `~` / backslash path display.
+- Cross-platform end-to-end test suite (`npm run test:e2e`) that drives the real
+  app against a throwaway profile.
+
+### Fixed
+- File-tree `cd` (favorites, the new "open terminal here", and `cd fav-N`) did
+  nothing on Windows PowerShell: the command was submitted with `\n` and quoted
+  for POSIX shells. It's now submitted with a carriage return and quoted/escaped
+  per host shell (PowerShell `Set-Location` / `Test-Path`).
+- `cd fav-N` expansion clears the typed line with backspaces instead of Ctrl-U
+  (`\x15`), which PowerShell's PSReadLine ignores — so it works on Windows too.
+
 ## 0.8.2 — 2026-07-03
 
 ### Added
