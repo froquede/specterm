@@ -2,14 +2,14 @@ import { Show } from "solid-js";
 import type { SplitNode, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
 import Pane from "./Pane";
-import SplitHandle from "./SplitHandle";
+import SplitHandle, { type ResizeEntry } from "./SplitHandle";
 
 interface SplitContainerProps {
   node: SplitNode;
   activePaneId: PaneId;
   tabId: string;
   onFocusPane: (id: PaneId) => void;
-  onResizeSplit: (splitId: string, ratio: number) => void;
+  onResizeSplit: (entries: ResizeEntry[]) => void;
   onToggleDirection?: (splitId: string) => void;
   onDropPane?: (
     sourceId: PaneId,
@@ -103,9 +103,8 @@ export default function SplitContainer(props: SplitContainerProps) {
             </div>
             <SplitHandle
               direction={split().direction}
-              onDrag={(pos, total) => {
-                props.onResizeSplit(split().id, pos / total);
-              }}
+              splitId={split().id}
+              onResize={props.onResizeSplit}
               onToggleDirection={() => props.onToggleDirection?.(split().id)}
             />
             <div

@@ -116,6 +116,24 @@ function resizeSplitInTree(
   };
 }
 
+// Batch variant: apply a new ratio to every split named in `ratios` in a single
+// pass, so a snapped-divider drag moves all aligned splits atomically.
+function resizeSplitsInTree(
+  root: SplitNode,
+  ratios: Map<string, number>
+): SplitNode {
+  if (root.type === "leaf") return root;
+  const target = ratios.get(root.id);
+  const ratio =
+    target === undefined ? root.ratio : Math.max(0.1, Math.min(0.9, target));
+  return {
+    ...root,
+    ratio,
+    first: resizeSplitsInTree(root.first, ratios),
+    second: resizeSplitsInTree(root.second, ratios),
+  };
+}
+
 let titleDebounce: number | null = null;
 
 export function useTabStore() {
@@ -279,6 +297,25 @@ export function useTabStore() {
       if (idx === -1) return;
 
       const newRoot = resizeSplitInTree(s.tabs[idx].root, splitId, ratio);
+
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) =>
+          i === idx ? { ...t, root: newRoot } : t
+        ),
+      }));
+    },
+
+    // Resize several splits at once — the snapped-divider drag path, where one
+    // continuous line maps to multiple aligned splits that must move together.
+    resizeSplits(entries: Array<{ splitId: string; ratio: number }>) {
+      if (entries.length === 0) return;
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const ratios = new Map(entries.map((e) => [e.splitId, e.ratio]));
+      const newRoot = resizeSplitsInTree(s.tabs[idx].root, ratios);
 
       update(() => ({
         ...s,

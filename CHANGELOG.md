@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.10.0 — 2026-07-06
+
+### Added
+- Snapped divider resize — dragging a split handle now moves the whole
+  continuous divider line it belongs to, so aligned dividers across stacked
+  splits resize together (a full column widens, or a full row grows taller)
+  instead of only the single pane boundary under the cursor. Works on both axes
+  (side-by-side and stacked dividers). Hold **Alt** while dragging to fall back
+  to the previous behaviour and resize just that one split independently.
+- End-to-end coverage for both modes on both axes: a plain drag moving every
+  aligned divider together, and an Alt-drag moving only the grabbed one.
+
+### Changed
+- Unified UI fade timing to `0.2s ease` across panes, tabs, split handles, and
+  controls — including the opacity fade as focus moves between panels. The
+  pane-focus fades run faster (`0.1s`) since switching panes is a constant
+  action. (The drag-follow drop preview stays snappy at `0.08s`.)
+
+### Fixed
+- Copy/paste is now reliable. Copy (and paste) went through `navigator.clipboard`
+  in the renderer, which Electron rejects when the window isn't focused and gates
+  behind permissions — so copies silently failed to reach the OS clipboard (text
+  pasted only inside the app, or not at all, including between panes). Clipboard
+  text now goes through the Electron main process, which always hits the real OS
+  clipboard. Native text fields (sidebar/settings) are unaffected — the app still
+  yields to native editing there.
+- Panes no longer stay blank after a WebGL context loss. Chromium force-kills the
+  oldest of its ~16 WebGL contexts under memory pressure (typically the first
+  pane, and often noticed after a relayout like toggling the sidebar or resizing
+  panes); the terminal was then left with no renderer and sat blank until an
+  unrelated redraw. It now re-establishes its renderer on the next frame. Both
+  fixes ship with end-to-end regression coverage.
+
 ## 0.9.0 — 2026-07-04
 
 ### Added

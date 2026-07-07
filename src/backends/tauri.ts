@@ -76,6 +76,15 @@ export class TauriBackend implements Backend {
     return false;
   }
 
+  async clipboardReadText(): Promise<string> {
+    // Tauri's webview generally allows navigator.clipboard; no native bridge yet.
+    return navigator.clipboard.readText();
+  }
+
+  async clipboardWriteText(text: string): Promise<void> {
+    return navigator.clipboard.writeText(text);
+  }
+
   async getHomePath(): Promise<string> {
     return invoke<string>("get_home_path");
   }

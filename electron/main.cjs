@@ -137,6 +137,11 @@ ipcMain.handle("spawn-pty", (_event, opts) => {
   const cwd =
     opts.cwd && fs.existsSync(opts.cwd) ? opts.cwd : os.homedir();
 
+  // Record the directory the terminal was opened in. This is the spawn cwd,
+  // before the user's shell rc runs — so it survives an rc that `cd`s on
+  // startup (which would otherwise mask where the terminal actually opened).
+  env.SPECTERM_CWD = cwd;
+
   const ptyProcess = pty.spawn(shell, args, {
     name: "xterm-256color",
     cols: opts.cols,
@@ -238,6 +243,20 @@ ipcMain.handle("list-drives", async () => {
 // Nothing is written to disk — the foreground app reads the clipboard itself.
 ipcMain.handle("clipboard-has-image", () => {
   return !clipboard.readImage().isEmpty();
+});
+
+// Text clipboard via the main process. The renderer used to call
+// navigator.clipboard directly, but in Electron that's unreliable — it rejects
+// when the document isn't focused and is gated by permissions/secure-context,
+// so copies silently failed to reach the OS clipboard (text pasted only inside
+// the app, or not at all). The main-process `clipboard` module has no such
+// constraints and always hits the real OS clipboard.
+ipcMain.handle("clipboard-read-text", () => {
+  return clipboard.readText();
+});
+
+ipcMain.handle("clipboard-write-text", (_event, text) => {
+  clipboard.writeText(typeof text === "string" ? text : String(text));
 });
 
 ipcMain.handle("watch-dir", (_event, dirPath) => {

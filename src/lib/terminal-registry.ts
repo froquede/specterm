@@ -392,19 +392,76 @@ export async function attachTerminal(
   instance.container = container;
   term.open(container);
 
-  try {
-    const webglAddon = new WebglAddon();
-    // Chromium caps the number of simultaneous WebGL contexts (~16). With many
-    // open panes/tabs the oldest contexts get force-killed, which previously
-    // left those terminals as a blank white canvas. Dispose the addon on
-    // context loss so xterm falls back to the DOM renderer and keeps drawing.
-    webglAddon.onContextLoss(() => {
-      webglAddon.dispose();
+  // Chromium caps the number of simultaneous WebGL contexts (~16). With many
+  // open panes/tabs the oldest context gets force-killed (so it's typically the
+  // *first* pane that's hit). Two things then go wrong in xterm 5.x:
+  //   1. Disposing the WebGL addon does NOT restore a working renderer (there's
+  //      no automatic DOM fallback), so the pane has no renderer and sits blank
+  //      until it's re-opened.
+  //   2. The addon itself waits 3s (hoping for a `webglcontextrestored`) before
+  //      it even fires `onContextLoss`, so a plain onContextLoss handler leaves
+  //      the pane blank for 3s.
+  // Recover by re-opening the terminal (rebuilds the render layer) and mounting
+  // a *fresh* WebGL addon — the lost context has been freed, so a new one draws
+  // immediately. We trigger this off the raw `webglcontextlost` event (next
+  // frame) to skip the 3s wait, and guard with `currentAddon` so the addon's
+  // late 3s fallback for an already-replaced addon is a no-op. `attempts` bounds
+  // the retry so a machine that genuinely can't grant a context can't spin.
+  let attempts = 5;
+  let currentAddon: WebglAddon | null = null;
+  let recovering = false;
+
+  const recoverRenderer = () => {
+    if (instance.disposed || recovering) return;
+    recovering = true;
+    requestAnimationFrame(() => {
+      recovering = false;
+      if (instance.disposed || !instance.container) return;
+      try {
+        term.open(instance.container);
+      } catch {
+        // container detached mid-recovery — nothing to rebuild onto
+      }
+      mountWebgl();
+      try {
+        term.refresh(0, term.rows - 1);
+      } catch {
+        // term disposed between loss and repaint — nothing to draw
+      }
     });
-    term.loadAddon(webglAddon);
-  } catch {
-    // WebGL not available
-  }
+  };
+
+  const mountWebgl = () => {
+    if (instance.disposed || attempts-- <= 0) return;
+    let addon: WebglAddon;
+    try {
+      addon = new WebglAddon();
+    } catch {
+      return; // WebGL unavailable — xterm keeps its default renderer
+    }
+    currentAddon = addon;
+    const onLost = () => {
+      if (addon !== currentAddon) return; // stale event from a replaced addon
+      currentAddon = null;
+      addon.dispose();
+      recoverRenderer();
+    };
+    addon.onContextLoss(onLost); // 3s fallback path
+    try {
+      term.loadAddon(addon);
+    } catch {
+      addon.dispose();
+      currentAddon = null;
+      return;
+    }
+    // Fast path: react to the raw loss event immediately instead of waiting out
+    // the addon's 3s restoration window.
+    const canvas = instance.container?.querySelector<HTMLCanvasElement>(
+      ".xterm-screen > canvas:not(.xterm-link-layer)"
+    );
+    canvas?.addEventListener("webglcontextlost", onLost, { once: true });
+  };
+  mountWebgl();
 
   fitAddon.fit();
 

@@ -42,3 +42,34 @@ export async function clipboardHasImage(): Promise<boolean> {
   const backend = await getBackend();
   return backend.clipboardHasImage();
 }
+
+// Text clipboard helpers. The backend hits the OS clipboard through the host
+// (Electron main process) which — unlike navigator.clipboard in the renderer —
+// works regardless of window focus or clipboard permissions. navigator.clipboard
+// is only a last-ditch fallback if the host bridge throws.
+export async function clipboardReadText(): Promise<string> {
+  try {
+    const backend = await getBackend();
+    return await backend.clipboardReadText();
+  } catch {
+    try {
+      return await navigator.clipboard.readText();
+    } catch {
+      return "";
+    }
+  }
+}
+
+export async function clipboardWriteText(text: string): Promise<void> {
+  try {
+    const backend = await getBackend();
+    await backend.clipboardWriteText(text);
+  } catch {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Both paths failed — nothing more we can do; swallow so the caller
+      // (a keybinding handler) doesn't throw into the event loop.
+    }
+  }
+}

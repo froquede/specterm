@@ -15,7 +15,12 @@ import {
   decreaseFontSize,
   resetFontSize,
 } from "../lib/terminal-registry";
-import { writePty, clipboardHasImage } from "../lib/pty";
+import {
+  writePty,
+  clipboardHasImage,
+  clipboardReadText,
+  clipboardWriteText,
+} from "../lib/pty";
 import { searchPaneId, openSearch, closeSearch } from "./terminal-search";
 
 // Keystroke that makes Claude Code read an image straight from the OS clipboard
@@ -34,7 +39,7 @@ const IMAGE_PASTE_SEQ = isMac ? "\x16" : "\x1bv";
 // whether an image exists (a boolean) — the image bytes never enter the renderer.
 async function pasteClipboard(ptyId: number) {
   try {
-    const text = await navigator.clipboard.readText();
+    const text = await clipboardReadText();
     if (text) {
       writePty(ptyId, text);
       return;
@@ -197,7 +202,7 @@ export function createKeymap({
         const tab = store.activeTab;
         const inst = tab && getTerminalInstance(tab.activePaneId);
         if (inst && inst.term.hasSelection()) {
-          navigator.clipboard.writeText(inst.term.getSelection());
+          clipboardWriteText(inst.term.getSelection());
           return;
         }
         // No terminal selection: copy the current DOM selection (e.g. text
@@ -205,7 +210,7 @@ export function createKeymap({
         // so ⌘C reaches the renderer for terminal copy — which on macOS means
         // Electron's native ⌘C never fires. So we write the selection here.
         const domSel = window.getSelection()?.toString();
-        if (domSel) navigator.clipboard.writeText(domSel);
+        if (domSel) clipboardWriteText(domSel);
       },
     },
     // Find in the active terminal — ⌘F (Ctrl+Shift+F on Win/Linux). Toggles a
@@ -289,7 +294,7 @@ export function createKeymap({
               const inst = getTerminalInstance(tab.activePaneId);
               if (!inst || inst.ptyId === null) return;
               try {
-                const text = await navigator.clipboard.readText();
+                const text = await clipboardReadText();
                 if (text) writePty(inst.ptyId, text);
               } catch (err) {
                 console.warn("[paste] clipboard text read failed:", err);
