@@ -36,6 +36,10 @@ export interface Backend {
   getHomePath(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.
   clipboardHasImage(): Promise<boolean>;
+  // OS text clipboard. Routed through the host (not navigator.clipboard) so
+  // copy/paste is reliable regardless of document focus or permissions.
+  clipboardReadText(): Promise<string>;
+  clipboardWriteText(text: string): Promise<void>;
 
   // Window
   isFullscreen(): Promise<boolean>;

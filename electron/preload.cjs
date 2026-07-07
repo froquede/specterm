@@ -31,6 +31,10 @@ contextBridge.exposeInMainWorld("specterm", {
 
   clipboardHasImage: () => ipcRenderer.invoke("clipboard-has-image"),
 
+  clipboardReadText: () => ipcRenderer.invoke("clipboard-read-text"),
+
+  clipboardWriteText: (text) => ipcRenderer.invoke("clipboard-write-text", text),
+
   getHomePath: () => ipcRenderer.invoke("get-home-path"),
 
   watchDir: (path, cb) => {

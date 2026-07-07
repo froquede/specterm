@@ -18,6 +18,8 @@ interface SpectermAPI {
   readDir(path: string): Promise<FileEntry[]>;
   listDrives(): Promise<DriveEntry[]>;
   clipboardHasImage(): Promise<boolean>;
+  clipboardReadText(): Promise<string>;
+  clipboardWriteText(text: string): Promise<void>;
   watchDir(path: string, cb: () => void): () => void;
   getHomePath(): Promise<string>;
   isFullscreen(): Promise<boolean>;
@@ -78,6 +80,14 @@ export class ElectronBackend implements Backend {
 
   async clipboardHasImage(): Promise<boolean> {
     return this.api.clipboardHasImage();
+  }
+
+  async clipboardReadText(): Promise<string> {
+    return this.api.clipboardReadText();
+  }
+
+  async clipboardWriteText(text: string): Promise<void> {
+    return this.api.clipboardWriteText(text);
   }
 
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
