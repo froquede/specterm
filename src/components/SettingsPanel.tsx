@@ -1,4 +1,12 @@
-import { Show, For, createSignal, createMemo, onMount, onCleanup } from "solid-js";
+import {
+  Show,
+  For,
+  createSignal,
+  createMemo,
+  createEffect,
+  onMount,
+  onCleanup,
+} from "solid-js";
 import {
   unfocusedOpacity,
   setUnfocusedOpacity,
@@ -141,6 +149,38 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     }
   }
 
+  // Autosave acknowledgement: every setting persists live to localStorage (see
+  // stores/settings.ts), so there's no explicit Save. After changes settle for
+  // 1.5s we flash a "saved" toast, then hide it a few seconds later.
+  const [saved, setSaved] = createSignal(false);
+  let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+  let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  let firstRun = true;
+
+  createEffect(() => {
+    // Subscribe to every persisted setting so any change re-arms the toast.
+    unfocusedOpacity();
+    startupPath();
+    terminalFontFamily();
+    activeTheme().id;
+    // Skip the initial run (mount) — only react to real edits.
+    if (firstRun) {
+      firstRun = false;
+      return;
+    }
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      setSaved(true);
+      if (hideTimer) clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => setSaved(false), 2500);
+    }, 1500);
+  });
+
+  onCleanup(() => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    if (hideTimer) clearTimeout(hideTimer);
+  });
+
   const pct = () => Math.round(unfocusedOpacity() * 100);
   const activeIsCustom = () => !activeTheme().builtin && !activeTheme().id.startsWith("gallery-");
 
@@ -154,12 +194,14 @@ export default function SettingsPanel(props: SettingsPanelProps) {
       >
         <div class="settings-header">
           <span class="settings-title">Settings</span>
-          {/* Settings persist live on every change, so "Save" just confirms and
-              closes the sidebar. */}
-          <button class="settings-save" onClick={props.onClose} title="Save (Esc)">
-            Save
-          </button>
+          {/* No Save button — changes persist live and autosave (see the effect
+              above). Esc closes the sidebar. */}
         </div>
+        <Show when={saved()}>
+          <div class="settings-saved-bar" role="status" aria-live="polite">
+            All settings saved.
+          </div>
+        </Show>
         <div class="settings-scroll">
           <div class="settings-section">
             <div class="settings-row">

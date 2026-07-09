@@ -205,11 +205,10 @@ body,
   color: var(--fg);
 }
 
-/* Open state — the gear renders filled (see TabBar) in the theme's cyan, a
-   secondary accent that stays distinct from the primary accent on every theme
-   (e.g. Dark Violet, whose palette has no green — its green slot is a blue). */
+/* Open state — the gear renders filled (see TabBar) in the theme's foreground,
+   matching the other header controls instead of the (often blue) accent. */
 .tab-settings.active {
-  color: var(--ansi-cyan);
+  color: var(--fg);
 }
 
 /* Settings sidebar — shares the .app-body slot with the file/search sidebar
@@ -225,6 +224,8 @@ body,
   color: var(--fg);
   overflow: hidden;
   flex-shrink: 0;
+  /* Anchor for the floating "saved" toast (see .settings-saved-bar). */
+  position: relative;
 }
 
 .settings-scroll {
@@ -247,22 +248,35 @@ body,
   font-weight: 600;
 }
 
-.settings-save {
-  border: 1px solid var(--accent);
-  background: var(--accent);
-  color: var(--accent-fg);
-  font-family: inherit;
+/* Transient "saved" acknowledgement — floats over the panel (absolute) so it
+   never pushes the fields. Auto-dismisses in 5s (see SettingsPanel). Dark bg +
+   muted-green text, matching the config captions. */
+.settings-saved-bar {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 44px;
+  z-index: 5;
+  padding: 8px 12px;
   font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-  padding: 5px 12px;
+  font-weight: 500;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 6px;
-  cursor: pointer;
-  transition: opacity 0.2s ease;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  animation: settings-saved-in 0.2s ease;
 }
 
-.settings-save:hover {
-  opacity: 0.85;
+@keyframes settings-saved-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .settings-section {
