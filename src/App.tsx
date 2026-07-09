@@ -18,6 +18,26 @@ export default function App() {
   const store = useTabStore();
   const [settingsOpen, setSettingsOpen] = createSignal(false);
 
+  // Settings and the file/search sidebar share the same slot in .app-body and
+  // are mutually exclusive: opening one closes the other. Opening settings
+  // closes the file sidebar; opening the file sidebar (⌘B / Ctrl+Shift+B) calls
+  // closeSettings (threaded into the keymap below).
+  function openSettings() {
+    if (store.state.sidebarOpen) store.toggleSidebar();
+    setSettingsOpen(true);
+  }
+  function closeSettings() {
+    setSettingsOpen(false);
+  }
+  function toggleSettings() {
+    if (settingsOpen()) {
+      closeSettings();
+      focusActivePane();
+      return;
+    }
+    openSettings();
+  }
+
   // Keep keyboard focus on the active pane's terminal. The active pane is the
   // one drawn at full opacity (others are dimmed), so typing must always land
   // there — even after splits, drag-reorders or tab switches remount panes.
@@ -129,7 +149,8 @@ export default function App() {
       createKeymap({
         store,
         focusActivePane,
-        toggleSettings: () => setSettingsOpen((v) => !v),
+        toggleSettings,
+        closeSettings,
       })
     );
 
@@ -181,8 +202,13 @@ export default function App() {
         onSelect={(id) => store.setActiveTab(id)}
         onClose={(id) => store.closeTab(id)}
         onCreate={() => store.createTab()}
-        onToggleSidebar={() => store.toggleSidebar()}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onToggleSidebar={() => {
+          // Opening the file sidebar evicts settings (mutually exclusive slot).
+          if (!store.state.sidebarOpen) closeSettings();
+          store.toggleSidebar();
+        }}
+        onOpenSettings={toggleSettings}
+        settingsOpen={settingsOpen()}
       />
       <div class="app-body">
         <FileTree
@@ -191,6 +217,14 @@ export default function App() {
           onOpenFile={handleOpenMarkdown}
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
+        />
+        <SettingsPanel
+          open={settingsOpen()}
+          width={store.state.sidebarWidth}
+          onClose={() => {
+            closeSettings();
+            focusActivePane();
+          }}
         />
         <div class="app-content" data-split-root>
           <Show when={store.activeTab}>
@@ -230,7 +264,6 @@ export default function App() {
           </Show>
         </div>
       </div>
-      <SettingsPanel open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

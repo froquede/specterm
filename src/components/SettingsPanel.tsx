@@ -27,6 +27,7 @@ import { detectMonospaceFonts } from "../lib/fonts";
 
 interface SettingsPanelProps {
   open: boolean;
+  width: number;
   onClose: () => void;
 }
 
@@ -36,8 +37,9 @@ function swatches(t: Theme): string[] {
   return [t.ui.bg, t.ui.accent, t.ansi.red, t.ansi.green, t.ansi.yellow, t.ui.fg];
 }
 
-// Modal settings panel — the first preferences surface. Rendered as an overlay
-// above the app; click the backdrop or press Esc to dismiss.
+// Settings sidebar — the preferences surface. Renders in the same slot as the
+// file/search sidebar (they're mutually exclusive), full height with a
+// scrollable body. Press Esc to dismiss.
 export default function SettingsPanel(props: SettingsPanelProps) {
   // The slider's `value` is driven imperatively via this ref, NOT bound to the
   // signal. Reassigning a range input's `.value` during an `input` event (which
@@ -144,20 +146,21 @@ export default function SettingsPanel(props: SettingsPanelProps) {
 
   return (
     <Show when={props.open}>
-      <div class="settings-backdrop" onClick={props.onClose}>
-        <div
-          class="settings-panel"
-          role="dialog"
-          aria-label="Settings"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div class="settings-header">
-            <span class="settings-title">Settings</span>
-            <button class="settings-close" onClick={props.onClose} title="Close (Esc)">
-              ×
-            </button>
-          </div>
-
+      <div
+        class="settings-sidebar"
+        style={{ width: `${props.width}px` }}
+        role="complementary"
+        aria-label="Settings"
+      >
+        <div class="settings-header">
+          <span class="settings-title">Settings</span>
+          {/* Settings persist live on every change, so "Save" just confirms and
+              closes the sidebar. */}
+          <button class="settings-save" onClick={props.onClose} title="Save (Esc)">
+            Save
+          </button>
+        </div>
+        <div class="settings-scroll">
           <div class="settings-section">
             <div class="settings-row">
               <label class="settings-label" for="theme-select">
@@ -399,6 +402,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             </div>
           </div>
         </div>
+        <div class="settings-version">Specterm v{__APP_VERSION__}</div>
       </div>
     </Show>
   );

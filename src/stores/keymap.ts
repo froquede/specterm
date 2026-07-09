@@ -62,8 +62,11 @@ export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
   // Pull keyboard focus back into the active pane's terminal.
   focusActivePane: () => void;
-  // Open/close the settings panel.
+  // Open/close the settings sidebar (mutually exclusive with the file sidebar).
   toggleSettings: () => void;
+  // Force the settings sidebar closed — called when opening the file sidebar so
+  // the two never share the slot.
+  closeSettings: () => void;
 }
 
 const newTerminal = () =>
@@ -82,15 +85,21 @@ export function createKeymap({
   store,
   focusActivePane,
   toggleSettings,
+  closeSettings,
 }: KeymapContext): BindingSpec[] {
   return [
-    // Settings — ⌘, on macOS (the platform convention); Ctrl+Shift+, elsewhere.
+    // Settings — ⌘⇧O on macOS, Ctrl+Shift+O on Windows/Linux. A literal chord
+    // (meta+shift + kitty's ctrl+shift), not the cmd() ⌘⇧→Ctrl+Alt mapping, so
+    // both platforms keep Shift+O. Toggles the settings sidebar, which shares
+    // its slot with the file/search sidebar (⌘B) — opening one evicts the other.
     {
       id: "settings.toggle",
-      key: ",",
-      ...cmd({ code: "Comma" }),
+      key: "o",
+      meta: true,
+      shift: true,
+      byOS: kitty("o"),
       allowInInput: true,
-      label: "Open settings",
+      label: "Toggle settings",
       run: () => toggleSettings(),
     },
     // Tabs
@@ -342,6 +351,8 @@ export function createKeymap({
           focusActivePane();
           return;
         }
+        // Opening the file sidebar evicts settings — they share the slot.
+        closeSettings();
         store.openSidebar();
         // The input mounts when the sidebar opens, so retry briefly until it's
         // in the DOM, then focus and select any existing filter text.
