@@ -45,36 +45,6 @@ export default function TabBar(props: TabBarProps) {
 
   return (
     <div class="tab-bar">
-      <div class="tab-list">
-        <For each={props.tabs}>
-          {(tab) => (
-            <div
-              class={`tab ${tab.id === props.activeTabId ? "active" : ""}`}
-              onClick={() => props.onSelect(tab.id)}
-              onMouseDown={(e) => {
-                if (e.button === 1) {
-                  e.preventDefault();
-                  props.onClose(tab.id);
-                }
-              }}
-            >
-              <span class="tab-title">{tab.title}</span>
-              <button
-                class="tab-close"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  props.onClose(tab.id);
-                }}
-              >
-                ×
-              </button>
-            </div>
-          )}
-        </For>
-      </div>
-      {/* Flexible draggable strip: fills the empty space so the window can be
-          moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
-      <div class="tab-drag-region" />
       <button
         class="tab-sidebar-toggle"
         onClick={props.onToggleSidebar}
@@ -115,6 +85,36 @@ export default function TabBar(props: TabBarProps) {
           <path d={GEAR_PATH} />
         </svg>
       </button>
+      <div class="tab-list">
+        <For each={props.tabs}>
+          {(tab) => (
+            <div
+              class={`tab ${tab.id === props.activeTabId ? "active" : ""}`}
+              onClick={() => props.onSelect(tab.id)}
+              onMouseDown={(e) => {
+                if (e.button === 1) {
+                  e.preventDefault();
+                  props.onClose(tab.id);
+                }
+              }}
+            >
+              <span class="tab-title">{tab.title}</span>
+              <button
+                class="tab-close"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  props.onClose(tab.id);
+                }}
+              >
+                ×
+              </button>
+            </div>
+          )}
+        </For>
+      </div>
+      {/* Flexible draggable strip: fills the empty space so the window can be
+          moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
+      <div class="tab-drag-region" />
     </div>
   );
 }
