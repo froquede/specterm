@@ -2,7 +2,9 @@
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: var(--bg-chrome);
+  /* Match the settings sidebar: body on --bg so fields/strips (drawn on
+     --bg-chrome) and --border dividers keep their contrast. */
+  background: var(--bg);
   border-right: 1px solid var(--border);
   overflow: hidden;
   flex-shrink: 0;
@@ -99,7 +101,7 @@
 
 .file-tree-search input {
   width: 100%;
-  background: var(--bg);
+  background: var(--bg-chrome);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 8px;

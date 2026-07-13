@@ -62,7 +62,7 @@ export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
   // Pull keyboard focus back into the active pane's terminal.
   focusActivePane: () => void;
-  // Open/close the settings panel.
+  // Open/close the settings sidebar.
   toggleSettings: () => void;
 }
 
@@ -84,13 +84,15 @@ export function createKeymap({
   toggleSettings,
 }: KeymapContext): BindingSpec[] {
   return [
-    // Settings — ⌘, on macOS (the platform convention); Ctrl+Shift+, elsewhere.
+    // Settings — ⌘, on macOS (the platform convention for Preferences);
+    // Ctrl+Shift+, elsewhere. Toggles the settings sidebar, which shares its
+    // slot with the file/search sidebar (⌘B): showing one evicts the other.
     {
       id: "settings.toggle",
       key: ",",
       ...cmd({ code: "Comma" }),
       allowInInput: true,
-      label: "Open settings",
+      label: "Toggle settings",
       run: () => toggleSettings(),
     },
     // Tabs
@@ -337,12 +339,13 @@ export function createKeymap({
       allowInInput: true,
       label: "Toggle sidebar / search",
       run: () => {
-        if (store.state.sidebarOpen) {
-          store.toggleSidebar();
+        if (store.state.sidebarView === "files") {
+          store.closeSidebar();
           focusActivePane();
           return;
         }
-        store.openSidebar();
+        // Showing the file tree evicts settings — the store owns that invariant.
+        store.showSidebar("files");
         // The input mounts when the sidebar opens, so retry briefly until it's
         // in the DOM, then focus and select any existing filter text.
         let tries = 0;

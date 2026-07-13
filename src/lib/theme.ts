@@ -510,7 +510,11 @@ export function themeFromBase16(
       bg: c["00"],
       bgChrome: c["01"],
       bgHover: c["02"],
-      border: c["01"],
+      // base16 00/01 are nearly identical, so border=01 vanished against the
+      // chrome (bgChrome=01) — the file tree lost all its dividers. Use 02 so
+      // dividers/outlines read against both bg (00) and chrome (01), matching
+      // how the built-in themes set border to their bgHover shade.
+      border: c["02"],
       selection: c["02"],
       unfocusedFill: c["00"],
       fg: c["05"],

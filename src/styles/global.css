@@ -205,26 +205,37 @@ body,
   color: var(--fg);
 }
 
-/* Settings panel — modal overlay above the whole app. */
-.settings-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
+/* Open state — the gear renders filled (see TabBar) in the theme's foreground,
+   matching the other header controls instead of the (often blue) accent. */
+.tab-settings.active {
+  color: var(--fg);
 }
 
-.settings-panel {
-  width: 380px;
-  max-width: calc(100vw - 32px);
+/* Settings sidebar — shares the .app-body slot with the file/search sidebar
+   (mutually exclusive). Full height, fixed header, scrollable body. */
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  /* The slot's width is the file tree's (sidebarWidth, 250px by default), which
+     crushes the swatch rows, the font picker and the opacity slider — the modal
+     this replaced was 380px. Hold a floor so the controls stay usable. */
+  min-width: 340px;
+  /* Match the old modal's --bg (not chrome): the fields/dividers below draw on
+     --bg-chrome / --border, so the body must stay --bg or they lose contrast. */
   background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  border-right: 1px solid var(--border);
   color: var(--fg);
   overflow: hidden;
+  flex-shrink: 0;
+  /* Anchor for the floating "saved" toast (see .settings-saved-bar). */
+  position: relative;
+}
+
+.settings-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 .settings-header {
@@ -233,6 +244,7 @@ body,
   justify-content: space-between;
   padding: 10px 14px;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 
 .settings-title {
@@ -240,18 +252,35 @@ body,
   font-weight: 600;
 }
 
-.settings-close {
-  border: none;
-  background: none;
+/* Transient "saved" acknowledgement — floats over the panel (absolute) so it
+   never pushes the fields. Auto-dismisses (see SettingsPanel). Dark bg +
+   muted-green text, matching the config captions. */
+.settings-saved-bar {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 44px;
+  z-index: 5;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--fg-muted);
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  transition: color 0.2s ease;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  animation: settings-saved-in 0.2s ease;
 }
 
-.settings-close:hover {
-  color: var(--fg);
+@keyframes settings-saved-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .settings-section {
@@ -305,6 +334,18 @@ body,
   opacity: 0.4;
   cursor: default;
   text-decoration: none;
+}
+
+/* App version — a small fixed footer pinned to the sidebar bottom (outside the
+   scroll area), separated by a divider. */
+.settings-version {
+  flex-shrink: 0;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg-muted);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
 }
 
 /* Visually separates the settings groups (Theme / Panes). */
