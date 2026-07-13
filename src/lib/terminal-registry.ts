@@ -11,6 +11,7 @@ import { os } from "./platform";
 import { registerOscHandler } from "./osc";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
+import { installClickVsDragSelection } from "./mouse-selection";
 import type { UnlistenFn } from "../backends/types";
 
 // Active xterm palette, applied to new terminals at creation and pushed into
@@ -55,6 +56,9 @@ export interface TerminalInstance {
   unlistenOutput: UnlistenFn | null;
   unlistenExit: UnlistenFn | null;
   resizeObserver: ResizeObserver | null;
+  // Tears down the click-vs-drag selection bridge (see lib/mouse-selection).
+  // Re-installed on every attach, since it's bound to the current container.
+  detachSelection: (() => void) | null;
   disposed: boolean;
   // Last OSC title reported by the shell (e.g. Claude Code's `/rename`). Stored
   // on the instance so it survives pane remounts (split/drag) and so a fresh
@@ -310,6 +314,7 @@ export async function createTerminalInstance(
     unlistenOutput: null,
     unlistenExit: null,
     resizeObserver: null,
+    detachSelection: null,
     disposed: false,
     title: "Terminal",
     onTitle: opts?.onTitle ?? null,
@@ -353,8 +358,10 @@ export async function attachTerminal(
     opts.onTitle(instance.title);
   }
 
-  // If already attached to this container, just re-fit
+  // If already attached to this container, just re-fit. detachTerminal may have
+  // torn the selection bridge down in between, so put it back.
   if (instance.container === container) {
+    instance.detachSelection ??= installClickVsDragSelection(term, container);
     safeFit(term, fitAddon);
     term.focus();
     return;
@@ -368,6 +375,11 @@ export async function attachTerminal(
       container.appendChild(term.element);
     }
     instance.container = container;
+
+    // The selection bridge is bound to the container element, so it moves with
+    // the terminal on a split/drag remount.
+    instance.detachSelection?.();
+    instance.detachSelection = installClickVsDragSelection(term, container);
 
     // Reconnect resize observer
     instance.resizeObserver?.disconnect();
@@ -391,6 +403,10 @@ export async function attachTerminal(
   // First time opening
   instance.container = container;
   term.open(container);
+
+  // A plain drag selects text even when the program running in the pane has
+  // grabbed the mouse (Claude Code, vim, htop); a plain click still reaches it.
+  instance.detachSelection = installClickVsDragSelection(term, container);
 
   // Chromium caps the number of simultaneous WebGL contexts (~16). With many
   // open panes/tabs the oldest context gets force-killed (so it's typically the
@@ -563,6 +579,8 @@ export function detachTerminal(paneId: string) {
   // Just disconnect the resize observer — don't kill anything
   instance.resizeObserver?.disconnect();
   instance.resizeObserver = null;
+  instance.detachSelection?.();
+  instance.detachSelection = null;
 }
 
 export function destroyTerminal(paneId: string) {
@@ -571,6 +589,8 @@ export function destroyTerminal(paneId: string) {
 
   instance.disposed = true;
   instance.resizeObserver?.disconnect();
+  instance.detachSelection?.();
+  instance.detachSelection = null;
   instance.unlistenOutput?.();
   instance.unlistenExit?.();
   if (instance.ptyId !== null) {
