@@ -108,6 +108,21 @@ const spawnCwd = (win, marker, timeoutMs) =>
 const userDataDir = path.join(os.tmpdir(), `specterm-e2e-${process.pid}-${Date.now()}`);
 fs.mkdirSync(userDataDir, { recursive: true });
 
+// Shortcuts are authored macOS-first and translated per-OS (⌘X → Ctrl+Shift+X
+// on Windows/Linux); see lib/platform.ts.
+const MAC = process.platform === "darwin";
+const SIDEBAR_KEY = MAC ? "Meta+B" : "Control+Shift+B";
+const SETTINGS_KEY = MAC ? "Meta+Comma" : "Control+Shift+Comma";
+
+// The Claude-session copy check is opt-in on the machine having the CLI: it's
+// the program the bug was reported against, but the behaviour it proves is
+// covered without it by the mouse-recorder checks, so its absence is a skip.
+const HAS_CLAUDE = (() => {
+  const dirs = (process.env.PATH || "").split(path.delimiter);
+  const names = WIN ? ["claude.exe", "claude.cmd"] : ["claude"];
+  return dirs.some((d) => names.some((n) => d && fs.existsSync(path.join(d, n))));
+})();
+
 // Which key splits a pane side-by-side. macOS uses the ⌘-scheme (⌘⇧D); Windows
 // and Linux keep the original "kitty" chord (Ctrl+Shift+Enter). See keymap.ts.
 const SPLIT_SIDE = process.platform === "darwin" ? "Meta+Shift+D" : "Control+Shift+Enter";
@@ -563,6 +578,341 @@ try {
   await win.waitForTimeout(3500);
   const cwdBoot = await spawnCwd(win, "startup");
   check("terminal spawns at configured startup path", eqPath(cwdBoot, STARTUP_TARGET), `spawn cwd=${cwdBoot}`);
+
+  // 8) Settings sidebar. It shares one slot with the file tree — the store models
+  // that as a single `sidebarView`, so "both open" must be unreachable however
+  // you get there (gear, ⌘B, ⌘,).
+  const slot = () =>
+    win.evaluate(() => ({
+      files: !!document.querySelector(".file-tree"),
+      settings: !!document.querySelector(".settings-sidebar"),
+      gearActive: !!document.querySelector(".tab-settings.active"),
+      toast: !!document.querySelector(".settings-saved-bar"),
+      settingsWidth:
+        document.querySelector(".settings-sidebar")?.getBoundingClientRect().width ?? 0,
+    }));
+
+  await win.locator(".tab-settings").click();
+  await win.waitForTimeout(400);
+  let s = await slot();
+  check("gear opens settings and evicts the file tree", s.settings && !s.files, JSON.stringify(s));
+  check("gear reflects the open state", s.gearActive);
+  check(
+    "settings panel keeps a usable width in the sidebar slot",
+    s.settingsWidth >= 340,
+    `${s.settingsWidth}px`
+  );
+
+  await win.keyboard.press(SIDEBAR_KEY);
+  await win.waitForTimeout(400);
+  s = await slot();
+  check("sidebar shortcut shows files and evicts settings", s.files && !s.settings, JSON.stringify(s));
+
+  await win.keyboard.press(SETTINGS_KEY);
+  await win.waitForTimeout(400);
+  s = await slot();
+  check("settings shortcut opens settings", s.settings && !s.files, JSON.stringify(s));
+  await win.keyboard.press(SETTINGS_KEY);
+  await win.waitForTimeout(400);
+  check("settings shortcut toggles it closed", !(await slot()).settings);
+
+  // Esc must close it even though the terminal holds keyboard focus (xterm
+  // forwards Escape to the pty and stops it propagating).
+  await win.keyboard.press(SETTINGS_KEY);
+  await win.waitForTimeout(400);
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  await win.keyboard.press("Escape");
+  await win.waitForTimeout(400);
+  check("Esc closes settings from a focused terminal", !(await slot()).settings);
+
+  // 8b) Autosave: no Save button — an edit persists live and flashes a toast
+  // once changes settle (1.5s debounce), which then fades on its own.
+  await win.keyboard.press(SETTINGS_KEY);
+  await win.waitForTimeout(400);
+  check("no toast before any edit", !(await slot()).toast);
+  await win.locator("#tab-bar-height").evaluate((el) => {
+    el.value = "48";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await win.waitForTimeout(900);
+  check("toast withheld during the debounce", !(await slot()).toast);
+  await win.waitForTimeout(1300);
+  check("toast appears once edits settle", (await slot()).toast);
+  await win.waitForTimeout(2900);
+  check("toast auto-dismisses", !(await slot()).toast);
+
+  // 9) Chrome layout: the tab bar's corner, the two sizes, and auto-hide.
+  const layout = () =>
+    win.evaluate(() => {
+      const app = document.querySelector(".app");
+      const bar = document.querySelector(".tab-bar");
+      const body = document.querySelector(".app-body");
+      const actions = document.querySelector(".tab-actions");
+      const list = document.querySelector(".tab-list");
+      const b = bar.getBoundingClientRect();
+      return {
+        edge: app.dataset.tabEdge,
+        side: bar.dataset.side,
+        autohide: app.dataset.tabAutohide,
+        barTop: Math.round(b.top),
+        barHeight: Math.round(b.height),
+        // Above or below the panes?
+        barAbovePanes: b.top < body.getBoundingClientRect().top,
+        // Which of the two sits further right — i.e. which corner they hug.
+        actionsRightOfTabs:
+          actions.getBoundingClientRect().left > list.getBoundingClientRect().left,
+        sidebarWidth: Math.round(
+          (document.querySelector(".file-tree") ??
+            document.querySelector(".settings-sidebar")).getBoundingClientRect().width
+        ),
+      };
+    });
+
+  const pickCorner = async (corner) => {
+    await win.locator(`.corner-option[data-corner="${corner}"]`).click();
+    await win.waitForTimeout(450);
+    return layout();
+  };
+
+  const tl = await pickCorner("top-left");
+  check(
+    "corner top-left: bar above the panes, icons left of the tabs",
+    tl.edge === "top" && tl.side === "left" && tl.barAbovePanes && !tl.actionsRightOfTabs,
+    JSON.stringify(tl)
+  );
+
+  const tr = await pickCorner("top-right");
+  check(
+    "corner top-right: bar above the panes, icons right of the tabs",
+    tr.edge === "top" && tr.side === "right" && tr.barAbovePanes && tr.actionsRightOfTabs,
+    JSON.stringify(tr)
+  );
+
+  const br = await pickCorner("bottom-right");
+  check(
+    "corner bottom-right: bar below the panes, icons right of the tabs",
+    br.edge === "bottom" && br.side === "right" && !br.barAbovePanes && br.actionsRightOfTabs,
+    JSON.stringify(br)
+  );
+
+  const bl = await pickCorner("bottom-left");
+  check(
+    "corner bottom-left: bar below the panes, icons left of the tabs",
+    bl.edge === "bottom" && bl.side === "left" && !bl.barAbovePanes && !bl.actionsRightOfTabs,
+    JSON.stringify(bl)
+  );
+
+  await pickCorner("top-left");
+
+  // Sizes.
+  await win.locator("#tab-bar-height").evaluate((el) => {
+    el.value = "52";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await win.waitForTimeout(400);
+  check("tab bar height follows the setting", (await layout()).barHeight === 52, `${(await layout()).barHeight}px`);
+
+  await win.locator("#sidebar-width").evaluate((el) => {
+    el.value = "420";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await win.waitForTimeout(400);
+  check("sidebar width follows the setting", (await layout()).sidebarWidth === 420, `${(await layout()).sidebarWidth}px`);
+
+  // The grab strip between the sidebar and the panes resizes it by dragging.
+  // Do it against the file tree: the settings panel holds a floor of its own
+  // (its controls stop being usable below 340px), which the drag respects.
+  await win.keyboard.press(SIDEBAR_KEY);
+  await win.waitForTimeout(400);
+  const handle = await win.locator(".sidebar-resize-handle").boundingBox();
+  await win.mouse.move(handle.x + handle.width / 2, handle.y + 200);
+  await win.mouse.down();
+  await win.mouse.move(handle.x + handle.width / 2 - 120, handle.y + 200, { steps: 10 });
+  await win.mouse.up();
+  await win.waitForTimeout(400);
+  const dragged = (await layout()).sidebarWidth;
+  check("dragging the grab strip resizes the sidebar", Math.abs(dragged - 300) <= 12, `${dragged}px (expected ≈300)`);
+
+  // Auto-hide: the bar leaves the flow and slides off its edge, keeping a peek
+  // strip as the hover target; hovering it brings the bar back.
+  await win.keyboard.press(SETTINGS_KEY);
+  await win.waitForTimeout(400);
+  await win.locator("#tab-bar-autohide").check();
+  await win.waitForTimeout(500);
+  const hidden = await layout();
+  check(
+    "auto-hide slides the tab bar off its edge",
+    hidden.autohide === "true" && hidden.barTop < 0,
+    JSON.stringify({ barTop: hidden.barTop, barHeight: hidden.barHeight })
+  );
+  await win.mouse.move(500, 2);
+  await win.waitForTimeout(500);
+  const revealed = await layout();
+  check("hovering the edge reveals the tab bar", revealed.barTop === 0, `barTop=${revealed.barTop}`);
+
+  // 9b) All of it survives a restart.
+  await win.reload();
+  await win.waitForSelector(".app", { timeout: 20000 });
+  await win.waitForTimeout(2500);
+  const restored = await win.evaluate(() =>
+    JSON.parse(localStorage.getItem("specterm.settings"))
+  );
+  check(
+    "layout settings persist across a reload",
+    restored.tabBarCorner === "top-left" &&
+      restored.tabBarHeight === 52 &&
+      restored.tabBarAutoHide === true &&
+      Math.abs(restored.sidebarWidth - 300) <= 12,
+    JSON.stringify({
+      corner: restored.tabBarCorner,
+      height: restored.tabBarHeight,
+      autoHide: restored.tabBarAutoHide,
+      width: restored.sidebarWidth,
+    })
+  );
+
+  // Back to the defaults so the checks below aren't fighting a hidden tab bar.
+  await win.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem("specterm.settings"));
+    localStorage.setItem(
+      "specterm.settings",
+      JSON.stringify({ ...s, tabBarAutoHide: false, tabBarHeight: 36, sidebarWidth: 250 })
+    );
+  });
+  await win.reload();
+  await win.waitForSelector(".file-tree", { timeout: 20000 });
+  await win.waitForTimeout(2500);
+
+  // 10) The sidebar's path is glued to the listing it labels: favourites, then
+  // the filter, then the breadcrumb, then the files.
+  const treeOrder = await win.evaluate(() =>
+    Array.from(document.querySelector(".file-tree").children).map((el) => el.className)
+  );
+  const idx = (c) => treeOrder.findIndex((n) => n.includes(c));
+  check(
+    "file tree: path sits directly above the listing",
+    idx("file-tree-header") >= 0 &&
+      idx("file-tree-header") === idx("file-tree-content") - 1 &&
+      idx("file-tree-search") < idx("file-tree-header"),
+    treeOrder.join(" | ")
+  );
+
+  // 11) Copy out of a pane whose program has grabbed the mouse (Claude Code,
+  // vim, htop). xterm hands the drag to the program and switches its own
+  // selection off, so a plain drag used to select nothing at all. Now: a drag
+  // selects locally and the program is told nothing; a click still reaches it.
+  //
+  // Ground truth is the program's own stdin — a recorder that turns mouse
+  // tracking on and writes back whatever the terminal sends it. No Claude
+  // needed, so this runs everywhere.
+  const MOUSE_LOG = path.join(os.tmpdir(), `specterm_mouse_${process.pid}.txt`);
+  const SGR_REPORT = /\x1b\[<\d+;\d+;\d+[Mm]/; // ESC [ < btn ; col ; row  M|m
+
+  async function recordMouse(seconds) {
+    try { fs.unlinkSync(MOUSE_LOG); } catch {}
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    // Modes 1000 (buttons) + 1002 (drag) + 1006 (SGR). 1003 (motion with no
+    // button) is left off on purpose, so a stray hover can't fake a report.
+    await win.keyboard.type(
+      `clear; printf '\\033[?1000h\\033[?1002h\\033[?1006h'; printf 'GRAB_MARKER\\r\\n'; ` +
+        `stty raw -echo; timeout ${seconds} cat > "${MOUSE_LOG}"; stty sane; ` +
+        `printf '\\033[?1000l\\033[?1002l\\033[?1006l'`
+    );
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(1200);
+  }
+  const mouseLog = async (seconds) => {
+    await win.waitForTimeout(seconds * 1000 + 800);
+    try { return fs.readFileSync(MOUSE_LOG, "utf8"); } catch { return ""; }
+  };
+  async function dragAcross(rowY, { shift = false } = {}) {
+    const b = await win.locator(".xterm-screen").first().boundingBox();
+    if (shift) await win.keyboard.down("Shift");
+    await win.mouse.move(b.x + 4, b.y + rowY);
+    await win.mouse.down();
+    await win.mouse.move(b.x + b.width - 8, b.y + rowY + 2, { steps: 12 });
+    await win.mouse.up();
+    if (shift) await win.keyboard.up("Shift");
+    await win.waitForTimeout(200);
+  }
+  async function copyNow() {
+    await writeOsClip("<<EMPTY>>");
+    await win.keyboard.press(COPY_KEY);
+    await win.waitForTimeout(400);
+    return readOsClip();
+  }
+
+  await recordMouse(6);
+  await dragAcross(8);
+  const grabbedDragClip = await copyNow();
+  const grabbedDragLog = await mouseLog(6);
+  check(
+    "mouse-grabbing pane: a drag selects text",
+    grabbedDragClip.includes("GRAB_MARKER"),
+    JSON.stringify(grabbedDragClip.slice(0, 40))
+  );
+  check(
+    "mouse-grabbing pane: a drag reports nothing to the program",
+    !SGR_REPORT.test(grabbedDragLog),
+    JSON.stringify(grabbedDragLog.slice(0, 40))
+  );
+
+  await recordMouse(6);
+  const screenBox = await win.locator(".xterm-screen").first().boundingBox();
+  await win.mouse.click(screenBox.x + 80, screenBox.y + 60);
+  await win.waitForTimeout(300);
+  const grabbedClickClip = await copyNow();
+  const grabbedClickLog = await mouseLog(6);
+  check(
+    "mouse-grabbing pane: a click IS reported to the program",
+    SGR_REPORT.test(grabbedClickLog),
+    JSON.stringify(grabbedClickLog.slice(0, 40))
+  );
+  check(
+    "mouse-grabbing pane: a click makes no selection",
+    grabbedClickClip === "<<EMPTY>>",
+    JSON.stringify(grabbedClickClip.slice(0, 40))
+  );
+
+  await recordMouse(6);
+  await dragAcross(8, { shift: true });
+  const shiftDragClip = await copyNow();
+  const shiftDragLog = await mouseLog(6);
+  check(
+    "mouse-grabbing pane: shift+drag (xterm's own hatch) still selects",
+    shiftDragClip.includes("GRAB_MARKER") && !SGR_REPORT.test(shiftDragLog),
+    JSON.stringify(shiftDragClip.slice(0, 40))
+  );
+  try { fs.unlinkSync(MOUSE_LOG); } catch {}
+
+  // 12) Optional: the same thing against real Claude Code — the program this
+  // was actually reported against. Skipped when the CLI isn't installed, so the
+  // suite still runs on a machine (or CI box) without it.
+  if (HAS_CLAUDE) {
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type("clear; claude");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(7000);
+    await win.keyboard.press("Enter"); // "trust this folder?", if it asks
+    await win.waitForTimeout(8000);
+
+    const claudeGrabbed = await win.evaluate(
+      () => !!document.querySelector(".xterm.enable-mouse-events")
+    );
+    if (!claudeGrabbed) {
+      skip("claude session: a drag copies its output", "claude never grabbed the mouse");
+    } else {
+      await dragAcross(60);
+      const claudeClip = await copyNow();
+      check(
+        "claude session: a drag copies its output",
+        claudeClip !== "<<EMPTY>>" && claudeClip.trim().length > 0,
+        JSON.stringify(claudeClip.slice(0, 48))
+      );
+    }
+  } else {
+    skip("claude session: a drag copies its output", "claude CLI not on PATH");
+  }
 
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 

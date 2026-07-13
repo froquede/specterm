@@ -32,5 +32,4 @@ export interface AppState {
   tabs: Tab[];
   activeTabId: TabId;
   sidebarView: SidebarView | null; // null = sidebar closed
-  sidebarWidth: number;
 }

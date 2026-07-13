@@ -15,13 +15,20 @@ body,
   font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
 }
 
-/* App layout */
+/* App layout. The tab bar's corner is two independent choices: which edge it
+   sits on (here, by reversing the column) and which side of that edge its tabs
+   and icons hug (see .tab-bar[data-side]). */
 .app {
   display: flex;
   flex-direction: column;
   width: 100%;
   height: 100%;
   background: var(--bg);
+  position: relative;
+}
+
+.app[data-tab-edge="bottom"] {
+  flex-direction: column-reverse;
 }
 
 .app-body {
@@ -40,17 +47,30 @@ body,
 .tab-bar {
   display: flex;
   align-items: center;
-  height: 36px;
+  height: var(--tab-bar-height);
+  flex-shrink: 0;
   background: var(--bg-chrome);
   border-bottom: 1px solid var(--border);
   user-select: none;
   -webkit-app-region: drag;
 }
 
+/* The separating border belongs on whichever side faces the panes. */
+.app[data-tab-edge="bottom"] .tab-bar {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+}
+
 /* macOS uses a hiddenInset titlebar, so the traffic lights overlap the tab
-   bar — leave room for them. Other platforms have a native title bar above. */
-.is-mac .tab-bar {
+   bar — leave room for them. Only when it's actually up there. */
+.is-mac .app[data-tab-edge="top"] .tab-bar {
   padding-left: 78px;
+}
+
+.tab-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
 }
 
 .tab-list {
@@ -68,6 +88,46 @@ body,
   -webkit-app-region: drag;
 }
 
+/* Which corner the tabs and icons hug. The elastic drag region is what moves:
+   put it first and everything else is pushed against the right edge. Reordering
+   with `order` (rather than reversing the flex direction) keeps the tabs
+   themselves in left-to-right reading order in both layouts. */
+.tab-bar[data-side="left"] .tab-actions { order: 0; }
+.tab-bar[data-side="left"] .tab-list { order: 1; }
+.tab-bar[data-side="left"] .tab-drag-region { order: 2; }
+
+.tab-bar[data-side="right"] .tab-drag-region { order: 0; }
+.tab-bar[data-side="right"] .tab-list { order: 1; }
+.tab-bar[data-side="right"] .tab-actions { order: 2; }
+
+/* Auto-hide: lift the bar out of the flow (the panes take the whole window) and
+   slide it off its edge, leaving --tab-bar-peek behind as the hover target.
+   The element keeps its full height, so the moment the pointer touches the peek
+   it slides back in. */
+.app[data-tab-autohide="true"] .tab-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 40;
+  transition: transform 0.15s ease;
+}
+
+.app[data-tab-autohide="true"][data-tab-edge="top"] .tab-bar {
+  top: 0;
+  transform: translateY(calc(-100% + var(--tab-bar-peek)));
+}
+
+.app[data-tab-autohide="true"][data-tab-edge="bottom"] .tab-bar {
+  bottom: 0;
+  transform: translateY(calc(100% - var(--tab-bar-peek)));
+}
+
+/* Revealed on hover, and whenever focus lands inside it (keyboard users). */
+.app[data-tab-autohide="true"] .tab-bar:hover,
+.app[data-tab-autohide="true"] .tab-bar:focus-within {
+  transform: none;
+}
+
 .tab-list::-webkit-scrollbar {
   height: 0;
 }
@@ -77,7 +137,7 @@ body,
   align-items: center;
   gap: 6px;
   padding: 0 12px;
-  height: 36px;
+  height: var(--tab-bar-height);
   font-size: 12px;
   color: var(--fg-muted);
   cursor: pointer;
@@ -95,6 +155,12 @@ body,
   color: var(--fg);
   background: var(--bg);
   border-bottom: 2px solid var(--accent);
+}
+
+/* The accent marker sits on the edge facing the panes. */
+.app[data-tab-edge="bottom"] .tab.active {
+  border-bottom: none;
+  border-top: 2px solid var(--accent);
 }
 
 .tab-title {
@@ -133,8 +199,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tab-bar-height);
+  height: var(--tab-bar-height);
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -152,8 +218,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tab-bar-height);
+  height: var(--tab-bar-height);
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -171,8 +237,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tab-bar-height);
+  height: var(--tab-bar-height);
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -190,8 +256,8 @@ body,
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tab-bar-height);
+  height: var(--tab-bar-height);
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -217,9 +283,11 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
-  /* The slot's width is the file tree's (sidebarWidth, 250px by default), which
-     crushes the swatch rows, the font picker and the opacity slider — the modal
-     this replaced was 380px. Hold a floor so the controls stay usable. */
+  width: var(--sidebar-width);
+  /* The slot's width is the file tree's, which at its narrow end crushes the
+     swatch rows, the font picker and the opacity slider — the modal this
+     replaced was 380px. Hold a floor so the controls stay usable, even when the
+     tree itself is dragged narrower than this. */
   min-width: 340px;
   /* Match the old modal's --bg (not chrome): the fields/dividers below draw on
      --bg-chrome / --border, so the body must stay --bg or they lose contrast. */
@@ -590,6 +658,14 @@ body,
   /* Ghostty: unfocused-split-opacity = 0.35. Wash inactive panes out by
      blending a darker base over them. */
   --unfocused-split-opacity: 0.35;
+
+  /* Chrome layout — overwritten on documentElement from the persisted settings
+     (stores/settings.ts). The values here are the defaults a fresh profile
+     starts on, and the fallback if localStorage is unavailable. */
+  --tab-bar-height: 36px;
+  --sidebar-width: 250px;
+  /* How much of an auto-hidden tab bar stays on screen as a hover target. */
+  --tab-bar-peek: 4px;
   --unfocused-split-fill: var(--unfocused-fill);
 }
 
@@ -796,4 +872,94 @@ body,
 ::-webkit-scrollbar-thumb {
   background: var(--fg-faint);
   border-radius: 4px;
+}
+
+/* A sub-heading inside a section (the Layout group has several controls). */
+.settings-sublabel {
+  font-size: 12px;
+  color: var(--fg-muted);
+}
+
+.settings-checkbox {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* Tab-bar corner picker: the four options are arranged as the corners they
+   select, and each shows a miniature of the bar in that position. Aiming at the
+   corner you want is the whole interaction — no labels to read. */
+.corner-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin: 6px 0 12px;
+}
+
+.corner-option {
+  display: flex;
+  height: 40px;
+  padding: 4px;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.corner-option:hover {
+  border-color: var(--fg-faint);
+}
+
+.corner-option.active {
+  border-color: var(--accent);
+  background: var(--bg-hover);
+}
+
+/* The miniature bar: a stub pinned to the corner the option stands for. */
+.corner-bar {
+  display: block;
+  width: 55%;
+  height: 6px;
+  background: var(--fg-faint);
+  border-radius: 2px;
+}
+
+.corner-option.active .corner-bar {
+  background: var(--accent);
+}
+
+.corner-option[data-corner="top-left"] { align-items: flex-start; justify-content: flex-start; }
+.corner-option[data-corner="top-right"] { align-items: flex-start; justify-content: flex-end; }
+.corner-option[data-corner="bottom-left"] { align-items: flex-end; justify-content: flex-start; }
+.corner-option[data-corner="bottom-right"] { align-items: flex-end; justify-content: flex-end; }
+
+/* Grab strip between the sidebar and the panes. Wider hit area than it looks,
+   so it's easy to catch without a visible 6px gutter. */
+.sidebar-resize-handle {
+  flex: 0 0 auto;
+  width: 6px;
+  margin-left: -3px;
+  margin-right: -3px;
+  z-index: 10;
+  cursor: col-resize;
+  background: transparent;
+  transition: background 0.15s ease;
+}
+
+.sidebar-resize-handle:hover,
+.sidebar-resize-handle.dragging {
+  background: var(--accent);
+}
+
+/* While dragging, the pointer owns the gesture: don't let it select text or
+   flicker the cursor as it crosses the panes. */
+body.resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
+}
+
+body.resizing-sidebar .xterm {
+  pointer-events: none;
 }

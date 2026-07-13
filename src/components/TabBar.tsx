@@ -1,5 +1,7 @@
 import { createSignal, For, onMount, onCleanup } from "solid-js";
 import { getBackend, type UnlistenFn } from "../backends";
+import { shortcutLabel } from "../lib/platform";
+import { tabBarSide } from "../stores/settings";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -43,48 +45,52 @@ export default function TabBar(props: TabBarProps) {
     onCleanup(() => unlisten?.());
   });
 
+  const sidebarKey = () => shortcutLabel("B");
+  const settingsKey = () => shortcutLabel(",");
+
+  // The bar's three regions are ordered by CSS (see .tab-bar[data-side]), so
+  // anchoring the tabs and icons to the right corner is a reflow, not a
+  // different DOM: the tabs keep their left-to-right reading order either way.
   return (
-    <div class="tab-bar">
-      <button
-        class="tab-sidebar-toggle"
-        onClick={props.onToggleSidebar}
-        title={props.sidebarOpen ? "Hide sidebar (Ctrl+Shift+B)" : "Show sidebar (Ctrl+Shift+B)"}
-      >
-        {props.sidebarOpen ? "◧" : "▯"}
-      </button>
-      <button class="tab-new" onClick={props.onCreate}>
-        +
-      </button>
-      <button
-        class="tab-fullscreen"
-        onClick={toggleFullscreen}
-        title={isFullscreen() ? "Exit fullscreen" : "Fullscreen"}
-      >
-        {isFullscreen() ? "⊡" : "⊞"}
-      </button>
-      <button
-        class="tab-settings"
-        classList={{ active: props.settingsOpen }}
-        onClick={props.onOpenSettings}
-        aria-pressed={props.settingsOpen}
-        title={
-          props.settingsOpen
-            ? "Hide settings (Ctrl+Shift+O)"
-            : "Settings (Ctrl+Shift+O)"
-        }
-      >
-        <svg
-          width="15"
-          height="15"
-          viewBox="0 0 24 24"
-          fill={props.settingsOpen ? "currentColor" : "none"}
-          stroke="currentColor"
-          stroke-width={props.settingsOpen ? 0 : 1.4}
-          stroke-linejoin="round"
+    <div class="tab-bar" data-side={tabBarSide()}>
+      <div class="tab-actions">
+        <button
+          class="tab-sidebar-toggle"
+          onClick={props.onToggleSidebar}
+          title={`${props.sidebarOpen ? "Hide" : "Show"} sidebar (${sidebarKey()})`}
         >
-          <path d={GEAR_PATH} fill-rule="evenodd" />
-        </svg>
-      </button>
+          {props.sidebarOpen ? "◧" : "▯"}
+        </button>
+        <button class="tab-new" onClick={props.onCreate} title="New tab">
+          +
+        </button>
+        <button
+          class="tab-fullscreen"
+          onClick={toggleFullscreen}
+          title={isFullscreen() ? "Exit fullscreen" : "Fullscreen"}
+        >
+          {isFullscreen() ? "⊡" : "⊞"}
+        </button>
+        <button
+          class="tab-settings"
+          classList={{ active: props.settingsOpen }}
+          onClick={props.onOpenSettings}
+          aria-pressed={props.settingsOpen}
+          title={`${props.settingsOpen ? "Hide" : "Open"} settings (${settingsKey()})`}
+        >
+          <svg
+            width="15"
+            height="15"
+            viewBox="0 0 24 24"
+            fill={props.settingsOpen ? "currentColor" : "none"}
+            stroke="currentColor"
+            stroke-width={props.settingsOpen ? 0 : 1.4}
+            stroke-linejoin="round"
+          >
+            <path d={GEAR_PATH} fill-rule="evenodd" />
+          </svg>
+        </button>
+      </div>
       <div class="tab-list">
         <For each={props.tabs}>
           {(tab) => (
