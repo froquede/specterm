@@ -1,8 +1,8 @@
-import { Show, onMount, createEffect, onCleanup, createSignal } from "solid-js";
+import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
-import { initSettings } from "./stores/settings";
+import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
@@ -11,12 +11,22 @@ import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
 import SettingsPanel from "./components/SettingsPanel";
+import SidebarResizeHandle from "./components/SidebarResizeHandle";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
 
 export default function App() {
   const store = useTabStore();
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
+
+  // The file tree and the settings panel share one slot in .app-body, so the
+  // store models it as a single `sidebarView` — there's no state in which both
+  // are open, and no invariant for callers to maintain.
+  const settingsOpen = () => store.state.sidebarView === "settings";
+
+  function toggleSettings() {
+    store.toggleSidebarView("settings");
+    if (!settingsOpen()) focusActivePane();
+  }
 
   // Keep keyboard focus on the active pane's terminal. The active pane is the
   // one drawn at full opacity (others are dimmed), so typing must always land
@@ -58,11 +68,15 @@ export default function App() {
     requestAnimationFrame(() => focusPaneReliably(paneId, attempts - 1));
   }
 
+  // The whole AppState lives in one signal, so *any* store write (opening the
+  // sidebar, renaming a tab) notifies everything that reads it. Funnel the
+  // active pane through a memo so the effects below only re-run when the pane
+  // actually changes — otherwise toggling the sidebar yanks keyboard focus back
+  // into the terminal, and the terminal then swallows the keys the panel needs.
+  const activePaneId = createMemo(() => store.activeTab?.activePaneId);
+
   createEffect(() => {
-    const tab = store.activeTab;
-    if (!tab) return;
-    // Track the active pane id so the effect re-runs when focus moves.
-    void tab.activePaneId;
+    if (!activePaneId()) return;
     // Wait a frame so a just-remounted terminal is in the DOM before focusing.
     // Cancel a still-pending frame if the active pane changes again first, so
     // rapid tab/pane switches don't queue up stale focus calls.
@@ -73,7 +87,7 @@ export default function App() {
   // Close the find bar when focus leaves the pane it was opened on (pane
   // switch, tab switch), so it never lingers over a dimmed split.
   createEffect(() => {
-    const active = store.activeTab?.activePaneId;
+    const active = activePaneId();
     const searching = searchPaneId();
     if (searching && searching !== active) closeSearch();
   });
@@ -129,7 +143,7 @@ export default function App() {
       createKeymap({
         store,
         focusActivePane,
-        toggleSettings: () => setSettingsOpen((v) => !v),
+        toggleSettings,
       })
     );
 
@@ -173,25 +187,47 @@ export default function App() {
   });
 
   return (
-    <div class="app">
+    // The chrome layout is expressed as data attributes and CSS variables; the
+    // stylesheet reflows around them, so moving the tab bar to another corner or
+    // collapsing it never re-renders a pane. Panes resize, their ResizeObserver
+    // fires, and xterm refits itself.
+    <div
+      class="app"
+      data-tab-edge={tabBarEdge()}
+      data-tab-autohide={tabBarAutoHide() ? "true" : "false"}
+    >
       <TabBar
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
-        sidebarOpen={store.state.sidebarOpen}
+        sidebarOpen={store.state.sidebarView === "files"}
         onSelect={(id) => store.setActiveTab(id)}
         onClose={(id) => store.closeTab(id)}
         onCreate={() => store.createTab()}
-        onToggleSidebar={() => store.toggleSidebar()}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onToggleSidebar={() => store.toggleSidebarView("files")}
+        onOpenSettings={toggleSettings}
+        settingsOpen={settingsOpen()}
       />
       <div class="app-body">
         <FileTree
-          open={store.state.sidebarOpen}
-          width={store.state.sidebarWidth}
+          open={store.state.sidebarView === "files"}
           onOpenFile={handleOpenMarkdown}
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
         />
+        {/* Mounted only while open. The panel probes the installed font list and
+            builds the 325-scheme gallery on mount, so keeping it alive behind an
+            internal <Show> paid that cost on every app boot. */}
+        <Show when={settingsOpen()}>
+          <SettingsPanel
+            onClose={() => {
+              store.closeSidebar();
+              focusActivePane();
+            }}
+          />
+        </Show>
+        <Show when={store.state.sidebarView !== null}>
+          <SidebarResizeHandle />
+        </Show>
         <div class="app-content" data-split-root>
           <Show when={store.activeTab}>
             {(tab) => (
@@ -230,7 +266,6 @@ export default function App() {
           </Show>
         </div>
       </div>
-      <SettingsPanel open={settingsOpen()} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

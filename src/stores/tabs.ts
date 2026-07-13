@@ -1,6 +1,13 @@
 import { createSignal } from "solid-js";
 import { nanoid } from "nanoid";
-import type { AppState, Tab, PaneType, PaneId, SplitNode } from "../types";
+import type {
+  AppState,
+  Tab,
+  PaneType,
+  PaneId,
+  SplitNode,
+  SidebarView,
+} from "../types";
 import {
   createLeaf,
   collectLeaves,
@@ -30,8 +37,7 @@ const initialTab = createTerminalTab();
 const [state, setStateRaw] = createSignal<AppState>({
   tabs: [initialTab],
   activeTabId: initialTab.id,
-  sidebarOpen: true,
-  sidebarWidth: 250,
+  sidebarView: "files",
 });
 
 function update(fn: (s: AppState) => AppState) {
@@ -397,12 +403,23 @@ export function useTabStore() {
       }, 100);
     },
 
-    toggleSidebar() {
-      update((s) => ({ ...s, sidebarOpen: !s.sidebarOpen }));
+    // The sidebar slot holds exactly one view at a time. Showing a view evicts
+    // whatever was there, so "settings is open" and "the file tree is open" can
+    // never both be true — the invariant lives here, not in the callers.
+    showSidebar(view: SidebarView) {
+      update((s) => (s.sidebarView === view ? s : { ...s, sidebarView: view }));
     },
 
-    openSidebar() {
-      update((s) => (s.sidebarOpen ? s : { ...s, sidebarOpen: true }));
+    closeSidebar() {
+      update((s) => (s.sidebarView === null ? s : { ...s, sidebarView: null }));
+    },
+
+    // Show `view`, or close the sidebar if it's already the one showing.
+    toggleSidebarView(view: SidebarView) {
+      update((s) => ({
+        ...s,
+        sidebarView: s.sidebarView === view ? null : view,
+      }));
     },
   };
 }

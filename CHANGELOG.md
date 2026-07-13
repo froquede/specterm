@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.11.0 — 2026-07-13
+
+### Added
+- Settings moved from a modal into a sidebar, sharing its slot with the file
+  tree (opening one evicts the other). Changes persist as you make them — there
+  is no Save button; a toast confirms once your edits settle. Reach it with the
+  gear or **Cmd+,** / **Ctrl+Shift+,**.
+- The tab bar can sit in any of the window's four corners. Which edge it sits on
+  (top/bottom) and which side its tabs and icons hug (left/right) are independent
+  choices, picked from a 2x2 grid of miniatures in the new **Layout** settings
+  group.
+- Tab bar height (24–56px) and sidebar width (200–640px) are configurable. The
+  sidebar is also resizable by dragging the strip between it and the panes;
+  double-click to reset. Sidebar width now survives a restart (it never used to).
+- The tab bar can auto-hide: the panes take the whole window and the bar slides
+  off its edge, leaving a peek strip that brings it back when you reach for it.
+
+### Changed
+- The file sidebar's breadcrumb path now sits directly on top of the listing it
+  labels, below the filter. The favourites strip takes the top of the sidebar,
+  where jump targets belong.
+- Base16 themes get their dividers back: `border` now derives from base02 rather
+  than base01, which was indistinguishable from the chrome it was drawn against.
+
+### Fixed
+- **You can now copy from a pane running Claude Code** — or vim, htop, lazygit.
+  Those programs turn on mouse tracking, and at that point xterm hands every
+  button press to the program and switches its own selection off: the drag
+  belongs to the app, so it never became a selection and there was nothing for
+  the copy shortcut to read. Specterm now tells the two intents apart — a click
+  still reaches the program (Claude keeps its clickable UI, hover and scroll),
+  while a drag past 3px becomes a local selection you can copy. Holding Shift
+  (xterm's own escape hatch) still works.
+- Esc now closes the settings sidebar even while the terminal holds keyboard
+  focus, which it usually does.
+- The settings panel no longer probes every installed monospace font and builds
+  the 325-scheme theme gallery on every app boot — it's mounted only while open.
+
 ## 0.10.0 — 2026-07-06
 
 ### Added
