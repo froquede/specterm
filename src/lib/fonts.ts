@@ -103,7 +103,17 @@ interface LocalFontData {
 }
 
 // Sorted list of installed monospace font families available to the terminal.
-export async function detectMonospaceFonts(): Promise<string[]> {
+// The probe rasterizes every candidate on a canvas and may hit the Local Font
+// Access API, so the result is memoized: the installed font set doesn't change
+// while the app is running, and the settings panel is remounted on every open.
+let cached: Promise<string[]> | undefined;
+
+export function detectMonospaceFonts(): Promise<string[]> {
+  cached ??= probeMonospaceFonts();
+  return cached;
+}
+
+async function probeMonospaceFonts(): Promise<string[]> {
   const found = new Set<string>();
 
   for (const family of CANDIDATES) {

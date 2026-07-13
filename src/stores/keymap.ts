@@ -62,11 +62,8 @@ export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
   // Pull keyboard focus back into the active pane's terminal.
   focusActivePane: () => void;
-  // Open/close the settings sidebar (mutually exclusive with the file sidebar).
+  // Open/close the settings sidebar.
   toggleSettings: () => void;
-  // Force the settings sidebar closed — called when opening the file sidebar so
-  // the two never share the slot.
-  closeSettings: () => void;
 }
 
 const newTerminal = () =>
@@ -85,19 +82,15 @@ export function createKeymap({
   store,
   focusActivePane,
   toggleSettings,
-  closeSettings,
 }: KeymapContext): BindingSpec[] {
   return [
-    // Settings — ⌘⇧O on macOS, Ctrl+Shift+O on Windows/Linux. A literal chord
-    // (meta+shift + kitty's ctrl+shift), not the cmd() ⌘⇧→Ctrl+Alt mapping, so
-    // both platforms keep Shift+O. Toggles the settings sidebar, which shares
-    // its slot with the file/search sidebar (⌘B) — opening one evicts the other.
+    // Settings — ⌘, on macOS (the platform convention for Preferences);
+    // Ctrl+Shift+, elsewhere. Toggles the settings sidebar, which shares its
+    // slot with the file/search sidebar (⌘B): showing one evicts the other.
     {
       id: "settings.toggle",
-      key: "o",
-      meta: true,
-      shift: true,
-      byOS: kitty("o"),
+      key: ",",
+      ...cmd({ code: "Comma" }),
       allowInInput: true,
       label: "Toggle settings",
       run: () => toggleSettings(),
@@ -346,14 +339,13 @@ export function createKeymap({
       allowInInput: true,
       label: "Toggle sidebar / search",
       run: () => {
-        if (store.state.sidebarOpen) {
-          store.toggleSidebar();
+        if (store.state.sidebarView === "files") {
+          store.closeSidebar();
           focusActivePane();
           return;
         }
-        // Opening the file sidebar evicts settings — they share the slot.
-        closeSettings();
-        store.openSidebar();
+        // Showing the file tree evicts settings — the store owns that invariant.
+        store.showSidebar("files");
         // The input mounts when the sidebar opens, so retry briefly until it's
         // in the DOM, then focus and select any existing filter text.
         let tries = 0;

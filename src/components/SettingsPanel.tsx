@@ -34,7 +34,6 @@ import {
 import { detectMonospaceFonts } from "../lib/fonts";
 
 interface SettingsPanelProps {
-  open: boolean;
   width: number;
   onClose: () => void;
 }
@@ -109,15 +108,21 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     return q ? all.filter((t) => t.name.toLowerCase().includes(q)) : all;
   });
 
+  // Esc closes the panel. Listen in the *capture* phase: the terminal usually
+  // still holds keyboard focus while the sidebar is open (it's opened by a
+  // shortcut, or focus returns to it), and xterm stops Escape from propagating
+  // — it's a key it forwards to the pty — so a bubble-phase listener never sees
+  // it. Capturing on window runs before xterm's textarea handler.
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Escape" && props.open) {
+    if (e.key === "Escape") {
       e.preventDefault();
+      e.stopPropagation();
       props.onClose();
     }
   }
 
-  onMount(() => window.addEventListener("keydown", onKeyDown));
-  onCleanup(() => window.removeEventListener("keydown", onKeyDown));
+  onMount(() => window.addEventListener("keydown", onKeyDown, true));
+  onCleanup(() => window.removeEventListener("keydown", onKeyDown, true));
 
   function reset() {
     resetUnfocusedOpacity();
@@ -149,303 +154,314 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     }
   }
 
-  // Autosave acknowledgement: every setting persists live to localStorage (see
-  // stores/settings.ts), so there's no explicit Save. After changes settle for
-  // 1.5s we flash a "saved" toast, then hide it a few seconds later.
+  // Autosave acknowledgement: every setting persists live to localStorage the
+  // moment it changes (see stores/settings.ts), so there's no explicit Save.
+  // Once edits settle for SAVED_DEBOUNCE_MS we flash a toast, which then fades.
+  //
+  // The panel only exists while the sidebar shows it (App mounts it lazily), so
+  // these timers can't outlive it and the effect can't fire for changes made
+  // while it's closed. `createEffect`'s first run happens on mount, which is not
+  // an edit — hence the explicit skip via the memo's previous value.
+  const SAVED_DEBOUNCE_MS = 1500;
+  const SAVED_VISIBLE_MS = 2500;
+
   const [saved, setSaved] = createSignal(false);
   let debounceTimer: ReturnType<typeof setTimeout> | undefined;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
-  let firstRun = true;
 
-  createEffect(() => {
-    // Subscribe to every persisted setting so any change re-arms the toast.
-    unfocusedOpacity();
-    startupPath();
-    terminalFontFamily();
-    activeTheme().id;
-    // Skip the initial run (mount) — only react to real edits.
-    if (firstRun) {
-      firstRun = false;
-      return;
-    }
-    if (debounceTimer) clearTimeout(debounceTimer);
+  // A fingerprint of everything the panel persists. Tracking it in one memo
+  // keeps the "what counts as an edit" list in a single place.
+  const persistedSettings = createMemo(() =>
+    JSON.stringify([
+      unfocusedOpacity(),
+      startupPath(),
+      terminalFontFamily(),
+      activeTheme().id,
+    ])
+  );
+
+  createEffect((previous: string | undefined) => {
+    const current = persistedSettings();
+    // First run is the mount, not an edit.
+    if (previous === undefined || previous === current) return current;
+
+    clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       setSaved(true);
-      if (hideTimer) clearTimeout(hideTimer);
-      hideTimer = setTimeout(() => setSaved(false), 2500);
-    }, 1500);
+      clearTimeout(hideTimer);
+      hideTimer = setTimeout(() => setSaved(false), SAVED_VISIBLE_MS);
+    }, SAVED_DEBOUNCE_MS);
+    return current;
   });
 
   onCleanup(() => {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    if (hideTimer) clearTimeout(hideTimer);
+    clearTimeout(debounceTimer);
+    clearTimeout(hideTimer);
   });
 
   const pct = () => Math.round(unfocusedOpacity() * 100);
   const activeIsCustom = () => !activeTheme().builtin && !activeTheme().id.startsWith("gallery-");
 
   return (
-    <Show when={props.open}>
-      <div
-        class="settings-sidebar"
-        style={{ width: `${props.width}px` }}
-        role="complementary"
-        aria-label="Settings"
-      >
-        <div class="settings-header">
-          <span class="settings-title">Settings</span>
-          {/* No Save button — changes persist live and autosave (see the effect
-              above). Esc closes the sidebar. */}
+    <div
+      class="settings-sidebar"
+      style={{ width: `${props.width}px` }}
+      role="complementary"
+      aria-label="Settings"
+    >
+      <div class="settings-header">
+        <span class="settings-title">Settings</span>
+        {/* No Save button — changes persist live and autosave (see the effect
+            above). Esc closes the sidebar. */}
+      </div>
+      <Show when={saved()}>
+        <div class="settings-saved-bar" role="status" aria-live="polite">
+          All settings saved.
         </div>
-        <Show when={saved()}>
-          <div class="settings-saved-bar" role="status" aria-live="polite">
-            All settings saved.
-          </div>
-        </Show>
-        <div class="settings-scroll">
-          <div class="settings-section">
-            <div class="settings-row">
-              <label class="settings-label" for="theme-select">
-                Theme
-              </label>
-              <Show when={activeIsCustom()}>
-                <button
-                  class="settings-reset"
-                  onClick={() => removeCustomTheme(activeTheme().id)}
-                >
-                  Remove
-                </button>
-              </Show>
-            </div>
-            <select
-              id="theme-select"
-              class="settings-select"
-              value={activeTheme().id}
-              onChange={(e) => setActiveTheme(e.currentTarget.value)}
-            >
-              <For each={availableThemes()}>
-                {(t) => <option value={t.id}>{t.name}</option>}
-              </For>
-              {/* Keep the picker showing the active gallery theme by name. */}
-              <Show when={activeTheme().id.startsWith("gallery-")}>
-                <option value={activeTheme().id}>{activeTheme().name}</option>
-              </Show>
-            </select>
-
-            <div class="settings-actions">
+      </Show>
+      <div class="settings-scroll">
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="theme-select">
+              Theme
+            </label>
+            <Show when={activeIsCustom()}>
               <button
-                class="settings-action"
-                onClick={() => setGalleryOpen((v) => !v)}
+                class="settings-reset"
+                onClick={() => removeCustomTheme(activeTheme().id)}
               >
-                {galleryOpen() ? "Hide gallery" : `Browse gallery (${galleryThemes().length})`}
+                Remove
               </button>
-              <button class="settings-action" onClick={() => fileRef?.click()}>
-                Open file…
-              </button>
-              <button class="settings-action" onClick={() => setImportOpen((v) => !v)}>
-                {importOpen() ? "Cancel paste" : "Paste…"}
-              </button>
-            </div>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".yaml,.yml,.json,.txt"
-              style={{ display: "none" }}
-              onChange={onFilePicked}
-            />
-
-            <Show when={galleryOpen()}>
-              <input
-                class="settings-search"
-                type="text"
-                placeholder="Filter themes…"
-                value={query()}
-                onInput={(e) => setQuery(e.currentTarget.value)}
-              />
-              <div class="theme-gallery">
-                <For each={filteredGallery()}>
-                  {(t) => (
-                    <button
-                      class="theme-gallery-item"
-                      classList={{ active: t.id === activeTheme().id }}
-                      title={t.name}
-                      onClick={() => setActiveTheme(t.id)}
-                    >
-                      <span class="theme-swatches">
-                        <For each={swatches(t)}>
-                          {(color) => (
-                            <span class="theme-swatch" style={{ background: color }} />
-                          )}
-                        </For>
-                      </span>
-                      <span class="theme-gallery-name">{t.name}</span>
-                    </button>
-                  )}
-                </For>
-                <Show when={filteredGallery().length === 0}>
-                  <div class="settings-hint">No themes match “{query()}”.</div>
-                </Show>
-              </div>
             </Show>
-
-            <Show when={importOpen()}>
-              <textarea
-                class="settings-textarea"
-                placeholder="Paste a base16 scheme (YAML or JSON)…"
-                value={importText()}
-                onInput={(e) => setImportText(e.currentTarget.value)}
-                rows={6}
-              />
-              <div class="settings-row">
-                <span class="settings-hint">base00–base0F → terminal + chrome.</span>
-                <button
-                  class="settings-reset"
-                  disabled={!importText().trim()}
-                  onClick={applyImport}
-                >
-                  Apply theme
-                </button>
-              </div>
-            </Show>
-
-            <Show when={importError()}>
-              <div class="settings-error">{importError()}</div>
-            </Show>
-            <div class="settings-hint">
-              Drag a base16 file onto the window, or browse hundreds of schemes
-              above. Imports recolor the terminal and the app.
-            </div>
           </div>
+          <select
+            id="theme-select"
+            class="settings-select"
+            value={activeTheme().id}
+            onChange={(e) => setActiveTheme(e.currentTarget.value)}
+          >
+            <For each={availableThemes()}>
+              {(t) => <option value={t.id}>{t.name}</option>}
+            </For>
+            {/* Keep the picker showing the active gallery theme by name. */}
+            <Show when={activeTheme().id.startsWith("gallery-")}>
+              <option value={activeTheme().id}>{activeTheme().name}</option>
+            </Show>
+          </select>
 
-          <div class="settings-divider" />
-
-          <div class="settings-section">
-            <div class="settings-row">
-              <label class="settings-label" for="font-select">
-                Terminal font
-              </label>
-              <Show when={terminalFontFamily() !== ""}>
-                <button
-                  class="settings-reset"
-                  onClick={() => setTerminalFontFamily("")}
-                >
-                  Reset
-                </button>
-              </Show>
-            </div>
-            <select
-              id="font-select"
-              class="settings-select"
-              value={terminalFontFamily()}
-              onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
+          <div class="settings-actions">
+            <button
+              class="settings-action"
+              onClick={() => setGalleryOpen((v) => !v)}
             >
-              <option value="">Default (bundled)</option>
-              {/* Keep a persisted pick visible even if detection hasn't run or
-                  no longer lists it (e.g. font uninstalled). */}
-              <Show
-                when={
-                  terminalFontFamily() &&
-                  !fonts().includes(terminalFontFamily())
-                }
-              >
-                <option value={terminalFontFamily()}>
-                  {terminalFontFamily()}
-                </option>
-              </Show>
-              <For each={fonts()}>
-                {(f) => (
-                  <option value={f} style={{ "font-family": `'${f}', monospace` }}>
-                    {f}
-                  </option>
+              {galleryOpen() ? "Hide gallery" : `Browse gallery (${galleryThemes().length})`}
+            </button>
+            <button class="settings-action" onClick={() => fileRef?.click()}>
+              Open file…
+            </button>
+            <button class="settings-action" onClick={() => setImportOpen((v) => !v)}>
+              {importOpen() ? "Cancel paste" : "Paste…"}
+            </button>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".yaml,.yml,.json,.txt"
+            style={{ display: "none" }}
+            onChange={onFilePicked}
+          />
+
+          <Show when={galleryOpen()}>
+            <input
+              class="settings-search"
+              type="text"
+              placeholder="Filter themes…"
+              value={query()}
+              onInput={(e) => setQuery(e.currentTarget.value)}
+            />
+            <div class="theme-gallery">
+              <For each={filteredGallery()}>
+                {(t) => (
+                  <button
+                    class="theme-gallery-item"
+                    classList={{ active: t.id === activeTheme().id }}
+                    title={t.name}
+                    onClick={() => setActiveTheme(t.id)}
+                  >
+                    <span class="theme-swatches">
+                      <For each={swatches(t)}>
+                        {(color) => (
+                          <span class="theme-swatch" style={{ background: color }} />
+                        )}
+                      </For>
+                    </span>
+                    <span class="theme-gallery-name">{t.name}</span>
+                  </button>
                 )}
               </For>
-            </select>
-            <div class="settings-hint">
-              {fontsLoading()
-                ? "Detecting installed monospace fonts…"
-                : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
-            </div>
-          </div>
-
-          <div class="settings-divider" />
-
-          <div class="settings-section">
-            <div class="settings-row">
-              <label class="settings-label" for="startup-path">
-                Default terminal path
-              </label>
-              <Show when={startupPath() !== ""}>
-                <button
-                  class="settings-reset"
-                  onClick={() => {
-                    setStartupDraft("");
-                    setStartupError(null);
-                    setStartupPath("");
-                  }}
-                >
-                  Reset
-                </button>
+              <Show when={filteredGallery().length === 0}>
+                <div class="settings-hint">No themes match “{query()}”.</div>
               </Show>
             </div>
-            <input
-              id="startup-path"
-              class="settings-select"
-              type="text"
-              placeholder="Leave blank for home directory"
-              value={startupDraft()}
-              onInput={(e) => setStartupDraft(e.currentTarget.value)}
-              onBlur={commitStartupPath}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") e.currentTarget.blur();
-              }}
-            />
-            <Show when={startupError()}>
-              <div class="settings-error">{startupError()}</div>
-            </Show>
-            <div class="settings-hint">
-              Where new terminals open and the file sidebar starts. Blank uses
-              your home directory.
-            </div>
-          </div>
+          </Show>
 
-          <div class="settings-divider" />
-
-          <div class="settings-section">
-            <div class="settings-row">
-              <label class="settings-label" for="unfocused-opacity">
-                Unfocused pane opacity
-              </label>
-              <span class="settings-value">{pct()}%</span>
-            </div>
-            <input
-              ref={(el) => {
-                // Seed the initial position once, on mount, without a reactive
-                // `value={...}` binding — see the note above on drag-cancelling.
-                sliderRef = el;
-                el.value = String(unfocusedOpacity());
-              }}
-              id="unfocused-opacity"
-              class="settings-slider"
-              type="range"
-              min={UNFOCUSED_OPACITY_MIN}
-              max={UNFOCUSED_OPACITY_MAX}
-              step={0.05}
-              onInput={(e) => setUnfocusedOpacity(Number(e.currentTarget.value))}
+          <Show when={importOpen()}>
+            <textarea
+              class="settings-textarea"
+              placeholder="Paste a base16 scheme (YAML or JSON)…"
+              value={importText()}
+              onInput={(e) => setImportText(e.currentTarget.value)}
+              rows={6}
             />
             <div class="settings-row">
-              <span class="settings-hint">
-                How visible inactive split panes are. 100% = no dimming.
-              </span>
-              <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
-                <button class="settings-reset" onClick={reset}>
-                  Reset
-                </button>
-              </Show>
+              <span class="settings-hint">base00–base0F → terminal + chrome.</span>
+              <button
+                class="settings-reset"
+                disabled={!importText().trim()}
+                onClick={applyImport}
+              >
+                Apply theme
+              </button>
             </div>
+          </Show>
+
+          <Show when={importError()}>
+            <div class="settings-error">{importError()}</div>
+          </Show>
+          <div class="settings-hint">
+            Drag a base16 file onto the window, or browse hundreds of schemes
+            above. Imports recolor the terminal and the app.
           </div>
         </div>
-        <div class="settings-version">Specterm v{__APP_VERSION__}</div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="font-select">
+              Terminal font
+            </label>
+            <Show when={terminalFontFamily() !== ""}>
+              <button
+                class="settings-reset"
+                onClick={() => setTerminalFontFamily("")}
+              >
+                Reset
+              </button>
+            </Show>
+          </div>
+          <select
+            id="font-select"
+            class="settings-select"
+            value={terminalFontFamily()}
+            onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
+          >
+            <option value="">Default (bundled)</option>
+            {/* Keep a persisted pick visible even if detection hasn't run or
+                no longer lists it (e.g. font uninstalled). */}
+            <Show
+              when={
+                terminalFontFamily() &&
+                !fonts().includes(terminalFontFamily())
+              }
+            >
+              <option value={terminalFontFamily()}>
+                {terminalFontFamily()}
+              </option>
+            </Show>
+            <For each={fonts()}>
+              {(f) => (
+                <option value={f} style={{ "font-family": `'${f}', monospace` }}>
+                  {f}
+                </option>
+              )}
+            </For>
+          </select>
+          <div class="settings-hint">
+            {fontsLoading()
+              ? "Detecting installed monospace fonts…"
+              : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
+          </div>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="startup-path">
+              Default terminal path
+            </label>
+            <Show when={startupPath() !== ""}>
+              <button
+                class="settings-reset"
+                onClick={() => {
+                  setStartupDraft("");
+                  setStartupError(null);
+                  setStartupPath("");
+                }}
+              >
+                Reset
+              </button>
+            </Show>
+          </div>
+          <input
+            id="startup-path"
+            class="settings-select"
+            type="text"
+            placeholder="Leave blank for home directory"
+            value={startupDraft()}
+            onInput={(e) => setStartupDraft(e.currentTarget.value)}
+            onBlur={commitStartupPath}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") e.currentTarget.blur();
+            }}
+          />
+          <Show when={startupError()}>
+            <div class="settings-error">{startupError()}</div>
+          </Show>
+          <div class="settings-hint">
+            Where new terminals open and the file sidebar starts. Blank uses
+            your home directory.
+          </div>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="unfocused-opacity">
+              Unfocused pane opacity
+            </label>
+            <span class="settings-value">{pct()}%</span>
+          </div>
+          <input
+            ref={(el) => {
+              // Seed the initial position once, on mount, without a reactive
+              // `value={...}` binding — see the note above on drag-cancelling.
+              sliderRef = el;
+              el.value = String(unfocusedOpacity());
+            }}
+            id="unfocused-opacity"
+            class="settings-slider"
+            type="range"
+            min={UNFOCUSED_OPACITY_MIN}
+            max={UNFOCUSED_OPACITY_MAX}
+            step={0.05}
+            onInput={(e) => setUnfocusedOpacity(Number(e.currentTarget.value))}
+          />
+          <div class="settings-row">
+            <span class="settings-hint">
+              How visible inactive split panes are. 100% = no dimming.
+            </span>
+            <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
+              <button class="settings-reset" onClick={reset}>
+                Reset
+              </button>
+            </Show>
+          </div>
+        </div>
       </div>
-    </Show>
+      <div class="settings-version">Specterm v{__APP_VERSION__}</div>
+    </div>
   );
 }

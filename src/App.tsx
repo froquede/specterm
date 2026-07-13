@@ -1,4 +1,4 @@
-import { Show, onMount, createEffect, onCleanup, createSignal } from "solid-js";
+import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
@@ -16,26 +16,15 @@ import { closeSearch, searchPaneId } from "./stores/terminal-search";
 
 export default function App() {
   const store = useTabStore();
-  const [settingsOpen, setSettingsOpen] = createSignal(false);
 
-  // Settings and the file/search sidebar share the same slot in .app-body and
-  // are mutually exclusive: opening one closes the other. Opening settings
-  // closes the file sidebar; opening the file sidebar (⌘B / Ctrl+Shift+B) calls
-  // closeSettings (threaded into the keymap below).
-  function openSettings() {
-    if (store.state.sidebarOpen) store.toggleSidebar();
-    setSettingsOpen(true);
-  }
-  function closeSettings() {
-    setSettingsOpen(false);
-  }
+  // The file tree and the settings panel share one slot in .app-body, so the
+  // store models it as a single `sidebarView` — there's no state in which both
+  // are open, and no invariant for callers to maintain.
+  const settingsOpen = () => store.state.sidebarView === "settings";
+
   function toggleSettings() {
-    if (settingsOpen()) {
-      closeSettings();
-      focusActivePane();
-      return;
-    }
-    openSettings();
+    store.toggleSidebarView("settings");
+    if (!settingsOpen()) focusActivePane();
   }
 
   // Keep keyboard focus on the active pane's terminal. The active pane is the
@@ -78,11 +67,15 @@ export default function App() {
     requestAnimationFrame(() => focusPaneReliably(paneId, attempts - 1));
   }
 
+  // The whole AppState lives in one signal, so *any* store write (opening the
+  // sidebar, renaming a tab) notifies everything that reads it. Funnel the
+  // active pane through a memo so the effects below only re-run when the pane
+  // actually changes — otherwise toggling the sidebar yanks keyboard focus back
+  // into the terminal, and the terminal then swallows the keys the panel needs.
+  const activePaneId = createMemo(() => store.activeTab?.activePaneId);
+
   createEffect(() => {
-    const tab = store.activeTab;
-    if (!tab) return;
-    // Track the active pane id so the effect re-runs when focus moves.
-    void tab.activePaneId;
+    if (!activePaneId()) return;
     // Wait a frame so a just-remounted terminal is in the DOM before focusing.
     // Cancel a still-pending frame if the active pane changes again first, so
     // rapid tab/pane switches don't queue up stale focus calls.
@@ -93,7 +86,7 @@ export default function App() {
   // Close the find bar when focus leaves the pane it was opened on (pane
   // switch, tab switch), so it never lingers over a dimmed split.
   createEffect(() => {
-    const active = store.activeTab?.activePaneId;
+    const active = activePaneId();
     const searching = searchPaneId();
     if (searching && searching !== active) closeSearch();
   });
@@ -150,7 +143,6 @@ export default function App() {
         store,
         focusActivePane,
         toggleSettings,
-        closeSettings,
       })
     );
 
@@ -198,34 +190,34 @@ export default function App() {
       <TabBar
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
-        sidebarOpen={store.state.sidebarOpen}
+        sidebarOpen={store.state.sidebarView === "files"}
         onSelect={(id) => store.setActiveTab(id)}
         onClose={(id) => store.closeTab(id)}
         onCreate={() => store.createTab()}
-        onToggleSidebar={() => {
-          // Opening the file sidebar evicts settings (mutually exclusive slot).
-          if (!store.state.sidebarOpen) closeSettings();
-          store.toggleSidebar();
-        }}
+        onToggleSidebar={() => store.toggleSidebarView("files")}
         onOpenSettings={toggleSettings}
         settingsOpen={settingsOpen()}
       />
       <div class="app-body">
         <FileTree
-          open={store.state.sidebarOpen}
+          open={store.state.sidebarView === "files"}
           width={store.state.sidebarWidth}
           onOpenFile={handleOpenMarkdown}
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
         />
-        <SettingsPanel
-          open={settingsOpen()}
-          width={store.state.sidebarWidth}
-          onClose={() => {
-            closeSettings();
-            focusActivePane();
-          }}
-        />
+        {/* Mounted only while open. The panel probes the installed font list and
+            builds the 325-scheme gallery on mount, so keeping it alive behind an
+            internal <Show> paid that cost on every app boot. */}
+        <Show when={settingsOpen()}>
+          <SettingsPanel
+            width={store.state.sidebarWidth}
+            onClose={() => {
+              store.closeSidebar();
+              focusActivePane();
+            }}
+          />
+        </Show>
         <div class="app-content" data-split-root>
           <Show when={store.activeTab}>
             {(tab) => (

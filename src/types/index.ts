@@ -23,9 +23,14 @@ export interface Tab {
   activePaneId: PaneId;
 }
 
+// What currently occupies the single sidebar slot in .app-body. The file tree
+// and the settings panel are mutually exclusive by construction — one field,
+// not two booleans to keep in sync.
+export type SidebarView = "files" | "settings";
+
 export interface AppState {
   tabs: Tab[];
   activeTabId: TabId;
-  sidebarOpen: boolean;
+  sidebarView: SidebarView | null; // null = sidebar closed
   sidebarWidth: number;
 }

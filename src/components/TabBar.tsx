@@ -82,7 +82,7 @@ export default function TabBar(props: TabBarProps) {
           stroke-width={props.settingsOpen ? 0 : 1.4}
           stroke-linejoin="round"
         >
-          <path d={GEAR_PATH} />
+          <path d={GEAR_PATH} fill-rule="evenodd" />
         </svg>
       </button>
       <div class="tab-list">

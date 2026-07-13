@@ -217,6 +217,10 @@ body,
   display: flex;
   flex-direction: column;
   height: 100%;
+  /* The slot's width is the file tree's (sidebarWidth, 250px by default), which
+     crushes the swatch rows, the font picker and the opacity slider — the modal
+     this replaced was 380px. Hold a floor so the controls stay usable. */
+  min-width: 340px;
   /* Match the old modal's --bg (not chrome): the fields/dividers below draw on
      --bg-chrome / --border, so the body must stay --bg or they lose contrast. */
   background: var(--bg);
@@ -249,7 +253,7 @@ body,
 }
 
 /* Transient "saved" acknowledgement — floats over the panel (absolute) so it
-   never pushes the fields. Auto-dismisses in 5s (see SettingsPanel). Dark bg +
+   never pushes the fields. Auto-dismisses (see SettingsPanel). Dark bg +
    muted-green text, matching the config captions. */
 .settings-saved-bar {
   position: absolute;
