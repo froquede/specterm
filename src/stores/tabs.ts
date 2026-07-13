@@ -38,7 +38,6 @@ const [state, setStateRaw] = createSignal<AppState>({
   tabs: [initialTab],
   activeTabId: initialTab.id,
   sidebarView: "files",
-  sidebarWidth: 250,
 });
 
 function update(fn: (s: AppState) => AppState) {

@@ -2,7 +2,7 @@ import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
-import { initSettings } from "./stores/settings";
+import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
@@ -11,6 +11,7 @@ import TabBar from "./components/TabBar";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
 import SettingsPanel from "./components/SettingsPanel";
+import SidebarResizeHandle from "./components/SidebarResizeHandle";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
 
@@ -186,7 +187,15 @@ export default function App() {
   });
 
   return (
-    <div class="app">
+    // The chrome layout is expressed as data attributes and CSS variables; the
+    // stylesheet reflows around them, so moving the tab bar to another corner or
+    // collapsing it never re-renders a pane. Panes resize, their ResizeObserver
+    // fires, and xterm refits itself.
+    <div
+      class="app"
+      data-tab-edge={tabBarEdge()}
+      data-tab-autohide={tabBarAutoHide() ? "true" : "false"}
+    >
       <TabBar
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
@@ -201,7 +210,6 @@ export default function App() {
       <div class="app-body">
         <FileTree
           open={store.state.sidebarView === "files"}
-          width={store.state.sidebarWidth}
           onOpenFile={handleOpenMarkdown}
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
@@ -211,12 +219,14 @@ export default function App() {
             internal <Show> paid that cost on every app boot. */}
         <Show when={settingsOpen()}>
           <SettingsPanel
-            width={store.state.sidebarWidth}
             onClose={() => {
               store.closeSidebar();
               focusActivePane();
             }}
           />
+        </Show>
+        <Show when={store.state.sidebarView !== null}>
+          <SidebarResizeHandle />
         </Show>
         <div class="app-content" data-split-root>
           <Show when={store.activeTab}>

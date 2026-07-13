@@ -2,6 +2,7 @@
   display: flex;
   flex-direction: column;
   height: 100%;
+  width: var(--sidebar-width);
   /* Match the settings sidebar: body on --bg so fields/strips (drawn on
      --bg-chrome) and --border dividers keep their contrast. */
   background: var(--bg);
@@ -10,10 +11,13 @@
   flex-shrink: 0;
 }
 
+/* The current path, with its actions. Sits directly on top of the listing it
+   labels (below the filter, not above it). */
 .file-tree-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
   padding: 8px 12px;
   font-size: 11px;
   color: var(--fg-muted);
@@ -165,7 +169,8 @@
   color: var(--ansi-yellow);
 }
 
-/* Highlighted favorites strip, shown above the directory listing */
+/* Pinned favourites, at the top of the sidebar — above the filter and the path,
+   since they're jump targets rather than part of the listing below. */
 .file-tree-favorites {
   display: flex;
   flex-direction: column;

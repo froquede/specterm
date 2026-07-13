@@ -16,6 +16,23 @@ import {
   UNFOCUSED_OPACITY_DEFAULT,
   startupPath,
   setStartupPath,
+  tabBarCorner,
+  setTabBarCorner,
+  TAB_BAR_CORNERS,
+  TAB_BAR_CORNER_DEFAULT,
+  tabBarHeight,
+  setTabBarHeight,
+  TAB_BAR_HEIGHT_MIN,
+  TAB_BAR_HEIGHT_MAX,
+  TAB_BAR_HEIGHT_DEFAULT,
+  tabBarAutoHide,
+  setTabBarAutoHide,
+  sidebarWidth,
+  setSidebarWidth,
+  SIDEBAR_WIDTH_MIN,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_DEFAULT,
+  resetChromeLayout,
 } from "../stores/settings";
 import { getBackend } from "../backends";
 import {
@@ -34,7 +51,6 @@ import {
 import { detectMonospaceFonts } from "../lib/fonts";
 
 interface SettingsPanelProps {
-  width: number;
   onClose: () => void;
 }
 
@@ -177,6 +193,10 @@ export default function SettingsPanel(props: SettingsPanelProps) {
       startupPath(),
       terminalFontFamily(),
       activeTheme().id,
+      tabBarCorner(),
+      tabBarHeight(),
+      tabBarAutoHide(),
+      sidebarWidth(),
     ])
   );
 
@@ -200,12 +220,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   });
 
   const pct = () => Math.round(unfocusedOpacity() * 100);
+  const chromeLayoutIsCustom = () =>
+    tabBarCorner() !== TAB_BAR_CORNER_DEFAULT ||
+    tabBarHeight() !== TAB_BAR_HEIGHT_DEFAULT ||
+    sidebarWidth() !== SIDEBAR_WIDTH_DEFAULT ||
+    tabBarAutoHide();
   const activeIsCustom = () => !activeTheme().builtin && !activeTheme().id.startsWith("gallery-");
 
   return (
     <div
       class="settings-sidebar"
-      style={{ width: `${props.width}px` }}
       role="complementary"
       aria-label="Settings"
     >
@@ -458,6 +482,97 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 Reset
               </button>
             </Show>
+          </div>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <span class="settings-label">Layout</span>
+            <Show when={chromeLayoutIsCustom()}>
+              <button class="settings-reset" onClick={resetChromeLayout}>
+                Reset
+              </button>
+            </Show>
+          </div>
+
+          <div class="settings-row">
+            <span class="settings-sublabel">Tab bar corner</span>
+          </div>
+          {/* A 2×2 grid of the window's corners, laid out as the corners
+              themselves — picking one is aiming at it, not reading a label. */}
+          <div class="corner-picker" role="radiogroup" aria-label="Tab bar corner">
+            <For each={TAB_BAR_CORNERS}>
+              {(corner) => (
+                <button
+                  class="corner-option"
+                  classList={{ active: tabBarCorner() === corner }}
+                  data-corner={corner}
+                  role="radio"
+                  aria-checked={tabBarCorner() === corner}
+                  aria-label={corner.replace("-", " ")}
+                  title={corner.replace("-", " ")}
+                  onClick={() => setTabBarCorner(corner)}
+                >
+                  <span class="corner-bar" />
+                </button>
+              )}
+            </For>
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="tab-bar-height">
+              Tab bar height
+            </label>
+            <span class="settings-value">{tabBarHeight()}px</span>
+          </div>
+          <input
+            id="tab-bar-height"
+            class="settings-slider"
+            type="range"
+            min={TAB_BAR_HEIGHT_MIN}
+            max={TAB_BAR_HEIGHT_MAX}
+            step={1}
+            value={tabBarHeight()}
+            onInput={(e) => setTabBarHeight(Number(e.currentTarget.value))}
+          />
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="sidebar-width">
+              Sidebar width
+            </label>
+            <span class="settings-value">{sidebarWidth()}px</span>
+          </div>
+          <input
+            id="sidebar-width"
+            class="settings-slider"
+            type="range"
+            min={SIDEBAR_WIDTH_MIN}
+            max={SIDEBAR_WIDTH_MAX}
+            step={10}
+            value={sidebarWidth()}
+            onInput={(e) => setSidebarWidth(Number(e.currentTarget.value))}
+          />
+          <div class="settings-hint">
+            Also draggable: grab the edge between the sidebar and the panes.
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="tab-bar-autohide">
+              Auto-hide the tab bar
+            </label>
+            <input
+              id="tab-bar-autohide"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={tabBarAutoHide()}
+              onChange={(e) => setTabBarAutoHide(e.currentTarget.checked)}
+            />
+          </div>
+          <div class="settings-hint">
+            Panes take the whole window; the bar slides back in when you reach
+            for its edge.
           </div>
         </div>
       </div>

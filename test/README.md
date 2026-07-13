@@ -1,8 +1,10 @@
 # E2E test suite
 
-`e2e.mjs` is a Playwright-driven end-to-end suite for the FileTree sidebar. It
-builds the app, launches the **real** Electron binary, and drives the actual UI
-(clicks, keyboard, settings), asserting on observable behavior.
+`e2e.mjs` is a Playwright-driven end-to-end suite. It builds the app, launches
+the **real** Electron binary, and drives the actual UI (clicks, keyboard,
+settings), asserting on observable behavior. It covers the file sidebar, pane
+splits and drag-and-drop, the clipboard, the settings sidebar, and the tab-bar
+layout.
 
 ## Run
 
@@ -38,3 +40,19 @@ suite has the shell write its own working directory to a temp file
 shell-agnostic ground truth. New tabs spawn their pty lazily, so the
 startup-path check reloads the window and reads the boot terminal (a single,
 deterministic terminal) rather than racing a freshly-created tab.
+
+## How mouse capture is verified
+
+A program that turns on mouse tracking (Claude Code, vim, htop) takes the drag
+away from the terminal, and xterm switches its own selection off — which is why
+a plain drag over such a pane used to select nothing. The suite proves both
+halves of the fix against the program's own stdin rather than guessing from the
+UI: it runs a recorder in the pane that enables mouse tracking and writes back
+whatever the terminal sends it (`stty raw; cat > file`). A click must arrive as
+exactly one SGR press/release pair; a drag must arrive as nothing at all, and
+must instead put the text on the OS clipboard.
+
+That makes the check self-contained. One extra case runs the same drag against a
+real `claude` session — the program the bug was reported against — and is
+**skipped when the `claude` CLI isn't on `PATH`**, so the suite still passes on a
+machine or CI box without it.
