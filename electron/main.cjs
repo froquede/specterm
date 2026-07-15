@@ -5,6 +5,44 @@ const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
 
+// Linux sandbox fallback for the AppImage build. Chromium needs either a
+// setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
+// The .deb ships a setuid-root helper (see build/linux/after-install.tpl), but
+// an AppImage mounts its payload nosuid, so the helper can never be setuid
+// there — the AppImage depends entirely on user namespaces. Ubuntu 23.10+/24.04
+// restrict those by default via AppArmor (kernel.apparmor_restrict_unprivileged
+// _userns=1), and Debian can disable them via kernel.unprivileged_userns_clone
+// =0. On those kernels a sandboxed AppImage aborts at launch. Detect exactly
+// that case and drop the renderer sandbox so the terminal still starts; leave
+// it on everywhere else. A terminal already grants full shell access to the
+// host, so the renderer sandbox adds little threat coverage here.
+function unprivilegedUsernsBlocked() {
+  const readTrim = (p, fallback) => {
+    try {
+      return fs.readFileSync(p, "utf8").trim();
+    } catch {
+      return fallback;
+    }
+  };
+  // Ubuntu 23.10+ AppArmor gate: "1" => unprivileged userns blocked.
+  if (readTrim("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", "0") === "1") {
+    return true;
+  }
+  // Debian/older sysctl: "0" => unprivileged userns disabled.
+  if (readTrim("/proc/sys/kernel/unprivileged_userns_clone", "1") === "0") {
+    return true;
+  }
+  return false;
+}
+
+if (
+  process.platform === "linux" &&
+  process.env.APPIMAGE &&
+  unprivilegedUsernsBlocked()
+) {
+  app.commandLine.appendSwitch("no-sandbox");
+}
+
 // Locate PowerShell 7+ (pwsh.exe), which defaults to UTF-8. The built-in
 // Windows PowerShell 5.1 instead defaults to the system code page (e.g. CP1252
 // on pt-BR installs), which mangles accented/Unicode input on paste.

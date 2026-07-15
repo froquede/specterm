@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.11.0",
+  "version": "0.11.1",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "author": "Roque Francisco <roquefsd@gmail.com>",
   "contributors": [
@@ -62,6 +62,9 @@
         "deb"
       ],
       "category": "TerminalEmulator"
+    },
+    "deb": {
+      "afterInstall": "build/linux/after-install.tpl"
     },
     "mac": {
       "target": [

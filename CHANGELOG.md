@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.11.1 — 2026-07-15
+
+### Fixed
+- **The Linux `.deb` no longer aborts at launch on Ubuntu 23.10+/24.04** with
+  "The SUID sandbox helper binary was found, but is not configured correctly".
+  electron-builder's default postinst decides whether to give `chrome-sandbox`
+  the setuid-root bit by probing user namespaces — but that probe runs as root
+  at install time, and root can create user namespaces even where the kernel's
+  AppArmor policy (`kernel.apparmor_restrict_unprivileged_userns=1`, default-on
+  since 24.04) blocks them for the unprivileged user who actually runs the app.
+  It therefore shipped `chrome-sandbox` non-setuid and the app crashed. The
+  `.deb` now sets it setuid-root unconditionally — the universal fallback that
+  works with or without user namespaces, exactly as Google Chrome's own `.deb`
+  does — so the sandbox stays on.
+- **The Linux AppImage no longer aborts on those same kernels.** An AppImage
+  mounts its payload `nosuid`, so a setuid `chrome-sandbox` is impossible there;
+  it depends entirely on user namespaces. When those are blocked, the AppImage
+  now drops the renderer sandbox at startup so the terminal still launches,
+  keeping it on everywhere the sandbox can actually work.
+
 ## 0.11.0 — 2026-07-13
 
 ### Added
