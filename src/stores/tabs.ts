@@ -15,9 +15,11 @@ import {
   moveLeaf,
   moveLeafToRootEdge,
   findParentSplit,
+  findPaneInDirection,
   setSplitDirection,
   toggleSplitDirection,
   type DropEdge,
+  type FocusDirection,
 } from "../lib/split-tree";
 import { destroyTerminal } from "../lib/terminal-registry";
 
@@ -274,20 +276,17 @@ export function useTabStore() {
     },
 
     // Cycle the active pane within the current tab, in left-to-right /
-    // first-to-second layout order (the same order collectLeaves yields).
-    // delta = +1 moves to the next grid, -1 to the previous, wrapping around.
-    focusRelativePane(delta: number) {
+    // Move focus to the pane visually adjacent to the active one in `dir`
+    // (left/right/up/down). No-op when there's no neighbour that way, so
+    // pressing into an outer edge simply keeps the current pane focused.
+    focusDirectionalPane(dir: FocusDirection) {
       const s = state();
       const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
       if (idx === -1) return;
 
       const tab = s.tabs[idx];
-      const leaves = collectLeaves(tab.root);
-      if (leaves.length < 2) return;
-
-      const cur = leaves.findIndex((l) => l.id === tab.activePaneId);
-      const base = cur === -1 ? 0 : cur;
-      const nextId = leaves[(base + delta + leaves.length) % leaves.length].id;
+      const nextId = findPaneInDirection(tab.root, tab.activePaneId, dir);
+      if (!nextId || nextId === tab.activePaneId) return;
 
       update(() => ({
         ...s,

@@ -563,6 +563,113 @@ try {
     skip("pane repaints after WebGL context loss", "no pane found");
   }
 
+  // 6h) Directional pane focus — ⌥+arrow moves focus to the pane visually
+  // adjacent in that direction (spatial, not tree order). Build a 2×2 grid,
+  // walk the four corners with the arrows, and confirm focus lands on the
+  // right neighbour; pressing into an outer edge is a no-op. The chord is the
+  // same on every OS (Alt+arrow); see keymap.ts.
+  const FOCUS_L = "Alt+ArrowLeft";
+  const FOCUS_R = "Alt+ArrowRight";
+  const FOCUS_U = "Alt+ArrowUp";
+  const FOCUS_D = "Alt+ArrowDown";
+  const activePaneId = () =>
+    win.evaluate(
+      () => document.querySelector(".pane-active")?.getAttribute("data-pane-id") ?? null
+    );
+  const cornerPanes = () =>
+    win.evaluate(() =>
+      Array.from(document.querySelectorAll("[data-pane-id]")).map((p) => {
+        const r = p.getBoundingClientRect();
+        return { id: p.getAttribute("data-pane-id"), cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 };
+      })
+    );
+
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  let fp = await cornerPanes();
+  // Stacked split → two rows.
+  await focusPaneAt(fp[0].cx, fp[0].cy);
+  await win.keyboard.press(SPLIT_STACK);
+  await win.waitForTimeout(2000);
+  // Split the top row side-by-side.
+  fp = await cornerPanes();
+  const fTop = fp.reduce((a, b) => (a.cy < b.cy ? a : b));
+  await focusPaneAt(fTop.cx, fTop.cy);
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+  // Split the bottom row side-by-side → 2×2.
+  fp = await cornerPanes();
+  const fBottom = fp.reduce((a, b) => (a.cy > b.cy ? a : b));
+  await focusPaneAt(fBottom.cx, fBottom.cy);
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+
+  fp = await cornerPanes();
+  let TL, TR, BL, BR;
+  if (fp.length === 4) {
+    const xs = fp.map((p) => p.cx);
+    const ys = fp.map((p) => p.cy);
+    const midX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const corner = (left, top) =>
+      fp.find((p) => p.cx < midX === left && p.cy < midY === top);
+    TL = corner(true, true);
+    TR = corner(false, true);
+    BL = corner(true, false);
+    BR = corner(false, false);
+  }
+  const grid2x2 = !!(TL && TR && BL && BR);
+  check(
+    "2×2 grid formed for directional focus",
+    grid2x2,
+    JSON.stringify(fp.map((p) => ({ cx: Math.round(p.cx), cy: Math.round(p.cy) })))
+  );
+
+  if (grid2x2) {
+    // Start at top-left, then trace a loop: right, down, left, up.
+    await focusPaneAt(TL.cx, TL.cy);
+    await win.waitForTimeout(250);
+
+    await win.keyboard.press(FOCUS_R);
+    await win.waitForTimeout(250);
+    const rId = await activePaneId();
+    check("⌥→ moves focus to the pane on the right", rId === TR.id, `active=${rId} expected TR=${TR.id}`);
+
+    await win.keyboard.press(FOCUS_D);
+    await win.waitForTimeout(250);
+    const dId = await activePaneId();
+    check("⌥↓ moves focus to the pane below", dId === BR.id, `active=${dId} expected BR=${BR.id}`);
+
+    await win.keyboard.press(FOCUS_L);
+    await win.waitForTimeout(250);
+    const lId = await activePaneId();
+    check("⌥← moves focus to the pane on the left", lId === BL.id, `active=${lId} expected BL=${BL.id}`);
+
+    await win.keyboard.press(FOCUS_U);
+    await win.waitForTimeout(250);
+    const uId = await activePaneId();
+    check("⌥↑ moves focus to the pane above", uId === TL.id, `active=${uId} expected TL=${TL.id}`);
+
+    // Outer edge: from the top-left pane, ⌥← and ⌥↑ have nowhere to go → no-op.
+    await win.keyboard.press(FOCUS_L);
+    await win.waitForTimeout(200);
+    const edgeL = await activePaneId();
+    await win.keyboard.press(FOCUS_U);
+    await win.waitForTimeout(200);
+    const edgeU = await activePaneId();
+    check(
+      "⌥ into an outer edge keeps focus put",
+      edgeL === TL.id && edgeU === TL.id,
+      `left→${edgeL} up→${edgeU} (TL=${TL.id})`
+    );
+  } else {
+    skip("⌥→ moves focus to the pane on the right", "2×2 grid did not form");
+    skip("⌥↓ moves focus to the pane below", "2×2 grid did not form");
+    skip("⌥← moves focus to the pane on the left", "2×2 grid did not form");
+    skip("⌥↑ moves focus to the pane above", "2×2 grid did not form");
+    skip("⌥ into an outer edge keeps focus put", "2×2 grid did not form");
+  }
+
   // 7) Default terminal path: set via UI, confirm persistence, reload, verify
   // a boot terminal spawns there (new tabs spawn lazily, so reload is reliable).
   await win.locator(".tab-settings").click();

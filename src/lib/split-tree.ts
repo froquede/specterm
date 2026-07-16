@@ -101,6 +101,108 @@ export function firstLeafId(root: SplitNode): PaneId {
   return firstLeafId(root.first);
 }
 
+// A pane's position within the layout, in normalized [0,1] coordinates where
+// (0,0) is the top-left of the split root and (1,1) the bottom-right. Used for
+// spatial (directional) pane navigation — the visual geometry, not tree order.
+export interface Rect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+// Compute every leaf's rectangle by walking the tree with each split's ratio.
+// "h" splits stack first|second left→right (row); "v" splits stack them
+// top→bottom (column) — matching SplitContainer's flex-direction.
+export function paneRects(root: SplitNode): Map<PaneId, Rect> {
+  const out = new Map<PaneId, Rect>();
+  const walk = (node: SplitNode, r: Rect) => {
+    if (node.type === "leaf") {
+      out.set(node.id, r);
+      return;
+    }
+    if (node.direction === "h") {
+      const fw = r.w * node.ratio;
+      walk(node.first, { x: r.x, y: r.y, w: fw, h: r.h });
+      walk(node.second, { x: r.x + fw, y: r.y, w: r.w - fw, h: r.h });
+    } else {
+      const fh = r.h * node.ratio;
+      walk(node.first, { x: r.x, y: r.y, w: r.w, h: fh });
+      walk(node.second, { x: r.x, y: r.y + fh, w: r.w, h: r.h - fh });
+    }
+  };
+  walk(root, { x: 0, y: 0, w: 1, h: 1 });
+  return out;
+}
+
+export type FocusDirection = "left" | "right" | "up" | "down";
+
+// Length of the overlap between two 1-D intervals [a0, a0+aLen] and
+// [b0, b0+bLen]; negative when they don't overlap at all.
+function overlap(a0: number, aLen: number, b0: number, bLen: number): number {
+  return Math.min(a0 + aLen, b0 + bLen) - Math.max(a0, b0);
+}
+
+// The pane nearest to `activeId` in the given visual direction, or null when
+// there's no neighbour that way (e.g. the active pane already hugs that edge).
+// A candidate must sit on the requested side and share some extent on the
+// perpendicular axis; ties on distance break toward the largest shared extent,
+// so travelling right from a tall pane lands on the neighbour it overlaps most.
+export function findPaneInDirection(
+  root: SplitNode,
+  activeId: PaneId,
+  dir: FocusDirection
+): PaneId | null {
+  const rects = paneRects(root);
+  const from = rects.get(activeId);
+  if (!from) return null;
+
+  const EPS = 1e-4;
+  let best: { id: PaneId; gap: number; shared: number } | null = null;
+
+  for (const [id, r] of rects) {
+    if (id === activeId) continue;
+
+    // Is `r` on the requested side of `from`? (near edge past the far edge)
+    const onSide =
+      dir === "left"
+        ? r.x + r.w <= from.x + EPS
+        : dir === "right"
+          ? r.x >= from.x + from.w - EPS
+          : dir === "up"
+            ? r.y + r.h <= from.y + EPS
+            : r.y >= from.y + from.h - EPS;
+    if (!onSide) continue;
+
+    // Require overlap on the other axis, so we pick a true side-neighbour and
+    // not a pane sitting diagonally in the corner.
+    const shared =
+      dir === "left" || dir === "right"
+        ? overlap(from.y, from.h, r.y, r.h)
+        : overlap(from.x, from.w, r.x, r.w);
+    if (shared <= EPS) continue;
+
+    // Gap along the travel axis to the candidate's near edge (≈0 when adjacent).
+    const gap =
+      dir === "left"
+        ? from.x - (r.x + r.w)
+        : dir === "right"
+          ? r.x - (from.x + from.w)
+          : dir === "up"
+            ? from.y - (r.y + r.h)
+            : r.y - (from.y + from.h);
+
+    if (
+      !best ||
+      gap < best.gap - EPS ||
+      (Math.abs(gap - best.gap) <= EPS && shared > best.shared)
+    ) {
+      best = { id, gap, shared };
+    }
+  }
+  return best?.id ?? null;
+}
+
 export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
 
 /** The leaf node carrying `id`, or null if absent. */

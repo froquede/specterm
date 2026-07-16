@@ -169,30 +169,29 @@ export function createKeymap({
       },
     },
 
-    // Pane focus — ⌘⌥→ / ⌘⌥← cycle the active pane in layout order, then pull
-    // keyboard focus into it.
-    {
-      id: "pane.focusNext",
-      key: "ArrowRight",
-      ...cmd({ code: "ArrowRight" }),
+    // Pane focus — ⌥+arrow moves focus to the pane visually adjacent in that
+    // direction (spatial, not tree order), then pulls keyboard focus into it.
+    // The same chord on every OS: bare Ctrl+arrow / Ctrl+Shift+arrow are spoken
+    // for (terminal / tab-switch), and Ctrl+Alt+arrow is grabbed by most Linux
+    // desktops' workspace switcher — Alt+arrow reliably reaches the app.
+    ...(
+      [
+        { id: "pane.focusLeft", code: "ArrowLeft", dir: "left" },
+        { id: "pane.focusRight", code: "ArrowRight", dir: "right" },
+        { id: "pane.focusUp", code: "ArrowUp", dir: "up" },
+        { id: "pane.focusDown", code: "ArrowDown", dir: "down" },
+      ] as const
+    ).map(({ id, code, dir }) => ({
+      id,
+      key: code,
+      code,
       alt: true,
-      label: "Focus next pane",
+      label: `Focus pane ${dir}`,
       run: () => {
-        store.focusRelativePane(1);
+        store.focusDirectionalPane(dir);
         focusActivePane();
       },
-    },
-    {
-      id: "pane.focusPrev",
-      key: "ArrowLeft",
-      ...cmd({ code: "ArrowLeft" }),
-      alt: true,
-      label: "Focus previous pane",
-      run: () => {
-        store.focusRelativePane(-1);
-        focusActivePane();
-      },
-    },
+    })),
 
     // Clipboard
     {
