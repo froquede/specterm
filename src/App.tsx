@@ -200,11 +200,18 @@ export default function App() {
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
         sidebarOpen={store.state.sidebarView === "files"}
+        renamingTabId={store.state.renamingTabId}
         onSelect={(id) => store.setActiveTab(id)}
         onClose={(id) => store.closeTab(id)}
         onCreate={() => store.createTab()}
         onToggleSidebar={() => store.toggleSidebarView("files")}
         onOpenSettings={toggleSettings}
+        onStartRename={(id) => store.startRenameTab(id)}
+        onCommitRename={(id, title) => store.commitRenameTab(id, title)}
+        onCancelRename={() => store.cancelRenameTab()}
+        onReorder={(source, target, before) =>
+          store.moveTab(source, target, before)
+        }
         settingsOpen={settingsOpen()}
       />
       <div class="app-body">

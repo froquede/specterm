@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import type {
   AppState,
   Tab,
+  TabId,
   PaneType,
   PaneId,
   SplitNode,
@@ -21,13 +22,14 @@ import {
   type DropEdge,
   type FocusDirection,
 } from "../lib/split-tree";
-import { destroyTerminal } from "../lib/terminal-registry";
+import { destroyTerminal, getTerminalInstance } from "../lib/terminal-registry";
 
 function createTerminalTab(): Tab {
   const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd: "" });
   return {
     id: nanoid(8),
     title: "Terminal",
+    manualTitle: false,
     root: leaf,
     activePaneId: leaf.id,
   };
@@ -40,6 +42,7 @@ const [state, setStateRaw] = createSignal<AppState>({
   tabs: [initialTab],
   activeTabId: initialTab.id,
   sidebarView: "files",
+  renamingTabId: null,
 });
 
 function update(fn: (s: AppState) => AppState) {
@@ -169,6 +172,7 @@ export function useTabStore() {
       const tab: Tab = {
         id: nanoid(8),
         title: filePath.split("/").pop() || "Markdown",
+        manualTitle: false,
         root: leaf,
         activePaneId: leaf.id,
       };
@@ -393,6 +397,10 @@ export function useTabStore() {
       if (titleDebounce) clearTimeout(titleDebounce);
       titleDebounce = window.setTimeout(() => {
         const s = state();
+        const tab = s.tabs.find((t) => t.id === tabId);
+        // A manually renamed tab is locked against shell-driven OSC titles
+        // (tmux rename-window behavior) until the user clears the rename.
+        if (!tab || tab.manualTitle) return;
         update(() => ({
           ...s,
           tabs: s.tabs.map((t) =>
@@ -400,6 +408,60 @@ export function useTabStore() {
           ),
         }));
       }, 100);
+    },
+
+    // Open the inline rename editor for a tab (defaults to the active tab —
+    // e.g. from the ⌘R / Ctrl+Shift+R shortcut).
+    startRenameTab(tabId?: string) {
+      const id = tabId ?? state().activeTabId;
+      if (!id) return;
+      update((s) => ({ ...s, renamingTabId: id }));
+    },
+
+    // Commit the rename editor's value. An empty (trimmed) value reverts the
+    // tab to automatic titling — unlocking it and pulling back whatever OSC
+    // title the shell last reported, so the tab bar doesn't go blank.
+    commitRenameTab(tabId: string, title: string) {
+      const s = state();
+      const trimmed = title.trim();
+      if (!trimmed) {
+        const tab = s.tabs.find((t) => t.id === tabId);
+        const autoTitle =
+          (tab && getTerminalInstance(tab.activePaneId)?.title) || "Terminal";
+        update(() => ({
+          ...s,
+          renamingTabId: null,
+          tabs: s.tabs.map((t) =>
+            t.id === tabId ? { ...t, title: autoTitle, manualTitle: false } : t
+          ),
+        }));
+        return;
+      }
+      update(() => ({
+        ...s,
+        renamingTabId: null,
+        tabs: s.tabs.map((t) =>
+          t.id === tabId ? { ...t, title: trimmed, manualTitle: true } : t
+        ),
+      }));
+    },
+
+    cancelRenameTab() {
+      update((s) => (s.renamingTabId === null ? s : { ...s, renamingTabId: null }));
+    },
+
+    // Reorder tabs by dragging `sourceId` to just before/after `targetId`.
+    moveTab(sourceId: TabId, targetId: TabId, before: boolean) {
+      if (sourceId === targetId) return;
+      const s = state();
+      const tabs = [...s.tabs];
+      const srcIdx = tabs.findIndex((t) => t.id === sourceId);
+      if (srcIdx === -1) return;
+      const [moved] = tabs.splice(srcIdx, 1);
+      const targetIdx = tabs.findIndex((t) => t.id === targetId);
+      if (targetIdx === -1) return;
+      tabs.splice(before ? targetIdx : targetIdx + 1, 0, moved);
+      update(() => ({ ...s, tabs }));
     },
 
     // The sidebar slot holds exactly one view at a time. Showing a view evicts

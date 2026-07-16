@@ -19,6 +19,10 @@ export type SplitNode =
 export interface Tab {
   id: TabId;
   title: string;
+  // True once the user has renamed the tab manually (tmux rename-window
+  // behavior): freezes `title` against further shell-driven OSC updates until
+  // the user clears the rename field.
+  manualTitle: boolean;
   root: SplitNode;
   activePaneId: PaneId;
 }
@@ -32,4 +36,5 @@ export interface AppState {
   tabs: Tab[];
   activeTabId: TabId;
   sidebarView: SidebarView | null; // null = sidebar closed
+  renamingTabId: TabId | null; // tab whose title is currently being edited inline
 }
