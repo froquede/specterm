@@ -148,6 +148,12 @@ try {
   // so no clean-slate reset is needed.
   await win.waitForTimeout(1500);
 
+  // OS-clipboard ground truth, read/written from the Electron main process —
+  // what an external app would actually see. Used by the context-menu copy
+  // checks and the clipboard-reliability section further down.
+  const readOsClip = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  const writeOsClip = (t) => app.evaluate(({ clipboard }, text) => clipboard.writeText(text), t);
+
   const s0 = await state(win);
   const home = s0.crumbTitle;
   check("sidebar opens at home", !!home && (WIN ? /:/.test(home) : home.startsWith("/")), home);
@@ -264,6 +270,85 @@ try {
     check("cd fav-N expands to the favorite path", eqPath(cwdFav, joinPath(favBase, favDir)), `expected=${joinPath(favBase, favDir)} cwd=${cwdFav} favs=${favLS}`);
   } else {
     skip("cd fav-N expands to the favorite path", "no favoritable subdirectory");
+  }
+
+  // 6b2) v0.12.0 — right-click context menu on a file-tree row. Its OS actions
+  // are proved by ground truth, not by watching a file manager pop: copy writes
+  // to the *OS* clipboard (read from the main process), "open terminal here"
+  // moves the pty cwd, and reveal is asserted by intercepting the main-process
+  // shell call so no real Explorer/Finder window opens during the run.
+  const cm0 = await state(win);
+  const cmDir =
+    ["Windows", "usr", "etc", "Users", "home"].find((n) => cm0.dirNames.includes(n)) ||
+    cm0.dirNames.find((n) => n && n !== ".." && !n.startsWith("$") && !n.startsWith("."));
+  if (cmDir) {
+    const cmBase = cm0.crumbTitle;
+    const cmTarget = joinPath(cmBase, cmDir);
+    const cmEntry = win
+      .locator(".file-tree-content .file-tree-entry", {
+        has: win.locator(".file-tree-name", { hasText: rx(cmDir) }),
+      })
+      .first();
+
+    // Neutralise the real reveal so CI never spawns a file-manager window; the
+    // stub records the path the app asked to reveal so we can assert on it.
+    await app.evaluate(({ shell }) => {
+      globalThis.__revealArg = null;
+      shell.showItemInFolder = (p) => { globalThis.__revealArg = p; };
+      shell.openPath = (p) => { globalThis.__revealArg = p; return Promise.resolve(""); };
+    });
+
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(300);
+    check("right-click opens the row context menu", await win.locator(".file-tree-context-menu").isVisible());
+
+    // Copy path → the OS clipboard holds the row's absolute path.
+    await writeOsClip("<<STALE>>");
+    await win.locator('.file-tree-menu-item[data-action="copy-path"]').click();
+    await win.waitForTimeout(300);
+    const cmPath = await readOsClip();
+    check("context menu: Copy path writes the row path", eqPath(cmPath, cmTarget), `clip=${cmPath} want=${cmTarget}`);
+    check("context menu closes after an action", !(await win.locator(".file-tree-context-menu").isVisible()));
+
+    // Copy name → just the basename.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await writeOsClip("<<STALE>>");
+    await win.locator('.file-tree-menu-item[data-action="copy-name"]').click();
+    await win.waitForTimeout(300);
+    const cmName = await readOsClip();
+    check("context menu: Copy name writes the row name", cmName === cmDir, `clip=${cmName} want=${cmDir}`);
+
+    // Reveal → the app asks the OS to reveal exactly this path.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await win.locator('.file-tree-menu-item[data-action="reveal"]').click();
+    await win.waitForTimeout(400);
+    const cmReveal = await app.evaluate(() => globalThis.__revealArg);
+    check("context menu: Reveal calls the OS file manager with the path", eqPath(cmReveal, cmTarget), `arg=${cmReveal} want=${cmTarget}`);
+
+    // Open terminal here → the active pane's shell cds into the directory.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await win.locator('.file-tree-menu-item[data-action="cd"]').click();
+    await win.waitForTimeout(1500);
+    const cmCwd = await terminalCwd(win, "ctxcd");
+    check("context menu: Open terminal here cds the terminal", eqPath(cmCwd, cmTarget), `cwd=${cmCwd} want=${cmTarget}`);
+
+    // Escape (and an outside click) dismiss the menu.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await win.keyboard.press("Escape");
+    await win.waitForTimeout(200);
+    check("context menu: Escape dismisses it", !(await win.locator(".file-tree-context-menu").isVisible()));
+  } else {
+    skip("right-click opens the row context menu", "no safe subdirectory to target");
+    skip("context menu: Copy path writes the row path", "no safe subdirectory to target");
+    skip("context menu closes after an action", "no safe subdirectory to target");
+    skip("context menu: Copy name writes the row name", "no safe subdirectory to target");
+    skip("context menu: Reveal calls the OS file manager with the path", "no safe subdirectory to target");
+    skip("context menu: Open terminal here cds the terminal", "no safe subdirectory to target");
+    skip("context menu: Escape dismisses it", "no safe subdirectory to target");
   }
 
   // 6c) PR #16 — root-edge drag-and-drop. Split side-by-side, then drag the
@@ -469,8 +554,7 @@ try {
   // the Electron main process — the ground truth an external app would see), and
   // paste must pull from it into the active pane. Regression guard for the
   // navigator.clipboard flakiness that made copy work "only inside the app".
-  const readOsClip = () => app.evaluate(({ clipboard }) => clipboard.readText());
-  const writeOsClip = (t) => app.evaluate(({ clipboard }, text) => clipboard.writeText(text), t);
+  // (readOsClip/writeOsClip are defined once near the top of the run.)
   const COPY_KEY = process.platform === "darwin" ? "Meta+C" : "Control+Shift+C";
   const PASTE_KEY = process.platform === "darwin" ? "Meta+Shift+V" : "Control+Shift+V";
 

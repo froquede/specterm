@@ -67,6 +67,18 @@ export class TauriBackend implements Backend {
     return [];
   }
 
+  async revealInFileManager(path: string, isDirectory: boolean): Promise<void> {
+    // Best-effort via the shell plugin's default-app open. It can open a folder
+    // but can't reveal a file *selected* (that needs the opener plugin), so for
+    // a file we open its containing directory instead. Electron is the shipping
+    // target and gets the richer showItemInFolder reveal.
+    const { open } = await import("@tauri-apps/plugin-shell");
+    const target = isDirectory
+      ? path
+      : path.replace(/[\\/][^\\/]*$/, "") || path;
+    await open(target);
+  }
+
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     return listen("fs-change", () => cb());
   }
