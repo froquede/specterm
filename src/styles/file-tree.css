@@ -355,3 +355,50 @@
   color: var(--ansi-blue);
   text-decoration: underline;
 }
+
+/* Right-click context menu for a file-tree row. Portalled to <body>, so it's
+   positioned in viewport coordinates and layered above the app chrome. The
+   backdrop is an invisible full-window catcher that dismisses the menu on the
+   next click anywhere. */
+.file-tree-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.file-tree-context-menu {
+  position: fixed;
+  min-width: 200px;
+  padding: 4px;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+
+.file-tree-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.file-tree-menu-item:hover {
+  background: var(--bg-hover);
+}
+
+.file-tree-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

@@ -32,6 +32,9 @@ export interface Backend {
   readDir(path: string): Promise<FileEntry[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;
+  // Show a path in the OS file manager (Explorer/Finder/Nautilus). A directory
+  // opens itself; a file is revealed selected in its containing folder.
+  revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.

@@ -275,6 +275,20 @@ ipcMain.handle("list-drives", async () => {
   return checks.filter(Boolean);
 });
 
+// Reveal a path in the OS file manager (Explorer/Finder/the Linux default).
+// A directory opens itself; a file is shown selected inside its parent folder.
+// showItemInFolder is the cross-platform reveal; for a directory we prefer
+// openPath so it opens *into* the folder, falling back to a reveal if the OS
+// declines to open it (e.g. a path that no longer exists).
+ipcMain.handle("reveal-in-file-manager", async (_event, targetPath, isDirectory) => {
+  if (isDirectory) {
+    const err = await shell.openPath(targetPath);
+    if (err) shell.showItemInFolder(targetPath);
+  } else {
+    shell.showItemInFolder(targetPath);
+  }
+});
+
 // True when the OS clipboard holds a bitmap. The renderer uses this to decide
 // whether Ctrl+Shift+V should trigger Claude Code's inline image paste (by
 // forwarding its Alt+V/Ctrl+V escape) or fall back to a normal text paste.

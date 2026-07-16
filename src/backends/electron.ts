@@ -17,6 +17,7 @@ interface SpectermAPI {
   readTextFile(path: string): Promise<string>;
   readDir(path: string): Promise<FileEntry[]>;
   listDrives(): Promise<DriveEntry[]>;
+  revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
@@ -76,6 +77,10 @@ export class ElectronBackend implements Backend {
 
   async listDrives(): Promise<DriveEntry[]> {
     return this.api.listDrives();
+  }
+
+  async revealInFileManager(path: string, isDirectory: boolean): Promise<void> {
+    return this.api.revealInFileManager(path, isDirectory);
   }
 
   async clipboardHasImage(): Promise<boolean> {
