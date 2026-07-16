@@ -139,6 +139,15 @@ export function createKeymap({
           store.setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
       },
     },
+    // Rename the active tab (tmux rename-window, ⌘R / Ctrl+Shift+R) — opens
+    // the inline editor in TabBar; see store.startRenameTab.
+    {
+      id: "tab.rename",
+      key: "r",
+      ...cmd(),
+      label: "Rename tab",
+      run: () => store.startRenameTab(),
+    },
 
     // Splits — ⌘D adds a stacked pane ("v" = column), ⌘⇧D a side-by-side one
     // ("h" = row). (Inverted vs Ghostty, where ⌘D splits to the right.)

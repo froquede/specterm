@@ -1,20 +1,36 @@
-import { createSignal, For, onMount, onCleanup } from "solid-js";
+import { createSignal, For, Show, onMount, onCleanup } from "solid-js";
 import { getBackend, type UnlistenFn } from "../backends";
 import { shortcutLabel } from "../lib/platform";
 import { tabBarSide } from "../stores/settings";
+import {
+  draggingTabId,
+  setDraggingTabId,
+  tabDropTarget,
+  setTabDropTarget,
+} from "../stores/tab-drag";
 import type { Tab } from "../types";
 
 interface TabBarProps {
   tabs: Tab[];
   activeTabId: string;
   sidebarOpen: boolean;
+  renamingTabId: string | null;
   onSelect: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onCreate: () => void;
   onToggleSidebar: () => void;
   onOpenSettings: () => void;
+  onStartRename: (tabId: string) => void;
+  onCommitRename: (tabId: string, title: string) => void;
+  onCancelRename: () => void;
+  onReorder: (sourceId: string, targetId: string, before: boolean) => void;
   settingsOpen: boolean;
 }
+
+// Minimum pointer travel (px) before a tab press counts as a drag rather than
+// a click. Tabs have no dedicated drag handle (unlike panes' title-bar), so a
+// plain click must not trigger a reorder.
+const DRAG_THRESHOLD = 4;
 
 // Gear glyph as a single evenodd path (Material "settings"): the center circle
 // is a cut-out, so it reads as an outline when stroked (fill none) and as a
@@ -22,8 +38,121 @@ interface TabBarProps {
 const GEAR_PATH =
   "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z";
 
+// The inline tab-rename editor. A fresh instance mounts each time a tab
+// enters rename mode (its parent <Show> disposes/recreates it), so `settled`
+// — guarding against a Escape/Enter *and* the blur it triggers both firing a
+// commit/cancel — starts false on every edit session without extra plumbing.
+function TabTitleInput(props: {
+  title: string;
+  onCommit: (title: string) => void;
+  onCancel: () => void;
+}) {
+  let settled = false;
+  return (
+    <input
+      class="tab-title-input"
+      ref={(el) => {
+        el.value = props.title;
+        // Focus needs a frame: the input isn't laid out yet on this same tick.
+        requestAnimationFrame(() => {
+          el.focus();
+          el.select();
+        });
+      }}
+      onClick={(e) => e.stopPropagation()}
+      onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          settled = true;
+          props.onCommit((e.currentTarget as HTMLInputElement).value);
+        } else if (e.key === "Escape") {
+          e.preventDefault();
+          settled = true;
+          props.onCancel();
+        }
+      }}
+      onBlur={(e) => {
+        if (settled) return;
+        settled = true;
+        props.onCommit((e.currentTarget as HTMLInputElement).value);
+      }}
+    />
+  );
+}
+
 export default function TabBar(props: TabBarProps) {
   const [isFullscreen, setIsFullscreen] = createSignal(false);
+  // Set right before a completed drag's reorder call, so the click event that
+  // follows pointerup doesn't also re-select a tab out from under the drag.
+  let suppressClick = false;
+
+  // Pointer-driven drag-to-reorder, modeled on Pane.tsx's title-bar drag
+  // (src/components/Pane.tsx:56-96) — capture the pointer immediately so
+  // movement outside the tab's bounds still tracks, but (unlike a pane's
+  // dedicated drag handle) gate the actual drag behind a small movement
+  // threshold since the whole tab is also the click-to-select target.
+  function onTabPointerDown(e: PointerEvent, tabId: string) {
+    if (e.button !== 0) return;
+    const el = e.currentTarget as HTMLElement;
+    el.setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startY = e.clientY;
+    let dragging = false;
+
+    function onMove(ev: PointerEvent) {
+      if (!dragging) {
+        if (
+          Math.abs(ev.clientX - startX) < DRAG_THRESHOLD &&
+          Math.abs(ev.clientY - startY) < DRAG_THRESHOLD
+        ) {
+          return;
+        }
+        dragging = true;
+        setDraggingTabId(tabId);
+      }
+      const target = document
+        .elementFromPoint(ev.clientX, ev.clientY)
+        ?.closest<HTMLElement>("[data-tab-id]");
+      const targetId = target?.getAttribute("data-tab-id");
+      if (!target || !targetId || targetId === tabId) {
+        setTabDropTarget(null);
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      setTabDropTarget({
+        tabId: targetId,
+        before: ev.clientX < rect.left + rect.width / 2,
+      });
+    }
+
+    function onUp() {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onCancel);
+      if (dragging) {
+        const dt = tabDropTarget();
+        setDraggingTabId(null);
+        setTabDropTarget(null);
+        if (dt) {
+          suppressClick = true;
+          props.onReorder(tabId, dt.tabId, dt.before);
+        }
+      }
+    }
+
+    function onCancel() {
+      el.removeEventListener("pointermove", onMove);
+      el.removeEventListener("pointerup", onUp);
+      el.removeEventListener("pointercancel", onCancel);
+      setDraggingTabId(null);
+      setTabDropTarget(null);
+    }
+
+    el.addEventListener("pointermove", onMove);
+    el.addEventListener("pointerup", onUp);
+    el.addEventListener("pointercancel", onCancel);
+  }
 
   async function toggleFullscreen() {
     const backend = await getBackend();
@@ -95,16 +224,47 @@ export default function TabBar(props: TabBarProps) {
         <For each={props.tabs}>
           {(tab) => (
             <div
-              class={`tab ${tab.id === props.activeTabId ? "active" : ""}`}
-              onClick={() => props.onSelect(tab.id)}
+              class="tab"
+              classList={{
+                active: tab.id === props.activeTabId,
+                dragging: draggingTabId() === tab.id,
+              }}
+              data-tab-id={tab.id}
+              onClick={() => {
+                if (suppressClick) {
+                  suppressClick = false;
+                  return;
+                }
+                props.onSelect(tab.id);
+              }}
               onMouseDown={(e) => {
                 if (e.button === 1) {
                   e.preventDefault();
                   props.onClose(tab.id);
                 }
               }}
+              onPointerDown={(e) => onTabPointerDown(e, tab.id)}
             >
-              <span class="tab-title">{tab.title}</span>
+              <Show
+                when={props.renamingTabId === tab.id}
+                fallback={
+                  <span
+                    class="tab-title"
+                    onDblClick={(e) => {
+                      e.stopPropagation();
+                      props.onStartRename(tab.id);
+                    }}
+                  >
+                    {tab.title}
+                  </span>
+                }
+              >
+                <TabTitleInput
+                  title={tab.title}
+                  onCommit={(title) => props.onCommitRename(tab.id, title)}
+                  onCancel={props.onCancelRename}
+                />
+              </Show>
               <button
                 class="tab-close"
                 onClick={(e) => {
@@ -114,6 +274,18 @@ export default function TabBar(props: TabBarProps) {
               >
                 ×
               </button>
+              <Show
+                when={
+                  draggingTabId() !== null &&
+                  tabDropTarget()?.tabId === tab.id
+                }
+              >
+                <div
+                  class={`tab-drop-indicator ${
+                    tabDropTarget()!.before ? "before" : "after"
+                  }`}
+                />
+              </Show>
             </div>
           )}
         </For>
