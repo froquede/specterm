@@ -53,6 +53,14 @@ contextBridge.exposeInMainWorld("specterm", {
     };
   },
 
+  // A file the OS asked us to open (Finder "Open With", double-click, CLI arg).
+  // The main process queues these until the renderer subscribes, then replays.
+  onOpenPath: (cb) => {
+    const handler = (_event, path) => cb(path);
+    ipcRenderer.on("open-path", handler);
+    return () => ipcRenderer.removeListener("open-path", handler);
+  },
+
   // Window
   isFullscreen: () => ipcRenderer.invoke("is-fullscreen"),
 

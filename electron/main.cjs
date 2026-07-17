@@ -85,6 +85,76 @@ let nextPtyId = 1;
 let mainWindow = null;
 let fsWatcher = null;
 
+// Files the OS asked us to open (Finder "Open With", double-click, or a CLI
+// path arg) that may arrive before the renderer has finished loading — macOS
+// fires `open-file` even before `app` is ready. Queue them and drain once the
+// renderer is up; while it's up, send straight through.
+const pendingOpenPaths = [];
+let rendererReady = false;
+
+function openPath(filePath) {
+  if (!filePath) return;
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("open-path", filePath);
+  } else {
+    pendingOpenPaths.push(filePath);
+  }
+}
+
+function flushOpenPaths() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  rendererReady = true;
+  while (pendingOpenPaths.length) {
+    mainWindow.webContents.send("open-path", pendingOpenPaths.shift());
+  }
+}
+
+// Pull a markdown file path out of a process argv array — the Windows/Linux way
+// the OS passes a double-clicked/"Open With" file (cold start via process.argv,
+// warm start via the second-instance event). Scan for the first existing *.md.
+// macOS uses the `open-file` event instead, so this never runs there.
+function markdownPathFromArgv(argv) {
+  for (const arg of argv.slice(1)) {
+    if (typeof arg === "string" && arg.toLowerCase().endsWith(".md")) {
+      try {
+        if (fs.existsSync(arg)) return arg;
+      } catch {
+        // ignore unreadable args
+      }
+    }
+  }
+  return null;
+}
+
+// macOS delivers "Open With"/double-click through this event, which can fire
+// before the app is ready and before any window exists. Register it at module
+// scope (not inside whenReady) and let openPath() queue until the renderer is
+// up. preventDefault stops Electron's default (which would otherwise warn).
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  openPath(filePath);
+});
+
+// Windows/Linux: a second launch (e.g. double-clicking another .md) starts a
+// fresh process. Take a single-instance lock so that process forwards its file
+// to the already-running window instead of opening a duplicate. macOS routes
+// through `open-file` above and doesn't need this.
+const singleInstanceOk =
+  process.platform === "darwin" || app.requestSingleInstanceLock();
+
+if (!singleInstanceOk) {
+  app.quit();
+} else if (process.platform !== "darwin") {
+  app.on("second-instance", (_event, argv) => {
+    const p = markdownPathFromArgv(argv);
+    if (p) openPath(p);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 function createWindow() {
   const isMac = process.platform === "darwin";
 
@@ -116,12 +186,21 @@ function createWindow() {
   // Remove menu bar entirely
   mainWindow.setMenuBarVisibility(false);
 
+  // Fresh window: the renderer hasn't attached its open-path listener yet, so
+  // any queued file waits until did-finish-load flushes it below.
+  rendererReady = false;
+
   // In dev, connect to Vite dev server; in prod, load built files
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+
+  // Once the renderer is loaded, hand it any files queued while it booted (and
+  // mark it ready so later open-file events go straight through). Fires again on
+  // reloads — harmless, the queue is empty by then.
+  mainWindow.webContents.on("did-finish-load", flushOpenPaths);
 
   // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -459,12 +538,24 @@ const GRANTED_PERMISSIONS = new Set([
 ]);
 
 app.whenReady().then(() => {
+  // Lost the single-instance race (Windows/Linux): the running instance already
+  // got our file via second-instance, so this process is quitting — don't build
+  // a second window.
+  if (!singleInstanceOk) return;
+
   session.defaultSession.setPermissionRequestHandler(
     (_wc, permission, callback) => callback(GRANTED_PERMISSIONS.has(permission))
   );
   session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
     GRANTED_PERMISSIONS.has(permission)
   );
+
+  // Windows/Linux cold start: the launched-with file arrives as an argv path.
+  // (macOS already queued it via the open-file event before we got here.)
+  if (process.platform !== "darwin") {
+    const p = markdownPathFromArgv(process.argv);
+    if (p) openPath(p);
+  }
 
   buildAppMenu();
   createWindow();

@@ -96,6 +96,14 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown Document",
+        "description": "Markdown Document",
+        "role": "Editor"
+      }
+    ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "publish": [
       {

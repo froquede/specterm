@@ -91,6 +91,13 @@ export class TauriBackend implements Backend {
     return listen("fs-change", () => cb());
   }
 
+  async onOpenPath(cb: (path: string) => void): Promise<UnlistenFn> {
+    // Tauri file-association / single-instance file delivery isn't wired on this
+    // experimental backend yet; Electron is the shipping target. No-op unlisten.
+    void cb;
+    return () => {};
+  }
+
   async clipboardHasImage(): Promise<boolean> {
     // Not yet wired on the Tauri backend; image paste is Electron-only for now.
     return false;
