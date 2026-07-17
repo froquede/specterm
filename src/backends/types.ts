@@ -37,6 +37,9 @@ export interface Backend {
   // opens itself; a file is revealed selected in its containing folder.
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
+  // A file the OS asked the app to open (Finder "Open With", double-click, CLI
+  // path arg). Fires once per file, replaying any that queued before subscribe.
+  onOpenPath(cb: (path: string) => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.
   clipboardHasImage(): Promise<boolean>;

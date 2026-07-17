@@ -23,6 +23,7 @@ interface SpectermAPI {
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
   watchDir(path: string, cb: () => void): () => void;
+  onOpenPath(cb: (path: string) => void): () => void;
   getHomePath(): Promise<string>;
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
@@ -104,6 +105,10 @@ export class ElectronBackend implements Backend {
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     const home = await this.getHomePath();
     return this.api.watchDir(home, cb);
+  }
+
+  async onOpenPath(cb: (path: string) => void): Promise<UnlistenFn> {
+    return this.api.onOpenPath(cb);
   }
 
   async getHomePath(): Promise<string> {

@@ -1,5 +1,6 @@
 import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
+import { getBackend } from "./backends";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
 import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
@@ -175,6 +176,23 @@ export default function App() {
 
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);
+
+    // Open markdown files handed to us by the OS (Finder "Open With",
+    // double-click, or a path arg) in a new tab. The main process queues files
+    // that arrive before this listener attaches and replays them here.
+    let unlistenOpenPath: (() => void) | undefined;
+    getBackend().then((backend) =>
+      backend
+        .onOpenPath((filePath) => {
+          if (filePath.toLowerCase().endsWith(".md")) {
+            handleOpenMarkdown(filePath, "tab");
+          }
+        })
+        .then((un) => {
+          unlistenOpenPath = un;
+        })
+    );
+    onCleanup(() => unlistenOpenPath?.());
 
     // Drag a base16 theme file (.yaml/.json) onto the window to import it. Only
     // OS file drops are intercepted — internal pane drags don't carry a "Files"
