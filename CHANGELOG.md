@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.12.0 — 2026-07-17
+
+### Added
+- **Window opacity.** A Settings slider makes the whole window translucent so
+  the desktop shows through the terminal. Default 100% (opaque), floored at 30%
+  so the window can never become invisible. Native on Windows/macOS; on Linux/X11
+  it sets `_NET_WM_WINDOW_OPACITY` (via `xprop`) for a compositing WM to render,
+  and no-ops cleanly where that isn't available.
+- **Text & code viewer.** Any non-markdown file opens from the sidebar in a
+  read-only, syntax-highlighted view with line numbers and find. Binaries are
+  declined and oversized files capped, and the highlighter (highlight.js) is
+  lazy-loaded — the terminal never pays for it until a file is opened.
+- **Markdown editor.** Toggle the markdown pane (**Cmd+E**) between the rendered
+  preview and a live-preview CodeMirror editor; **Cmd+S** saves back to disk,
+  with a dirty indicator in between. CodeMirror is lazy-loaded on the first edit,
+  so it stays out of the startup bundle.
+- **Move a pane between tabs.** Drag a pane's title-bar onto another tab's chip
+  to detach it into that tab — the live terminal (PTY and scrollback) rides
+  along. The target chip highlights while the pane hovers it.
+- **Open `.md` files from the OS.** Installed builds register as a Markdown
+  handler, so *Open With → Specterm* (or double-click) opens a markdown file in a
+  new tab. A single-instance lock forwards a second launch's file to the running
+  window instead of opening a duplicate.
+
 ## 0.11.1 — 2026-07-15
 
 ### Fixed
