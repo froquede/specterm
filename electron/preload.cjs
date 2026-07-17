@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld("specterm", {
   // Filesystem
   readTextFile: (path) => ipcRenderer.invoke("read-text-file", path),
 
+  writeTextFile: (path, content) =>
+    ipcRenderer.invoke("write-text-file", path, content),
+
   readDir: (path) => ipcRenderer.invoke("read-dir", path),
 
   listDrives: () => ipcRenderer.invoke("list-drives"),

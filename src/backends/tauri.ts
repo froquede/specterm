@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readTextFile, readDir as tauriReadDir } from "@tauri-apps/plugin-fs";
+import {
+  readTextFile,
+  writeTextFile as tauriWriteTextFile,
+  readDir as tauriReadDir,
+} from "@tauri-apps/plugin-fs";
 import type {
   Backend,
   SpawnPtyOptions,
@@ -50,6 +54,10 @@ export class TauriBackend implements Backend {
 
   async readTextFile(path: string): Promise<string> {
     return readTextFile(path);
+  }
+
+  async writeTextFile(path: string, content: string): Promise<void> {
+    return tauriWriteTextFile(path, content);
   }
 
   async readDir(path: string): Promise<FileEntry[]> {

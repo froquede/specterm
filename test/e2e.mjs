@@ -1338,6 +1338,64 @@ try {
     skip("the source tab keeps the remaining pane", "setup did not produce 2 panes + 2 tabs");
   }
 
+  // 15) Markdown editor: read → edit toggles CodeMirror (a lazy chunk), edits
+  // mark the pane dirty, and Save writes through to disk. Uses a throwaway .md
+  // in a temp dir so the test writes a real file without touching the repo.
+  const mdWorkDir = path.join(os.tmpdir(), `specterm-md-${process.pid}`);
+  fs.mkdirSync(mdWorkDir, { recursive: true });
+  const notePath = path.join(mdWorkDir, "note.md");
+  fs.writeFileSync(notePath, "# Hello\n\nworld\n");
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, mdWorkDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+
+    await clickEntry(win, "note.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    check("markdown opens in read mode", (await win.locator(".markdown-content h1").count()) === 1, "");
+
+    // Toggle to edit — CodeMirror mounts (loaded lazily on first switch).
+    await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+    await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+    await win.waitForTimeout(500);
+    check("Edit toggle mounts the CodeMirror editor", (await win.locator(".markdown-editor .cm-content").count()) === 1, "");
+
+    // Type at the end of the document.
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.type("\nEDITED_BY_E2E_777");
+    await win.waitForTimeout(300);
+    const isDirty = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("editing marks the pane dirty", isDirty, "");
+
+    // Save writes through to disk and clears the dirty flag.
+    await win.locator(".markdown-toolbar-btn", { hasText: "Save" }).first().click();
+    await win.waitForTimeout(600);
+    const onDisk = fs.readFileSync(notePath, "utf8");
+    check("Save writes the edited text to disk", onDisk.includes("EDITED_BY_E2E_777"), `tail=${JSON.stringify(onDisk.slice(-24))}`);
+    const stillDirty = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("Save clears the dirty indicator", !stillDirty, "");
+
+    // Back to preview: the reader now reflects the saved text.
+    await win.locator(".markdown-toolbar-btn", { hasText: "Preview" }).first().click();
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForTimeout(400);
+    const previewText = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+    check("Preview reflects the saved edit", previewText.includes("EDITED_BY_E2E_777"), previewText.slice(0, 40));
+  } finally {
+    try { fs.rmSync(mdWorkDir, { recursive: true, force: true }); } catch {}
+  }
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
   // --- summary ---
