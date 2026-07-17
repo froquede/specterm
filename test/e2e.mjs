@@ -1514,6 +1514,126 @@ try {
     try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch {}
   }
 
+  // 18) Tab rename, close, and drag-to-reorder — the tab bar's own pointer
+  // handling. The reorder drag must NOT swallow the close button's click or the
+  // title's double-click: a setPointerCapture on pointerdown once retargeted the
+  // follow-up click/dblclick to the tab itself, so the × merely re-selected the
+  // tab and double-click never entered rename. These checks lock that shut.
+  const RENAME_KEY = MAC ? "Meta+R" : "Control+Shift+R";
+  const tabCount = () => win.locator(".tab").count();
+  const tabTitleOf = (id) =>
+    win.evaluate(
+      (tid) => document.querySelector(`.tab[data-tab-id="${tid}"] .tab-title`)?.textContent ?? null,
+      id
+    );
+  const tabExists = (id) =>
+    win.evaluate((tid) => !!document.querySelector(`.tab[data-tab-id="${tid}"]`), id);
+  const tabOrder = () =>
+    win.evaluate(() =>
+      Array.from(document.querySelectorAll(".tab")).map((t) => t.getAttribute("data-tab-id"))
+    );
+  const editorVisible = () =>
+    win
+      .locator(".tab-title-input")
+      .waitFor({ state: "visible", timeout: 3000 })
+      .then(() => true)
+      .catch(() => false);
+
+  // A fresh tab to rename/close, independent of whatever earlier sections left.
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(1500);
+  const renameTab = await activeTab();
+
+  // 18a) Double-click the title opens the inline editor.
+  await win.locator(`.tab[data-tab-id="${renameTab}"] .tab-title`).dblclick();
+  const editorOpened = await editorVisible();
+  check("double-click opens the tab rename editor", editorOpened, "");
+
+  // 18b) Type a new name + Enter commits it (and the editor closes).
+  if (editorOpened) {
+    await win.locator(".tab-title-input").fill("E2E_RENAMED");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(300);
+    check(
+      "typing + Enter commits the tab rename",
+      (await tabTitleOf(renameTab)) === "E2E_RENAMED" && (await win.locator(".tab-title-input").count()) === 0,
+      `title=${await tabTitleOf(renameTab)}`
+    );
+  } else {
+    skip("typing + Enter commits the tab rename", "rename editor did not open");
+  }
+
+  // 18c) The ⌘R / Ctrl+Shift+R shortcut reopens the editor; Escape cancels it
+  // and leaves the committed name intact.
+  await win.locator(`.tab[data-tab-id="${renameTab}"]`).click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press(RENAME_KEY);
+  const editorViaKey = await editorVisible();
+  check("the rename shortcut opens the editor", editorViaKey, "");
+  if (editorViaKey) {
+    await win.locator(".tab-title-input").fill("DISCARDED");
+    await win.keyboard.press("Escape");
+    await win.waitForTimeout(300);
+    check(
+      "Escape cancels the rename (committed title survives)",
+      (await tabTitleOf(renameTab)) === "E2E_RENAMED" && (await win.locator(".tab-title-input").count()) === 0,
+      `title=${await tabTitleOf(renameTab)}`
+    );
+  } else {
+    skip("Escape cancels the rename (committed title survives)", "rename editor did not open");
+  }
+
+  // 18d) THE regression: the × button closes the tab. Add a second tab first so
+  // the close is a genuine removal, not the last-tab replacement.
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(1500);
+  const beforeClose = await tabCount();
+  await win.locator(`.tab[data-tab-id="${renameTab}"] .tab-close`).click();
+  await win.waitForTimeout(400);
+  check(
+    "the × button closes the tab",
+    !(await tabExists(renameTab)) && (await tabCount()) === beforeClose - 1,
+    `existed=${await tabExists(renameTab)} count ${beforeClose}→${await tabCount()}`
+  );
+
+  // 18e) Drag-to-reorder moves a tab past its neighbor, and a plain click right
+  // after the drag still selects (the drag's suppress-click must not leak).
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(1200);
+  const leftTab = await activeTab();
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(1200);
+  const rightTab = await activeTab();
+  const orderBefore = await tabOrder();
+  if (leftTab && rightTab && orderBefore.indexOf(leftTab) < orderBefore.indexOf(rightTab)) {
+    const a = await win.locator(`.tab[data-tab-id="${leftTab}"]`).boundingBox();
+    const b = await win.locator(`.tab[data-tab-id="${rightTab}"]`).boundingBox();
+    await win.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
+    await win.mouse.down();
+    // Past the right tab's midpoint → drop after it (before=false).
+    await win.mouse.move(b.x + b.width * 0.75, b.y + b.height / 2, { steps: 14 });
+    await win.waitForTimeout(150);
+    const dragging = await win.evaluate(
+      (id) => !!document.querySelector(`.tab[data-tab-id="${id}"].dragging`),
+      leftTab
+    );
+    await win.mouse.up();
+    await win.waitForTimeout(400);
+    const orderAfter = await tabOrder();
+    check(
+      "drag-to-reorder moves a tab past its neighbor",
+      dragging && orderAfter.indexOf(leftTab) > orderAfter.indexOf(rightTab),
+      `dragging=${dragging} before=[${orderBefore.join(",")}] after=[${orderAfter.join(",")}]`
+    );
+
+    await win.locator(`.tab[data-tab-id="${rightTab}"]`).click();
+    await win.waitForTimeout(300);
+    check("a click right after a reorder still selects", (await activeTab()) === rightTab, `active=${await activeTab()}`);
+  } else {
+    skip("drag-to-reorder moves a tab past its neighbor", "tabs not in expected initial order");
+    skip("a click right after a reorder still selects", "tabs not in expected initial order");
+  }
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
   // --- summary ---

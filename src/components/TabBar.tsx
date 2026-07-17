@@ -89,14 +89,23 @@ export default function TabBar(props: TabBarProps) {
   let suppressClick = false;
 
   // Pointer-driven drag-to-reorder, modeled on Pane.tsx's title-bar drag
-  // (src/components/Pane.tsx:56-96) — capture the pointer immediately so
-  // movement outside the tab's bounds still tracks, but (unlike a pane's
-  // dedicated drag handle) gate the actual drag behind a small movement
-  // threshold since the whole tab is also the click-to-select target.
+  // (src/components/Pane.tsx:56-96) but adapted for a target that is ALSO the
+  // click-to-select surface and hosts a close button + rename hit-area.
+  //
+  // We deliberately do NOT use setPointerCapture here. Capturing on pointerdown
+  // makes Chromium retarget the follow-up compatibility mouse events — `click`
+  // AND `dblclick` — to the capturing element (the tab), so the close button's
+  // onClick and the title's onDblClick would never fire (the × just re-selected
+  // the tab; double-click never entered rename). Instead we track movement on
+  // window listeners, which follow the pointer outside the tab's bounds just as
+  // capture would, and gate the reorder behind a small movement threshold so a
+  // plain click/double-click is left completely untouched.
   function onTabPointerDown(e: PointerEvent, tabId: string) {
     if (e.button !== 0) return;
-    const el = e.currentTarget as HTMLElement;
-    el.setPointerCapture(e.pointerId);
+    // Clear any stale suppress left by a prior drag whose pointerup landed on a
+    // different tab (so no click fired there to consume it). A genuine click in
+    // THIS gesture arrives after pointerup, so resetting here is safe.
+    suppressClick = false;
     const startX = e.clientX;
     const startY = e.clientY;
     let dragging = false;
@@ -127,10 +136,14 @@ export default function TabBar(props: TabBarProps) {
       });
     }
 
+    function teardown() {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+    }
+
     function onUp() {
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-      el.removeEventListener("pointercancel", onCancel);
+      teardown();
       if (dragging) {
         const dt = tabDropTarget();
         setDraggingTabId(null);
@@ -143,16 +156,14 @@ export default function TabBar(props: TabBarProps) {
     }
 
     function onCancel() {
-      el.removeEventListener("pointermove", onMove);
-      el.removeEventListener("pointerup", onUp);
-      el.removeEventListener("pointercancel", onCancel);
+      teardown();
       setDraggingTabId(null);
       setTabDropTarget(null);
     }
 
-    el.addEventListener("pointermove", onMove);
-    el.addEventListener("pointerup", onUp);
-    el.addEventListener("pointercancel", onCancel);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
   }
 
   async function toggleFullscreen() {

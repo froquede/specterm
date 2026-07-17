@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.12.1 — 2026-07-17
+
+### Fixed
+- **Renaming and closing a tab work again.** The v0.12.0 drag-to-reorder
+  captured the pointer on `pointerdown`, which made the browser retarget the
+  follow-up `click`/`dblclick` to the tab itself — so the **×** button only
+  re-selected the tab instead of closing it, and **double-clicking** a tab never
+  opened the rename editor. Reorder now tracks the drag with window listeners
+  and no pointer capture, leaving a plain click or double-click untouched.
+- **End-to-end coverage for the tab bar.** New tests drive rename (double-click
+  and the ⌘R / Ctrl+Shift+R shortcut, plus Enter-commit and Escape-cancel),
+  closing via the × button, and drag-to-reorder — so this regression can't
+  return silently.
+
 ## 0.12.0 — 2026-07-17
 
 ### Added
