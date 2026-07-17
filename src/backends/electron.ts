@@ -26,6 +26,7 @@ interface SpectermAPI {
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
+  setWindowOpacity(value: number): Promise<void>;
 }
 
 declare global {
@@ -116,5 +117,9 @@ export class ElectronBackend implements Backend {
     cb: (value: boolean) => void
   ): Promise<UnlistenFn> {
     return this.api.onFullscreenChange(cb);
+  }
+
+  async setWindowOpacity(value: number): Promise<void> {
+    return this.api.setWindowOpacity(value);
   }
 }

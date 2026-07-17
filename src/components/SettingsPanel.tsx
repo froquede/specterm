@@ -14,6 +14,12 @@ import {
   UNFOCUSED_OPACITY_MIN,
   UNFOCUSED_OPACITY_MAX,
   UNFOCUSED_OPACITY_DEFAULT,
+  windowOpacity,
+  setWindowOpacity,
+  resetWindowOpacity,
+  WINDOW_OPACITY_MIN,
+  WINDOW_OPACITY_MAX,
+  WINDOW_OPACITY_DEFAULT,
   startupPath,
   setStartupPath,
   tabBarCorner,
@@ -71,6 +77,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // input uncontrolled lets the native drag run; we still mirror every change
   // into the signal for the live preview, the % label and persistence.
   let sliderRef: HTMLInputElement | undefined;
+  let windowSliderRef: HTMLInputElement | undefined;
   let fileRef: HTMLInputElement | undefined;
 
   // base16 paste import: a collapsible textarea so the panel stays compact.
@@ -145,6 +152,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     if (sliderRef) sliderRef.value = String(UNFOCUSED_OPACITY_DEFAULT);
   }
 
+  function resetWindow() {
+    resetWindowOpacity();
+    if (windowSliderRef) windowSliderRef.value = String(WINDOW_OPACITY_DEFAULT);
+  }
+
   function applyImport() {
     const theme = importBase16Theme(importText());
     if (!theme) {
@@ -190,6 +202,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const persistedSettings = createMemo(() =>
     JSON.stringify([
       unfocusedOpacity(),
+      windowOpacity(),
       startupPath(),
       terminalFontFamily(),
       activeTheme().id,
@@ -220,6 +233,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   });
 
   const pct = () => Math.round(unfocusedOpacity() * 100);
+  const winPct = () => Math.round(windowOpacity() * 100);
   const chromeLayoutIsCustom = () =>
     tabBarCorner() !== TAB_BAR_CORNER_DEFAULT ||
     tabBarHeight() !== TAB_BAR_HEIGHT_DEFAULT ||
@@ -479,6 +493,44 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             </span>
             <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
               <button class="settings-reset" onClick={reset}>
+                Reset
+              </button>
+            </Show>
+          </div>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="window-opacity">
+              Window opacity
+            </label>
+            <span class="settings-value">{winPct()}%</span>
+          </div>
+          <input
+            ref={(el) => {
+              // Seed the position once, on mount — same uncontrolled-slider
+              // reasoning as the unfocused-opacity control above (a reactive
+              // `value={...}` binding cancels an in-progress thumb drag).
+              windowSliderRef = el;
+              el.value = String(windowOpacity());
+            }}
+            id="window-opacity"
+            class="settings-slider"
+            type="range"
+            min={WINDOW_OPACITY_MIN}
+            max={WINDOW_OPACITY_MAX}
+            step={0.05}
+            onInput={(e) => setWindowOpacity(Number(e.currentTarget.value))}
+          />
+          <div class="settings-row">
+            <span class="settings-hint">
+              Whole-window transparency, so the desktop shows through. 100% =
+              opaque.
+            </span>
+            <Show when={windowOpacity() !== WINDOW_OPACITY_DEFAULT}>
+              <button class="settings-reset" onClick={resetWindow}>
                 Reset
               </button>
             </Show>

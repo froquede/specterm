@@ -48,4 +48,7 @@ export interface Backend {
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): Promise<UnlistenFn>;
+  // Whole-window alpha (0–1); values below 1 let the desktop show through.
+  // A no-op on backends/platforms that can't honor it.
+  setWindowOpacity(value: number): Promise<void>;
 }

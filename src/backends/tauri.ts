@@ -119,4 +119,11 @@ export class TauriBackend implements Backend {
       cb(await win.isFullscreen());
     });
   }
+
+  async setWindowOpacity(_value: number): Promise<void> {
+    // Tauri's window API exposes no JS setOpacity; honoring this would need a
+    // native `set_window_opacity` command. Electron is the shipping target, so
+    // this is a no-op stub (matching listDrives/clipboardHasImage) — the window
+    // stays opaque under Tauri.
+  }
 }

@@ -76,6 +76,10 @@ edits settle.
 - **Default terminal path** — where new terminals open and the file sidebar
   starts. Blank uses your home directory.
 - **Unfocused pane opacity** — how far inactive split panes are washed out.
+- **Window opacity** — whole-window transparency, so the desktop shows through
+  the terminal. 100% is fully opaque (the default). Native on Windows/macOS; on
+  Linux it needs a compositing window manager (most desktops — GNOME, KDE, etc.
+  — qualify) and the `xprop` tool (from `x11-utils`, usually preinstalled).
 - **Layout** — the tab bar's corner (a 2×2 grid of the window's corners), its
   height, the sidebar's width, and whether the bar auto-hides. The sidebar also
   resizes by dragging the strip beside it; double-click to reset.

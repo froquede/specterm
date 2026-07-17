@@ -60,4 +60,6 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.on("fullscreen-change", handler);
     return () => ipcRenderer.removeListener("fullscreen-change", handler);
   },
+
+  setWindowOpacity: (value) => ipcRenderer.invoke("set-window-opacity", value),
 });

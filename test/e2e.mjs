@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -831,6 +832,80 @@ try {
   check("toast appears once edits settle", (await slot()).toast);
   await win.waitForTimeout(2900);
   check("toast auto-dismisses", !(await slot()).toast);
+
+  // 8c) Window opacity. The slider drives the *OS* window's alpha. We read the
+  // real, external-observer opacity per platform: on Linux/X11 the app sets
+  // _NET_WM_WINDOW_OPACITY on its own window (Electron's setOpacity is a no-op
+  // there), so we read that property back via xprop; on Windows/macOS we read
+  // BrowserWindow.getOpacity. Both the OS value and the persisted setting are
+  // asserted. If the OS opacity can't be read (e.g. xprop absent), that one
+  // check skips rather than fails — but persistence is always asserted.
+  const settingsOpacity = () =>
+    win.evaluate(() => JSON.parse(localStorage.getItem("specterm.settings")).windowOpacity);
+
+  // This window's own X11 id, straight from Electron — never a name match (two
+  // Specterm windows could be open, e.g. the developer's own terminal).
+  const nativeXid = () =>
+    app.evaluate(({ BrowserWindow }) => {
+      const h = BrowserWindow.getAllWindows()[0].getNativeWindowHandle();
+      return h.length >= 4 ? h.readUInt32LE(0) : null;
+    });
+
+  // The window's actual OS opacity as a 0–1 fraction, or null if unreadable.
+  async function osOpacity() {
+    if (process.platform === "linux") {
+      const xid = await nativeXid();
+      if (xid == null) return null;
+      try {
+        const out = execSync(`xprop -id 0x${xid.toString(16)} _NET_WM_WINDOW_OPACITY`, {
+          encoding: "utf8",
+        });
+        const m = out.match(/=\s*(\d+)/);
+        return m ? Number(m[1]) / 0xffffffff : 1; // property absent ⇒ opaque
+      } catch {
+        return null; // xprop not installed
+      }
+    }
+    return app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].getOpacity()
+    );
+  }
+
+  const baseOsOp = await osOpacity();
+  if (baseOsOp == null) {
+    skip("window starts fully opaque", "OS opacity unreadable (xprop missing)");
+  } else {
+    check("window starts fully opaque", Math.abs(baseOsOp - 1) < 0.02, `osOpacity=${baseOsOp}`);
+  }
+
+  await win.locator("#window-opacity").evaluate((el) => {
+    el.value = "0.6";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await win.waitForTimeout(500);
+  check("window opacity setting persists", Math.abs((await settingsOpacity()) - 0.6) < 0.001, `${await settingsOpacity()}`);
+
+  const dimmedOs = await osOpacity();
+  if (dimmedOs == null) {
+    skip("slider dims the OS window", "OS opacity unreadable (xprop missing)");
+  } else {
+    check("slider dims the OS window", Math.abs(dimmedOs - 0.6) < 0.03, `osOpacity=${dimmedOs}`);
+  }
+
+  // Reset returns the window (and the setting) to fully opaque.
+  await win
+    .locator("#window-opacity")
+    .locator("xpath=ancestor::div[contains(@class,'settings-section')]")
+    .locator(".settings-reset")
+    .click();
+  await win.waitForTimeout(500);
+  check("reset restores the window opacity setting", Math.abs((await settingsOpacity()) - 1) < 0.001, `${await settingsOpacity()}`);
+  const resetOs = await osOpacity();
+  if (resetOs == null) {
+    skip("reset restores full OS opacity", "OS opacity unreadable (xprop missing)");
+  } else {
+    check("reset restores full OS opacity", Math.abs(resetOs - 1) < 0.02, `osOpacity=${resetOs}`);
+  }
 
   // 9) Chrome layout: the tab bar's corner, the two sizes, and auto-hide.
   const layout = () =>
