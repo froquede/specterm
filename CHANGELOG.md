@@ -15,7 +15,9 @@
 - **Markdown editor.** Toggle the markdown pane (**Cmd+E**) between the rendered
   preview and a live-preview CodeMirror editor; **Cmd+S** saves back to disk,
   with a dirty indicator in between. CodeMirror is lazy-loaded on the first edit,
-  so it stays out of the startup bundle.
+  so it stays out of the startup bundle. Unsaved edits auto-persist as a local
+  draft, so they survive a tab move, a reload, or closing the app — and are never
+  auto-written to the file itself.
 - **Move a pane between tabs.** Drag a pane's title-bar onto another tab's chip
   to detach it into that tab — the live terminal (PTY and scrollback) rides
   along. The target chip highlights while the pane hovers it.
@@ -23,6 +25,15 @@
   handler, so *Open With → Specterm* (or double-click) opens a markdown file in a
   new tab. A single-instance lock forwards a second launch's file to the running
   window instead of opening a duplicate.
+- **Inline tab rename and drag-to-reorder.** Double-click a tab to rename it in
+  place (tmux-style: the name then sticks against shell-driven title updates
+  until cleared), and drag tabs along the bar to reorder them. Thanks to
+  [@Maggnity](https://github.com/Maggnity).
+- **Sidebar right-click menu.** The file tree gains a context menu, including
+  **Reveal in Finder / Explorer / file manager** to jump from a path straight to
+  the native OS file browser, and "open a terminal here".
+- **Spatial pane focus.** **Alt+Arrow** moves focus to the pane visually adjacent
+  in that direction (all four directions), rather than by tree order.
 
 ## 0.11.1 — 2026-07-15
 
