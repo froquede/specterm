@@ -29,6 +29,7 @@ export interface Backend {
 
   // Filesystem
   readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;

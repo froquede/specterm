@@ -51,6 +51,27 @@
   background: var(--bg-hover);
 }
 
+.markdown-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.markdown-toolbar-btn:disabled:hover {
+  color: var(--fg-muted);
+  background: none;
+}
+
+/* CodeMirror live-preview editor host */
+.markdown-editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.markdown-editor .cm-editor {
+  height: 100%;
+}
+
 /* Search bar */
 .markdown-search {
   display: flex;

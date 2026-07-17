@@ -15,6 +15,7 @@ interface SpectermAPI {
   onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   listDrives(): Promise<DriveEntry[]>;
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
@@ -70,6 +71,10 @@ export class ElectronBackend implements Backend {
 
   async readTextFile(path: string): Promise<string> {
     return this.api.readTextFile(path);
+  }
+
+  async writeTextFile(path: string, content: string): Promise<void> {
+    return this.api.writeTextFile(path, content);
   }
 
   async readDir(path: string): Promise<FileEntry[]> {

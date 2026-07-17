@@ -247,6 +247,10 @@ ipcMain.handle("read-text-file", async (_event, filePath) => {
   return fs.promises.readFile(filePath, "utf-8");
 });
 
+ipcMain.handle("write-text-file", async (_event, filePath, content) => {
+  return fs.promises.writeFile(filePath, content, "utf-8");
+});
+
 ipcMain.handle("read-dir", async (_event, dirPath) => {
   const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
   return entries.map((e) => ({
