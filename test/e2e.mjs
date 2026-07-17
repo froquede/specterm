@@ -1396,6 +1396,70 @@ try {
     try { fs.rmSync(mdWorkDir, { recursive: true, force: true }); } catch {}
   }
 
+  // 16) Markdown editor — unsaved-edit safety. Refresh (which re-reads disk) is
+  // hidden while editing, and a dirty pane dragged to another tab carries its
+  // unsaved buffer with it (no silent re-read from disk, and no auto-save).
+  const safeDir = path.join(os.tmpdir(), `specterm-mdsafe-${process.pid}`);
+  fs.mkdirSync(safeDir, { recursive: true });
+  const safeNote = path.join(safeDir, "safe.md");
+  fs.writeFileSync(safeNote, "# Safe\n\nbody\n");
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, safeDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+    const safeSrcTab = await activeTab();
+
+    await clickEntry(win, "safe.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+    await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+    await win.waitForTimeout(500);
+    check("Refresh is hidden while editing", (await win.locator(".markdown-toolbar-btn", { hasText: "Refresh" }).count()) === 0, "");
+
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.type("\nUNSAVED_MOVE_XYZ");
+    await win.waitForTimeout(300);
+
+    const safeDstTab = await win.locator(".tab-new").click().then(async () => {
+      await win.waitForTimeout(1500);
+      return activeTab();
+    });
+    await win.locator(`.tab[data-tab-id="${safeSrcTab}"]`).click();
+    await win.waitForTimeout(700);
+
+    if (safeDstTab && safeDstTab !== safeSrcTab) {
+      const from = await win.evaluate(() => {
+        const panes = Array.from(document.querySelectorAll("[data-pane-id]"));
+        const md = panes.find((p) => p.querySelector(".markdown-pane, .markdown-editor"));
+        const tb = md.querySelector(".pane-titlebar").getBoundingClientRect();
+        return { x: tb.left + 24, y: (tb.top + tb.bottom) / 2 };
+      });
+      const chip = await win.locator(`.tab[data-tab-id="${safeDstTab}"]`).boundingBox();
+      await win.mouse.move(from.x, from.y);
+      await win.mouse.down();
+      await win.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2, { steps: 12 });
+      await win.waitForTimeout(250);
+      await win.mouse.up();
+      await win.waitForTimeout(1500);
+
+      const preserved = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+      check("cross-tab move preserves unsaved markdown edits", preserved.includes("UNSAVED_MOVE_XYZ"), preserved.slice(0, 40));
+      check("cross-tab move does not auto-save to disk", !fs.readFileSync(safeNote, "utf8").includes("UNSAVED_MOVE_XYZ"), "");
+    } else {
+      skip("cross-tab move preserves unsaved markdown edits", "second tab did not open");
+      skip("cross-tab move does not auto-save to disk", "second tab did not open");
+    }
+  } finally {
+    try { fs.rmSync(safeDir, { recursive: true, force: true }); } catch {}
+  }
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
   // --- summary ---

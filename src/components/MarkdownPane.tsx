@@ -13,11 +13,23 @@ import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
 
 interface MarkdownPaneProps {
   filePath: string;
+  // Stable id of the pane this markdown view lives in. Used to carry an unsaved
+  // buffer across a remount (e.g. a cross-tab pane move, which disposes and
+  // recreates the component) so edits aren't silently re-read from disk.
+  paneId?: string;
   // Whether this pane is the focused one. ⌘F only acts on the active pane so a
   // single keypress doesn't toggle search in every open markdown pane at once.
   isActive?: boolean;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
 }
+
+// Unsaved editor buffers, keyed by pane id, kept across the component's remount.
+// A markdown pane's state is component-local, so moving the pane between tabs
+// (which recreates the component) would otherwise lose unsaved edits — this is
+// the markdown analogue of the terminal registry that keeps PTYs alive across
+// the same move. Entries live only while dirty: written on unmount-if-dirty,
+// consumed on mount, cleared on save.
+const unsavedBuffers = new Map<string, { content: string; savedText: string }>();
 
 export default function MarkdownPane(props: MarkdownPaneProps) {
   let contentRef!: HTMLDivElement;
@@ -74,6 +86,7 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
       setSavedText(text);
       setContent(text);
       setDirty(false);
+      if (props.paneId) unsavedBuffers.delete(props.paneId);
     } catch (e) {
       setError(`Failed to save file: ${props.filePath}\n${e}`);
     }
@@ -119,7 +132,27 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   });
 
   onMount(() => {
-    loadFile();
+    // A pending unsaved buffer (this pane was moved between tabs while dirty)
+    // wins over the on-disk copy — restore it instead of re-reading the file.
+    const cached = props.paneId ? unsavedBuffers.get(props.paneId) : undefined;
+    if (cached) {
+      unsavedBuffers.delete(props.paneId!);
+      setSavedText(cached.savedText);
+      setContent(cached.content);
+      setDirty(cached.content !== cached.savedText);
+    } else {
+      loadFile();
+    }
+  });
+
+  // On unmount with unsaved edits, stash the buffer keyed by pane id so a
+  // remount (cross-tab move) can restore it rather than losing the edits to a
+  // disk re-read. Read the live editor if it's still up, else the carried-back
+  // content() the editor effect's own cleanup leaves behind.
+  onCleanup(() => {
+    if (!props.paneId || !dirty()) return;
+    const buffer = editorView ? editorView.state.doc.toString() : content();
+    unsavedBuffers.set(props.paneId, { content: buffer, savedText: savedText() });
   });
 
   createEffect(async () => {
@@ -382,10 +415,12 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
             >
               Search
             </button>
+            {/* Refresh re-reads from disk, so it's read-mode only — in edit mode
+                it would silently discard unsaved changes. */}
+            <button class="markdown-toolbar-btn" onClick={loadFile}>
+              Refresh
+            </button>
           </Show>
-          <button class="markdown-toolbar-btn" onClick={loadFile}>
-            Refresh
-          </button>
         </div>
       </div>
       {mode() === "read" && searchOpen() && (

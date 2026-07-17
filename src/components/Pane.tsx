@@ -170,7 +170,7 @@ export default function Pane(props: PaneProps) {
           />
         </Show>
         <Show when={props.pane.kind === "markdown" ? (props.pane as PaneType & { kind: "markdown" }).filePath : null} keyed>
-          {(filePath) => <MarkdownPane filePath={filePath} isActive={props.isActive} onOpenMarkdown={props.onOpenMarkdown} />}
+          {(filePath) => <MarkdownPane filePath={filePath} paneId={paneId} isActive={props.isActive} onOpenMarkdown={props.onOpenMarkdown} />}
         </Show>
         <Show when={props.pane.kind === "text" ? (props.pane as PaneType & { kind: "text" }).filePath : null} keyed>
           {(filePath) => <TextPane filePath={filePath} isActive={props.isActive} />}
