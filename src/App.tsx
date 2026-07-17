@@ -271,6 +271,12 @@ export default function App() {
                   // once the moved terminal has settled into its new DOM slot.
                   requestAnimationFrame(() => focusPaneReliably(sourceId));
                 }}
+                onDropPaneToTab={(sourceId, tabId) => {
+                  store.movePaneToTab(sourceId, tabId);
+                  // The moved pane is now the target tab's active pane; bring
+                  // keyboard focus with it once it lands in the newly shown tab.
+                  requestAnimationFrame(() => focusPaneReliably(sourceId));
+                }}
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenMarkdown={handleOpenMarkdown}

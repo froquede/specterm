@@ -1283,6 +1283,61 @@ try {
     try { fs.unlinkSync(binFixture); } catch {}
   }
 
+  // 14) Cross-tab pane detach: drag a pane's titlebar onto another tab's chip to
+  // move it there. The target chip highlights mid-drag; the drop moves the pane
+  // (splitting beside the target's active pane), brings that tab to the front,
+  // and leaves the source tab with the rest.
+  const activeTab = () =>
+    win.evaluate(() => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null);
+  const detachPaneCount = () => win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
+
+  // Fresh tab so this starts from a clean single pane, then split → 2 panes.
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  const srcTab = await activeTab();
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+  const srcPanesBefore = await detachPaneCount();
+
+  // Another fresh tab as the drop target, then back to the source tab.
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  const dstTab = await activeTab();
+  await win.locator(`.tab[data-tab-id="${srcTab}"]`).click();
+  await win.waitForTimeout(700);
+
+  if (srcPanesBefore === 2 && dstTab && dstTab !== srcTab) {
+    // Drag the first pane's titlebar onto the destination tab's chip.
+    const src = await win.evaluate(() => {
+      const tb = document.querySelector("[data-pane-id] .pane-titlebar").getBoundingClientRect();
+      return { x: tb.left + 24, y: (tb.top + tb.bottom) / 2 };
+    });
+    const chip = await win.locator(`.tab[data-tab-id="${dstTab}"]`).boundingBox();
+    await win.mouse.move(src.x, src.y);
+    await win.mouse.down();
+    await win.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2, { steps: 12 });
+    await win.waitForTimeout(300);
+    const highlight = await win.evaluate(
+      (id) => !!document.querySelector(`.tab[data-tab-id="${id}"]`)?.classList.contains("drop-tab"),
+      dstTab
+    );
+    check("dragging a pane over a tab highlights it as a drop target", highlight, "");
+    await win.mouse.up();
+    await win.waitForTimeout(1200);
+
+    check("dropping on a tab activates it", (await activeTab()) === dstTab, `active=${await activeTab()}`);
+    check("the pane detaches into the target tab", (await detachPaneCount()) === 2, `dst panes=${await detachPaneCount()}`);
+    await win.locator(`.tab[data-tab-id="${srcTab}"]`).click();
+    await win.waitForTimeout(600);
+    check("the source tab keeps the remaining pane", (await detachPaneCount()) === 1, `src panes=${await detachPaneCount()}`);
+  } else {
+    skip("dragging a pane over a tab highlights it as a drop target", "setup did not produce 2 panes + 2 tabs");
+    skip("dropping on a tab activates it", "setup did not produce 2 panes + 2 tabs");
+    skip("the pane detaches into the target tab", "setup did not produce 2 panes + 2 tabs");
+    skip("the source tab keeps the remaining pane", "setup did not produce 2 panes + 2 tabs");
+  }
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
   // --- summary ---

@@ -17,6 +17,7 @@ interface SplitContainerProps {
     edge: DropEdge,
     atRoot?: boolean
   ) => void;
+  onDropPaneToTab?: (sourceId: PaneId, tabId: string) => void;
   onTitle?: (title: string) => void;
   onClosePane?: (id: PaneId) => void;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
@@ -61,6 +62,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                     onClose={() => props.onClosePane?.(leafId)}
                     onOpenMarkdown={props.onOpenMarkdown}
                     onDrop={props.onDropPane}
+                    onDropToTab={props.onDropPaneToTab}
                   />
                 )}
               </Show>
@@ -96,6 +98,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onResizeSplit={props.onResizeSplit}
                 onToggleDirection={props.onToggleDirection}
                 onDropPane={props.onDropPane}
+                onDropPaneToTab={props.onDropPaneToTab}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenMarkdown={props.onOpenMarkdown}
@@ -122,6 +125,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onResizeSplit={props.onResizeSplit}
                 onToggleDirection={props.onToggleDirection}
                 onDropPane={props.onDropPane}
+                onDropPaneToTab={props.onDropPaneToTab}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenMarkdown={props.onOpenMarkdown}

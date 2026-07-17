@@ -5,7 +5,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 ## Features
 
 - **Split panes** -- horizontal and vertical splits with draggable resize handles, drag-and-drop reordering via each pane's title-bar, and one-click/keyboard direction flipping. Aligned dividers move together; hold **Alt** to resize just one split
-- **Tabs** -- create, close, and cycle through terminal tabs
+- **Tabs** -- create, close, and cycle through terminal tabs; drag a pane's title-bar onto another tab to move it there (the live terminal rides along)
 - **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
 - **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
 - **Markdown preview** -- render `.md` files inline with Mermaid diagram support

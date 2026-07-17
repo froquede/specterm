@@ -8,6 +8,7 @@ import {
   tabDropTarget,
   setTabDropTarget,
 } from "../stores/tab-drag";
+import { draggingPaneId, dropTabId } from "../stores/pane-drag";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -228,6 +229,13 @@ export default function TabBar(props: TabBarProps) {
               classList={{
                 active: tab.id === props.activeTabId,
                 dragging: draggingTabId() === tab.id,
+                // Highlighted while a dragged pane hovers this chip — release
+                // detaches the pane into this tab. Never the source tab (always
+                // the active one), where the drop would be a no-op.
+                "drop-tab":
+                  draggingPaneId() !== null &&
+                  dropTabId() === tab.id &&
+                  tab.id !== props.activeTabId,
               }}
               data-tab-id={tab.id}
               onClick={() => {
