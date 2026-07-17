@@ -257,17 +257,6 @@ Electron before v0.10.0.
 and keeps host calls in one place, but the Tauri implementation is dormant, not
 maintained. Reviving it means finishing the Rust commands first.
 
-## Contributors
-
-Created and maintained by [Roque Francisco](https://github.com/froquede).
-
-Thanks to everyone who has contributed:
-
-- [Lucas Casanova](https://github.com/cas0la)
-- [Henrique Begrow](https://github.com/hbegrow)
-- [Fernando Vinícius Fernandes](https://github.com/Maggnity) — inline tab rename
-  and drag-to-reorder (0.12.0)
-
 ## License
 
 MIT
