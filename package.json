@@ -1,12 +1,13 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.11.1",
+  "version": "0.12.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "author": "Roque Francisco <roquefsd@gmail.com>",
   "contributors": [
     "Lucas Casanova (https://github.com/cas0la)",
-    "Henrique Begrow (https://github.com/hbegrow)"
+    "Henrique Begrow (https://github.com/hbegrow)",
+    "Fernando Vinícius Fernandes (https://github.com/Maggnity)"
   ],
   "type": "module",
   "main": "electron/main.cjs",
@@ -25,6 +26,12 @@
     "tauri": "tauri"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
+    "@lezer/highlight": "^1.2.3",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-shell": "^2.0.0",
@@ -34,6 +41,7 @@
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "chokidar": "^4.0.0",
+    "highlight.js": "^11.11.1",
     "markdown-it": "^14.1.0",
     "mermaid": "^11.4.0",
     "nanoid": "^5.0.0",
@@ -89,6 +97,14 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
+    "fileAssociations": [
+      {
+        "ext": "md",
+        "name": "Markdown Document",
+        "description": "Markdown Document",
+        "role": "Editor"
+      }
+    ],
     "artifactName": "${productName}-${version}-${os}-${arch}.${ext}",
     "publish": [
       {

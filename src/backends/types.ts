@@ -29,10 +29,17 @@ export interface Backend {
 
   // Filesystem
   readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;
+  // Show a path in the OS file manager (Explorer/Finder/Nautilus). A directory
+  // opens itself; a file is revealed selected in its containing folder.
+  revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
+  // A file the OS asked the app to open (Finder "Open With", double-click, CLI
+  // path arg). Fires once per file, replaying any that queued before subscribe.
+  onOpenPath(cb: (path: string) => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.
   clipboardHasImage(): Promise<boolean>;
@@ -45,4 +52,7 @@ export interface Backend {
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): Promise<UnlistenFn>;
+  // Whole-window alpha (0–1); values below 1 let the desktop show through.
+  // A no-op on backends/platforms that can't honor it.
+  setWindowOpacity(value: number): Promise<void>;
 }

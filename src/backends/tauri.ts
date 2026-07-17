@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readTextFile, readDir as tauriReadDir } from "@tauri-apps/plugin-fs";
+import {
+  readTextFile,
+  writeTextFile as tauriWriteTextFile,
+  readDir as tauriReadDir,
+} from "@tauri-apps/plugin-fs";
 import type {
   Backend,
   SpawnPtyOptions,
@@ -52,6 +56,10 @@ export class TauriBackend implements Backend {
     return readTextFile(path);
   }
 
+  async writeTextFile(path: string, content: string): Promise<void> {
+    return tauriWriteTextFile(path, content);
+  }
+
   async readDir(path: string): Promise<FileEntry[]> {
     const entries = await tauriReadDir(path);
     return entries.map((e) => ({
@@ -67,8 +75,27 @@ export class TauriBackend implements Backend {
     return [];
   }
 
+  async revealInFileManager(path: string, isDirectory: boolean): Promise<void> {
+    // Best-effort via the shell plugin's default-app open. It can open a folder
+    // but can't reveal a file *selected* (that needs the opener plugin), so for
+    // a file we open its containing directory instead. Electron is the shipping
+    // target and gets the richer showItemInFolder reveal.
+    const { open } = await import("@tauri-apps/plugin-shell");
+    const target = isDirectory
+      ? path
+      : path.replace(/[\\/][^\\/]*$/, "") || path;
+    await open(target);
+  }
+
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     return listen("fs-change", () => cb());
+  }
+
+  async onOpenPath(cb: (path: string) => void): Promise<UnlistenFn> {
+    // Tauri file-association / single-instance file delivery isn't wired on this
+    // experimental backend yet; Electron is the shipping target. No-op unlisten.
+    void cb;
+    return () => {};
   }
 
   async clipboardHasImage(): Promise<boolean> {
@@ -106,5 +133,12 @@ export class TauriBackend implements Backend {
     return win.onResized(async () => {
       cb(await win.isFullscreen());
     });
+  }
+
+  async setWindowOpacity(_value: number): Promise<void> {
+    // Tauri's window API exposes no JS setOpacity; honoring this would need a
+    // native `set_window_opacity` command. Electron is the shipping target, so
+    // this is a no-op stub (matching listDrives/clipboardHasImage) — the window
+    // stays opaque under Tauri.
   }
 }

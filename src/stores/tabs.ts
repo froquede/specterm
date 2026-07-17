@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import type {
   AppState,
   Tab,
+  TabId,
   PaneType,
   PaneId,
   SplitNode,
@@ -12,20 +13,26 @@ import {
   createLeaf,
   collectLeaves,
   firstLeafId,
+  findLeafNode,
+  insertBeside,
+  closePane,
   moveLeaf,
   moveLeafToRootEdge,
   findParentSplit,
+  findPaneInDirection,
   setSplitDirection,
   toggleSplitDirection,
   type DropEdge,
+  type FocusDirection,
 } from "../lib/split-tree";
-import { destroyTerminal } from "../lib/terminal-registry";
+import { destroyTerminal, getTerminalInstance } from "../lib/terminal-registry";
 
 function createTerminalTab(): Tab {
   const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd: "" });
   return {
     id: nanoid(8),
     title: "Terminal",
+    manualTitle: false,
     root: leaf,
     activePaneId: leaf.id,
   };
@@ -38,6 +45,7 @@ const [state, setStateRaw] = createSignal<AppState>({
   tabs: [initialTab],
   activeTabId: initialTab.id,
   sidebarView: "files",
+  renamingTabId: null,
 });
 
 function update(fn: (s: AppState) => AppState) {
@@ -167,6 +175,24 @@ export function useTabStore() {
       const tab: Tab = {
         id: nanoid(8),
         title: filePath.split("/").pop() || "Markdown",
+        manualTitle: false,
+        root: leaf,
+        activePaneId: leaf.id,
+      };
+      update((s) => ({
+        ...s,
+        tabs: [...s.tabs, tab],
+        activeTabId: tab.id,
+      }));
+      return tab;
+    },
+
+    createTextTab(filePath: string) {
+      const leaf = createLeaf({ kind: "text", filePath });
+      const tab: Tab = {
+        id: nanoid(8),
+        title: filePath.split(/[\\/]/).pop() || "Text",
+        manualTitle: false,
         root: leaf,
         activePaneId: leaf.id,
       };
@@ -274,20 +300,17 @@ export function useTabStore() {
     },
 
     // Cycle the active pane within the current tab, in left-to-right /
-    // first-to-second layout order (the same order collectLeaves yields).
-    // delta = +1 moves to the next grid, -1 to the previous, wrapping around.
-    focusRelativePane(delta: number) {
+    // Move focus to the pane visually adjacent to the active one in `dir`
+    // (left/right/up/down). No-op when there's no neighbour that way, so
+    // pressing into an outer edge simply keeps the current pane focused.
+    focusDirectionalPane(dir: FocusDirection) {
       const s = state();
       const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
       if (idx === -1) return;
 
       const tab = s.tabs[idx];
-      const leaves = collectLeaves(tab.root);
-      if (leaves.length < 2) return;
-
-      const cur = leaves.findIndex((l) => l.id === tab.activePaneId);
-      const base = cur === -1 ? 0 : cur;
-      const nextId = leaves[(base + delta + leaves.length) % leaves.length].id;
+      const nextId = findPaneInDirection(tab.root, tab.activePaneId, dir);
+      if (!nextId || nextId === tab.activePaneId) return;
 
       update(() => ({
         ...s,
@@ -358,6 +381,56 @@ export function useTabStore() {
       }));
     },
 
+    // Detach a pane from its tab and graft it into another one. The pane's leaf
+    // keeps its id, so its live terminal (kept alive in the registry across the
+    // remount — TerminalPane only detaches, never destroys, on unmount) rides
+    // along intact. It lands split beside the target tab's active pane, becomes
+    // that tab's active pane, and the target tab is brought to the front. If the
+    // moved pane was the last one in its source tab, that now-empty tab is
+    // dropped. No-op when source and target are the same tab.
+    movePaneToTab(sourcePaneId: PaneId, targetTabId: TabId) {
+      const s = state();
+      const srcIdx = s.tabs.findIndex((t) => findLeafNode(t.root, sourcePaneId));
+      const tgtIdx = s.tabs.findIndex((t) => t.id === targetTabId);
+      if (srcIdx === -1 || tgtIdx === -1 || srcIdx === tgtIdx) return;
+
+      const srcTab = s.tabs[srcIdx];
+      const tgtTab = s.tabs[tgtIdx];
+      const leaf = findLeafNode(srcTab.root, sourcePaneId);
+      if (!leaf) return;
+
+      const prunedSrc = closePane(srcTab.root, sourcePaneId);
+      const newTgtRoot = insertBeside(
+        tgtTab.root,
+        tgtTab.activePaneId,
+        leaf,
+        "right"
+      );
+
+      let newTabs = s.tabs.map((t, i) => {
+        if (i === tgtIdx) {
+          return { ...t, root: newTgtRoot, activePaneId: sourcePaneId };
+        }
+        if (i === srcIdx && prunedSrc !== null) {
+          return {
+            ...t,
+            root: prunedSrc,
+            activePaneId:
+              t.activePaneId === sourcePaneId
+                ? firstLeafId(prunedSrc)
+                : t.activePaneId,
+          };
+        }
+        return t;
+      });
+      // The source tab emptied out — its only pane just left. Drop it.
+      if (prunedSrc === null) {
+        newTabs = newTabs.filter((_, i) => i !== srcIdx);
+      }
+
+      update(() => ({ ...s, tabs: newTabs, activeTabId: targetTabId }));
+    },
+
     // Force the orientation of the split that directly contains `paneId`.
     setSplitDirectionForPane(paneId: PaneId, direction: "h" | "v") {
       const s = state();
@@ -394,6 +467,10 @@ export function useTabStore() {
       if (titleDebounce) clearTimeout(titleDebounce);
       titleDebounce = window.setTimeout(() => {
         const s = state();
+        const tab = s.tabs.find((t) => t.id === tabId);
+        // A manually renamed tab is locked against shell-driven OSC titles
+        // (tmux rename-window behavior) until the user clears the rename.
+        if (!tab || tab.manualTitle) return;
         update(() => ({
           ...s,
           tabs: s.tabs.map((t) =>
@@ -401,6 +478,60 @@ export function useTabStore() {
           ),
         }));
       }, 100);
+    },
+
+    // Open the inline rename editor for a tab (defaults to the active tab —
+    // e.g. from the ⌘R / Ctrl+Shift+R shortcut).
+    startRenameTab(tabId?: string) {
+      const id = tabId ?? state().activeTabId;
+      if (!id) return;
+      update((s) => ({ ...s, renamingTabId: id }));
+    },
+
+    // Commit the rename editor's value. An empty (trimmed) value reverts the
+    // tab to automatic titling — unlocking it and pulling back whatever OSC
+    // title the shell last reported, so the tab bar doesn't go blank.
+    commitRenameTab(tabId: string, title: string) {
+      const s = state();
+      const trimmed = title.trim();
+      if (!trimmed) {
+        const tab = s.tabs.find((t) => t.id === tabId);
+        const autoTitle =
+          (tab && getTerminalInstance(tab.activePaneId)?.title) || "Terminal";
+        update(() => ({
+          ...s,
+          renamingTabId: null,
+          tabs: s.tabs.map((t) =>
+            t.id === tabId ? { ...t, title: autoTitle, manualTitle: false } : t
+          ),
+        }));
+        return;
+      }
+      update(() => ({
+        ...s,
+        renamingTabId: null,
+        tabs: s.tabs.map((t) =>
+          t.id === tabId ? { ...t, title: trimmed, manualTitle: true } : t
+        ),
+      }));
+    },
+
+    cancelRenameTab() {
+      update((s) => (s.renamingTabId === null ? s : { ...s, renamingTabId: null }));
+    },
+
+    // Reorder tabs by dragging `sourceId` to just before/after `targetId`.
+    moveTab(sourceId: TabId, targetId: TabId, before: boolean) {
+      if (sourceId === targetId) return;
+      const s = state();
+      const tabs = [...s.tabs];
+      const srcIdx = tabs.findIndex((t) => t.id === sourceId);
+      if (srcIdx === -1) return;
+      const [moved] = tabs.splice(srcIdx, 1);
+      const targetIdx = tabs.findIndex((t) => t.id === targetId);
+      if (targetIdx === -1) return;
+      tabs.splice(before ? targetIdx : targetIdx + 1, 0, moved);
+      update(() => ({ ...s, tabs }));
     },
 
     // The sidebar slot holds exactly one view at a time. Showing a view evicts

@@ -15,16 +15,20 @@ interface SpectermAPI {
   onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   listDrives(): Promise<DriveEntry[]>;
+  revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
   watchDir(path: string, cb: () => void): () => void;
+  onOpenPath(cb: (path: string) => void): () => void;
   getHomePath(): Promise<string>;
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
+  setWindowOpacity(value: number): Promise<void>;
 }
 
 declare global {
@@ -70,12 +74,20 @@ export class ElectronBackend implements Backend {
     return this.api.readTextFile(path);
   }
 
+  async writeTextFile(path: string, content: string): Promise<void> {
+    return this.api.writeTextFile(path, content);
+  }
+
   async readDir(path: string): Promise<FileEntry[]> {
     return this.api.readDir(path);
   }
 
   async listDrives(): Promise<DriveEntry[]> {
     return this.api.listDrives();
+  }
+
+  async revealInFileManager(path: string, isDirectory: boolean): Promise<void> {
+    return this.api.revealInFileManager(path, isDirectory);
   }
 
   async clipboardHasImage(): Promise<boolean> {
@@ -95,6 +107,10 @@ export class ElectronBackend implements Backend {
     return this.api.watchDir(home, cb);
   }
 
+  async onOpenPath(cb: (path: string) => void): Promise<UnlistenFn> {
+    return this.api.onOpenPath(cb);
+  }
+
   async getHomePath(): Promise<string> {
     return this.api.getHomePath();
   }
@@ -111,5 +127,9 @@ export class ElectronBackend implements Backend {
     cb: (value: boolean) => void
   ): Promise<UnlistenFn> {
     return this.api.onFullscreenChange(cb);
+  }
+
+  async setWindowOpacity(value: number): Promise<void> {
+    return this.api.setWindowOpacity(value);
   }
 }

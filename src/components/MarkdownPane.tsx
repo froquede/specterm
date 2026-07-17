@@ -1,4 +1,12 @@
-import { createSignal, createEffect, onMount, onCleanup } from "solid-js";
+import {
+  createSignal,
+  createEffect,
+  onMount,
+  onCleanup,
+  untrack,
+  Show,
+} from "solid-js";
+import type { EditorView } from "@codemirror/view";
 import { getBackend } from "../backends";
 import { renderMarkdown, renderMermaidBlocks } from "../lib/markdown";
 import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
@@ -11,35 +19,180 @@ interface MarkdownPaneProps {
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
 }
 
+// Unsaved edits are auto-persisted as a "draft" in localStorage, keyed by file
+// path. localStorage is synchronous and cheap for small text, so this costs
+// effectively nothing — and it means unsaved work survives everything that would
+// otherwise drop it: a cross-tab pane move (which recreates the component), a
+// reload, or closing the app. The draft is written debounced while editing (and
+// flushed on unmount), consulted on load, and cleared on save.
+const DRAFT_PREFIX = "specterm.mddraft:";
+const draftKey = (filePath: string) => DRAFT_PREFIX + filePath;
+function readDraft(filePath: string): string | null {
+  try {
+    return localStorage.getItem(draftKey(filePath));
+  } catch {
+    return null;
+  }
+}
+function writeDraft(filePath: string, content: string) {
+  try {
+    localStorage.setItem(draftKey(filePath), content);
+  } catch {
+    // localStorage full/unavailable — the edit just won't survive a hard close.
+  }
+}
+function clearDraft(filePath: string) {
+  try {
+    localStorage.removeItem(draftKey(filePath));
+  } catch {
+    /* ignore */
+  }
+}
+
 export default function MarkdownPane(props: MarkdownPaneProps) {
   let contentRef!: HTMLDivElement;
   let searchInputRef!: HTMLInputElement;
+  let editorRef!: HTMLDivElement;
   const [content, setContent] = createSignal("");
   const [error, setError] = createSignal<string | null>(null);
   const [searchOpen, setSearchOpen] = createSignal(false);
   const [searchQuery, setSearchQuery] = createSignal("");
   const [matchCount, setMatchCount] = createSignal(0);
   const [currentMatch, setCurrentMatch] = createSignal(0);
+  // "read" = rendered preview (default); "edit" = CodeMirror live-preview.
+  const [mode, setMode] = createSignal<"read" | "edit">("read");
+  // Text on disk (in memory). content() may run ahead of it with unsaved edits;
+  // dirty is the difference.
+  const [savedText, setSavedText] = createSignal("");
+  const [dirty, setDirty] = createSignal(false);
+
+  // Live CodeMirror instance while in edit mode (null in read mode).
+  let editorView: EditorView | null = null;
 
   // Store the original rendered HTML so we can re-highlight without re-rendering
   let renderedHtml = "";
 
-  async function loadFile() {
+  // `force` re-reads from disk and discards any draft (the Refresh button); the
+  // default honors a persisted draft so unsaved edits survive a move/reload.
+  async function loadFile(force = false) {
     try {
       setError(null);
       const backend = await getBackend();
       const text = await backend.readTextFile(props.filePath);
-      setContent(text);
+      setSavedText(text);
+
+      const draft = force ? null : readDraft(props.filePath);
+      // A draft that already matches disk is stale (saved elsewhere) — drop it.
+      if (draft !== null && draft === text) clearDraft(props.filePath);
+      const initial = draft !== null && draft !== text ? draft : text;
+
+      setContent(initial);
+      setDirty(initial !== text);
+      // If the editor is open, replace its buffer with the loaded content.
+      if (editorView) {
+        editorView.dispatch({
+          changes: {
+            from: 0,
+            to: editorView.state.doc.length,
+            insert: initial,
+          },
+        });
+      }
     } catch (e) {
       setError(`Failed to read file: ${props.filePath}\n${e}`);
     }
   }
 
+  async function save() {
+    if (!editorView) return;
+    const text = editorView.state.doc.toString();
+    try {
+      const backend = await getBackend();
+      await backend.writeTextFile(props.filePath, text);
+      setSavedText(text);
+      setContent(text);
+      setDirty(false);
+      clearDraft(props.filePath);
+    } catch (e) {
+      setError(`Failed to save file: ${props.filePath}\n${e}`);
+    }
+  }
+
+  // Persist the current buffer as a draft, debounced so keystrokes don't hammer
+  // localStorage. A buffer that matches disk clears the draft instead.
+  let draftTimer: number | null = null;
+  function persistDraft(buffer: string) {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = window.setTimeout(() => {
+      if (buffer === savedText()) clearDraft(props.filePath);
+      else writeDraft(props.filePath, buffer);
+    }, 400);
+  }
+
+  function toggleMode() {
+    setMode((m) => (m === "read" ? "edit" : "read"));
+  }
+
+  // Mount/unmount CodeMirror as the mode toggles. content() is read untracked so
+  // a save() (which updates content) doesn't tear down and rebuild the editor.
+  //
+  // CodeMirror is ~500 KB, so it's loaded lazily on the FIRST switch to edit
+  // mode — a fast terminal must not pay for the editor at startup (mirrors the
+  // lazy mermaid/highlight.js chunks). The doc is captured synchronously; the
+  // view is created once the chunk resolves, unless the effect already cleaned
+  // up (mode flipped back before the import landed).
+  createEffect(() => {
+    if (mode() !== "edit" || !editorRef) return;
+    const initialDoc = untrack(content);
+    let view: EditorView | null = null;
+    let disposed = false;
+    import("../lib/markdown-editor").then(({ createMarkdownEditor }) => {
+      if (disposed || !editorRef) return;
+      view = createMarkdownEditor({
+        doc: initialDoc,
+        parent: editorRef,
+        onDocChanged: (v) => {
+          const buffer = v.state.doc.toString();
+          setDirty(buffer !== savedText());
+          persistDraft(buffer);
+        },
+        onSave: save,
+      });
+      editorView = view;
+      view.focus();
+    });
+    onCleanup(() => {
+      disposed = true;
+      if (view) {
+        // Carry the (possibly unsaved) buffer back so the reader previews it.
+        setContent(view.state.doc.toString());
+        view.destroy();
+        editorView = null;
+      }
+    });
+  });
+
   onMount(() => {
+    // loadFile() restores a persisted draft when there is one, so a pane moved
+    // between tabs (or reopened after a reload/close) comes back with its unsaved
+    // edits rather than the on-disk copy.
     loadFile();
   });
 
+  // Flush the draft synchronously on unmount if still dirty, in case the debounce
+  // hadn't fired (e.g. a fast cross-tab move right after a keystroke). Read the
+  // live editor if it's up, else the buffer the editor effect's cleanup carried
+  // back into content().
+  onCleanup(() => {
+    if (draftTimer) clearTimeout(draftTimer);
+    if (!dirty()) return;
+    const buffer = editorView ? editorView.state.doc.toString() : content();
+    if (buffer !== savedText()) writeDraft(props.filePath, buffer);
+  });
+
   createEffect(async () => {
+    // Only the read view renders HTML; the editor owns the DOM in edit mode.
+    if (mode() !== "read") return;
     const md = content();
     if (!md || !contentRef) return;
 
@@ -226,7 +379,25 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     // Ignore when another pane is focused: the listener is global (window), so
     // without this guard every mounted markdown pane would react to one ⌘F.
     if (!props.isActive) return;
-    if (matchesCmd(e) && e.key.toLowerCase() === "f") {
+    if (!matchesCmd(e)) return;
+    const key = e.key.toLowerCase();
+
+    // ⌘E toggles read/edit from either mode.
+    if (key === "e") {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMode();
+      return;
+    }
+    // ⌘S saves — only meaningful while editing.
+    if (key === "s" && mode() === "edit") {
+      e.preventDefault();
+      e.stopPropagation();
+      save();
+      return;
+    }
+    // ⌘F toggles find — read mode only (the editor handles its own keys).
+    if (key === "f" && mode() === "read") {
       e.preventDefault();
       e.stopPropagation();
       if (searchOpen()) {
@@ -249,21 +420,45 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   return (
     <div class="markdown-pane">
       <div class="markdown-toolbar">
-        <span class="markdown-filepath">{props.filePath}</span>
+        <span class="markdown-filepath">
+          {dirty() ? "● " : ""}
+          {props.filePath}
+        </span>
         <div class="markdown-toolbar-actions">
+          <Show when={mode() === "edit"}>
+            <button
+              class="markdown-toolbar-btn"
+              onClick={save}
+              disabled={!dirty()}
+              title={`Save (${shortcutLabel("S")})`}
+            >
+              Save
+            </button>
+          </Show>
           <button
             class="markdown-toolbar-btn"
-            onClick={() => (searchOpen() ? closeSearch() : openSearch())}
-            title={`Search (${shortcutLabel("F")})`}
+            onClick={toggleMode}
+            title={`${mode() === "read" ? "Edit" : "Preview"} (${shortcutLabel("E")})`}
           >
-            Search
+            {mode() === "read" ? "Edit" : "Preview"}
           </button>
-          <button class="markdown-toolbar-btn" onClick={loadFile}>
-            Refresh
-          </button>
+          <Show when={mode() === "read"}>
+            <button
+              class="markdown-toolbar-btn"
+              onClick={() => (searchOpen() ? closeSearch() : openSearch())}
+              title={`Search (${shortcutLabel("F")})`}
+            >
+              Search
+            </button>
+            {/* Refresh re-reads from disk (discarding any draft), so it's
+                read-mode only — in edit mode it would drop unsaved changes. */}
+            <button class="markdown-toolbar-btn" onClick={() => loadFile(true)}>
+              Refresh
+            </button>
+          </Show>
         </div>
       </div>
-      {searchOpen() && (
+      {mode() === "read" && searchOpen() && (
         <div class="markdown-search">
           <input
             ref={searchInputRef}
@@ -302,11 +497,13 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
           </button>
         </div>
       )}
-      {error() ? (
-        <div class="markdown-error">{error()}</div>
-      ) : (
+      {error() && <div class="markdown-error">{error()}</div>}
+      <Show when={mode() === "edit"}>
+        <div ref={editorRef} class="markdown-editor" />
+      </Show>
+      <Show when={mode() === "read"}>
         <div ref={contentRef} class="markdown-content" onClick={handleContentClick} />
-      )}
+      </Show>
     </div>
   );
 }

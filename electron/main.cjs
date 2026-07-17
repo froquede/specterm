@@ -4,6 +4,7 @@ const os = require("os");
 const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
+const { execFile } = require("child_process");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -84,6 +85,76 @@ let nextPtyId = 1;
 let mainWindow = null;
 let fsWatcher = null;
 
+// Files the OS asked us to open (Finder "Open With", double-click, or a CLI
+// path arg) that may arrive before the renderer has finished loading — macOS
+// fires `open-file` even before `app` is ready. Queue them and drain once the
+// renderer is up; while it's up, send straight through.
+const pendingOpenPaths = [];
+let rendererReady = false;
+
+function openPath(filePath) {
+  if (!filePath) return;
+  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("open-path", filePath);
+  } else {
+    pendingOpenPaths.push(filePath);
+  }
+}
+
+function flushOpenPaths() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  rendererReady = true;
+  while (pendingOpenPaths.length) {
+    mainWindow.webContents.send("open-path", pendingOpenPaths.shift());
+  }
+}
+
+// Pull a markdown file path out of a process argv array — the Windows/Linux way
+// the OS passes a double-clicked/"Open With" file (cold start via process.argv,
+// warm start via the second-instance event). Scan for the first existing *.md.
+// macOS uses the `open-file` event instead, so this never runs there.
+function markdownPathFromArgv(argv) {
+  for (const arg of argv.slice(1)) {
+    if (typeof arg === "string" && arg.toLowerCase().endsWith(".md")) {
+      try {
+        if (fs.existsSync(arg)) return arg;
+      } catch {
+        // ignore unreadable args
+      }
+    }
+  }
+  return null;
+}
+
+// macOS delivers "Open With"/double-click through this event, which can fire
+// before the app is ready and before any window exists. Register it at module
+// scope (not inside whenReady) and let openPath() queue until the renderer is
+// up. preventDefault stops Electron's default (which would otherwise warn).
+app.on("open-file", (event, filePath) => {
+  event.preventDefault();
+  openPath(filePath);
+});
+
+// Windows/Linux: a second launch (e.g. double-clicking another .md) starts a
+// fresh process. Take a single-instance lock so that process forwards its file
+// to the already-running window instead of opening a duplicate. macOS routes
+// through `open-file` above and doesn't need this.
+const singleInstanceOk =
+  process.platform === "darwin" || app.requestSingleInstanceLock();
+
+if (!singleInstanceOk) {
+  app.quit();
+} else if (process.platform !== "darwin") {
+  app.on("second-instance", (_event, argv) => {
+    const p = markdownPathFromArgv(argv);
+    if (p) openPath(p);
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+}
+
 function createWindow() {
   const isMac = process.platform === "darwin";
 
@@ -115,12 +186,21 @@ function createWindow() {
   // Remove menu bar entirely
   mainWindow.setMenuBarVisibility(false);
 
+  // Fresh window: the renderer hasn't attached its open-path listener yet, so
+  // any queued file waits until did-finish-load flushes it below.
+  rendererReady = false;
+
   // In dev, connect to Vite dev server; in prod, load built files
   if (process.env.VITE_DEV_SERVER_URL) {
     mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
   }
+
+  // Once the renderer is loaded, hand it any files queued while it booted (and
+  // mark it ready so later open-file events go straight through). Fires again on
+  // reloads — harmless, the queue is empty by then.
+  mainWindow.webContents.on("did-finish-load", flushOpenPaths);
 
   // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
@@ -246,6 +326,10 @@ ipcMain.handle("read-text-file", async (_event, filePath) => {
   return fs.promises.readFile(filePath, "utf-8");
 });
 
+ipcMain.handle("write-text-file", async (_event, filePath, content) => {
+  return fs.promises.writeFile(filePath, content, "utf-8");
+});
+
 ipcMain.handle("read-dir", async (_event, dirPath) => {
   const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
   return entries.map((e) => ({
@@ -273,6 +357,20 @@ ipcMain.handle("list-drives", async () => {
     })
   );
   return checks.filter(Boolean);
+});
+
+// Reveal a path in the OS file manager (Explorer/Finder/the Linux default).
+// A directory opens itself; a file is shown selected inside its parent folder.
+// showItemInFolder is the cross-platform reveal; for a directory we prefer
+// openPath so it opens *into* the folder, falling back to a reveal if the OS
+// declines to open it (e.g. a path that no longer exists).
+ipcMain.handle("reveal-in-file-manager", async (_event, targetPath, isDirectory) => {
+  if (isDirectory) {
+    const err = await shell.openPath(targetPath);
+    if (err) shell.showItemInFolder(targetPath);
+  } else {
+    shell.showItemInFolder(targetPath);
+  }
 });
 
 // True when the OS clipboard holds a bitmap. The renderer uses this to decide
@@ -341,6 +439,57 @@ ipcMain.handle("set-fullscreen", (_event, value) => {
   }
 });
 
+// Whole-window alpha so the desktop shows through the terminal. Clamp to
+// [0.3, 1] — the same floor the renderer enforces — so a bad value can never
+// render the window invisible and unrecoverable.
+//
+// Windows/macOS honor BrowserWindow.setOpacity natively. On Linux/X11 that call
+// is a no-op (Electron never sets the property the compositor reads), so we set
+// _NET_WM_WINDOW_OPACITY on our own window ourselves via xprop — the value a
+// compositing WM (Mutter, KWin, picom…) applies. Best-effort: on a bare X11
+// session with no compositor, or without x11-utils installed, it simply doesn't
+// dim, exactly as before.
+function setX11WindowOpacity(win, opacity) {
+  let xid;
+  try {
+    // getNativeWindowHandle returns the window's own X11 id (little-endian in
+    // the buffer) — set the property on THIS window, never a name match.
+    const handle = win.getNativeWindowHandle();
+    if (handle.length < 4) return;
+    xid = handle.readUInt32LE(0);
+  } catch {
+    return;
+  }
+  // _NET_WM_WINDOW_OPACITY is a 32-bit CARDINAL: 0xFFFFFFFF = opaque.
+  const cardinal = Math.round(0xffffffff * opacity) >>> 0;
+  execFile(
+    "xprop",
+    [
+      "-id",
+      `0x${xid.toString(16)}`,
+      "-f",
+      "_NET_WM_WINDOW_OPACITY",
+      "32c",
+      "-set",
+      "_NET_WM_WINDOW_OPACITY",
+      String(cardinal),
+    ],
+    () => {
+      /* xprop missing or failed — leave the window opaque. */
+    }
+  );
+}
+
+ipcMain.handle("set-window-opacity", (_event, value) => {
+  if (!mainWindow) return;
+  const n = Number(value);
+  const opacity = Number.isFinite(n) ? Math.min(1, Math.max(0.3, n)) : 1;
+  mainWindow.setOpacity(opacity); // Windows/macOS
+  if (process.platform === "linux") {
+    setX11WindowOpacity(mainWindow, opacity);
+  }
+});
+
 // === Application menu ===
 // Minimal menu so the OS default accelerators (⌘C/⌘V/⌘W/⌘T/⌘D) don't get
 // captured by the menu — those are handled in the renderer as terminal
@@ -389,12 +538,24 @@ const GRANTED_PERMISSIONS = new Set([
 ]);
 
 app.whenReady().then(() => {
+  // Lost the single-instance race (Windows/Linux): the running instance already
+  // got our file via second-instance, so this process is quitting — don't build
+  // a second window.
+  if (!singleInstanceOk) return;
+
   session.defaultSession.setPermissionRequestHandler(
     (_wc, permission, callback) => callback(GRANTED_PERMISSIONS.has(permission))
   );
   session.defaultSession.setPermissionCheckHandler((_wc, permission) =>
     GRANTED_PERMISSIONS.has(permission)
   );
+
+  // Windows/Linux cold start: the launched-with file arrives as an argv path.
+  // (macOS already queued it via the open-file event before we got here.)
+  if (process.platform !== "darwin") {
+    const p = markdownPathFromArgv(process.argv);
+    if (p) openPath(p);
+  }
 
   buildAppMenu();
   createWindow();

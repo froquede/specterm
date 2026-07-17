@@ -6,7 +6,9 @@ import {
   For,
   Show,
   onMount,
+  onCleanup,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
 import { isAccelClick, os } from "../lib/platform";
@@ -81,6 +83,13 @@ export default function FileTree(props: FileTreeProps) {
   const [home, setHome] = createSignal("");
   const [filter, setFilter] = createSignal("");
   const [selectedIndex, setSelectedIndex] = createSignal(0);
+  // Right-click context menu: the row it targets plus where to anchor it
+  // (viewport coordinates, since it's portalled to <body>). Null = closed.
+  const [menu, setMenu] = createSignal<{
+    x: number;
+    y: number;
+    entry: DirEntry;
+  } | null>(null);
   let listEl: HTMLDivElement | undefined;
 
   // Directory listing — skipped (falsy source) while the drive list is showing.
@@ -179,7 +188,10 @@ export default function FileTree(props: FileTreeProps) {
   function activateEntry(entry: DirEntry, mode: "split" | "tab") {
     if (entry.isDirectory) {
       navigateTo(entry.path);
-    } else if (entry.name.endsWith(".md")) {
+    } else {
+      // Any file opens — markdown renders as a preview, everything else in the
+      // read-only text viewer (which refuses binaries itself). See App's
+      // handleOpenFile.
       props.onOpenFile(entry.path, mode);
     }
   }
@@ -187,6 +199,71 @@ export default function FileTree(props: FileTreeProps) {
   function handleClick(entry: DirEntry, e: MouseEvent) {
     activateEntry(entry, isAccelClick(e) ? "tab" : "split");
   }
+
+  // Right-click a row: select it and open the context menu at the pointer,
+  // clamped so it never spills past the bottom/right window edge.
+  function openMenu(entry: DirEntry, index: number, e: MouseEvent) {
+    e.preventDefault();
+    setSelectedIndex(index);
+    const MENU_W = 220;
+    const MENU_H = 220;
+    const x = Math.max(4, Math.min(e.clientX, window.innerWidth - MENU_W));
+    const y = Math.max(4, Math.min(e.clientY, window.innerHeight - MENU_H));
+    setMenu({ x, y, entry });
+  }
+
+  const closeMenu = () => setMenu(null);
+
+  async function copyText(text: string) {
+    const backend = await getBackend();
+    await backend.clipboardWriteText(text);
+  }
+
+  // Context-menu actions. Each closes the menu; "open terminal here" cds into a
+  // directory itself, or into a file's containing folder.
+  function revealEntry(entry: DirEntry) {
+    getBackend().then((b) => b.revealInFileManager(entry.path, entry.isDirectory));
+    closeMenu();
+  }
+
+  function cdToEntry(entry: DirEntry) {
+    props.onCdPath(entry.isDirectory ? entry.path : dirname(entry.path));
+    closeMenu();
+  }
+
+  function copyEntryPath(entry: DirEntry) {
+    copyText(entry.path);
+    closeMenu();
+  }
+
+  function copyEntryName(entry: DirEntry) {
+    copyText(entry.name);
+    closeMenu();
+  }
+
+  function toggleEntryFavorite(entry: DirEntry) {
+    toggleFavorite(entry.path);
+    closeMenu();
+  }
+
+  // While the menu is open, dismiss it on any outside interaction: a click or
+  // right-click elsewhere, scrolling the list, resizing, or Escape. Listeners
+  // are attached only while open and torn down on close/unmount.
+  createEffect(() => {
+    if (!menu()) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closeMenu();
+    };
+    const onScroll = () => closeMenu();
+    window.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", onScroll, true);
+    listEl?.addEventListener("scroll", onScroll, true);
+    onCleanup(() => {
+      window.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", onScroll, true);
+      listEl?.removeEventListener("scroll", onScroll, true);
+    });
+  });
 
   // Memoized: filter runs once per (rows, filter) change instead of on each
   // of its call sites (For, ghost text, the selection effect, key handlers).
@@ -452,8 +529,8 @@ export default function FileTree(props: FileTreeProps) {
                 <For each={filteredEntries()}>
                   {(entry, index) => {
                     const isMd = !entry.isDirectory && entry.name.endsWith(".md");
-                    const isClickable = entry.isDirectory || isMd;
-
+                    // Everything is openable now: directories navigate, files
+                    // open in a viewer. Markdown keeps its own icon/accent.
                     return (
                       <div
                         class={`file-tree-entry ${
@@ -463,7 +540,8 @@ export default function FileTree(props: FileTreeProps) {
                               ? "file-tree-md"
                               : "file-tree-other"
                         }${index() === selectedIndex() ? " is-selected" : ""}`}
-                        onClick={(e) => isClickable && handleClick(entry, e)}
+                        onClick={(e) => handleClick(entry, e)}
+                        onContextMenu={(e) => openMenu(entry, index(), e)}
                         onMouseEnter={() => setSelectedIndex(index())}
                         title={entry.path}
                       >
@@ -512,6 +590,78 @@ export default function FileTree(props: FileTreeProps) {
             </div>
           </Show>
         </div>
+
+        {/* Right-click context menu. Portalled to <body> so it escapes the
+            sidebar's overflow clipping and can sit anywhere over the window. A
+            full-viewport backdrop swallows the next click/right-click to
+            dismiss it (and blocks it from reaching whatever is underneath). */}
+        <Show when={menu()}>
+          {(m) => (
+            <Portal>
+              <div
+                class="file-tree-menu-backdrop"
+                onClick={closeMenu}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  closeMenu();
+                }}
+              >
+                <div
+                  class="file-tree-context-menu"
+                  style={{ left: `${m().x}px`, top: `${m().y}px` }}
+                  onClick={(e) => e.stopPropagation()}
+                  onContextMenu={(e) => e.stopPropagation()}
+                >
+                  <button
+                    class="file-tree-menu-item"
+                    data-action="reveal"
+                    onClick={() => revealEntry(m().entry)}
+                  >
+                    {WIN
+                      ? "Reveal in Explorer"
+                      : os === "mac"
+                        ? "Reveal in Finder"
+                        : "Reveal in file manager"}
+                  </button>
+                  <button
+                    class="file-tree-menu-item"
+                    data-action="cd"
+                    onClick={() => cdToEntry(m().entry)}
+                  >
+                    Open terminal here
+                  </button>
+                  <div class="file-tree-menu-sep" />
+                  <button
+                    class="file-tree-menu-item"
+                    data-action="copy-path"
+                    onClick={() => copyEntryPath(m().entry)}
+                  >
+                    Copy path
+                  </button>
+                  <button
+                    class="file-tree-menu-item"
+                    data-action="copy-name"
+                    onClick={() => copyEntryName(m().entry)}
+                  >
+                    Copy name
+                  </button>
+                  <Show when={m().entry.isDirectory}>
+                    <div class="file-tree-menu-sep" />
+                    <button
+                      class="file-tree-menu-item"
+                      data-action="favorite"
+                      onClick={() => toggleEntryFavorite(m().entry)}
+                    >
+                      {isFav(m().entry.path)
+                        ? "Remove from favorites"
+                        : "Add to favorites"}
+                    </button>
+                  </Show>
+                </div>
+              </div>
+            </Portal>
+          )}
+        </Show>
       </div>
     </Show>
   );

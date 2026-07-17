@@ -139,6 +139,15 @@ export function createKeymap({
           store.setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
       },
     },
+    // Rename the active tab (tmux rename-window, ⌘R / Ctrl+Shift+R) — opens
+    // the inline editor in TabBar; see store.startRenameTab.
+    {
+      id: "tab.rename",
+      key: "r",
+      ...cmd(),
+      label: "Rename tab",
+      run: () => store.startRenameTab(),
+    },
 
     // Splits — ⌘D adds a stacked pane ("v" = column), ⌘⇧D a side-by-side one
     // ("h" = row). (Inverted vs Ghostty, where ⌘D splits to the right.)
@@ -169,30 +178,29 @@ export function createKeymap({
       },
     },
 
-    // Pane focus — ⌘⌥→ / ⌘⌥← cycle the active pane in layout order, then pull
-    // keyboard focus into it.
-    {
-      id: "pane.focusNext",
-      key: "ArrowRight",
-      ...cmd({ code: "ArrowRight" }),
+    // Pane focus — ⌥+arrow moves focus to the pane visually adjacent in that
+    // direction (spatial, not tree order), then pulls keyboard focus into it.
+    // The same chord on every OS: bare Ctrl+arrow / Ctrl+Shift+arrow are spoken
+    // for (terminal / tab-switch), and Ctrl+Alt+arrow is grabbed by most Linux
+    // desktops' workspace switcher — Alt+arrow reliably reaches the app.
+    ...(
+      [
+        { id: "pane.focusLeft", code: "ArrowLeft", dir: "left" },
+        { id: "pane.focusRight", code: "ArrowRight", dir: "right" },
+        { id: "pane.focusUp", code: "ArrowUp", dir: "up" },
+        { id: "pane.focusDown", code: "ArrowDown", dir: "down" },
+      ] as const
+    ).map(({ id, code, dir }) => ({
+      id,
+      key: code,
+      code,
       alt: true,
-      label: "Focus next pane",
+      label: `Focus pane ${dir}`,
       run: () => {
-        store.focusRelativePane(1);
+        store.focusDirectionalPane(dir);
         focusActivePane();
       },
-    },
-    {
-      id: "pane.focusPrev",
-      key: "ArrowLeft",
-      ...cmd({ code: "ArrowLeft" }),
-      alt: true,
-      label: "Focus previous pane",
-      run: () => {
-        store.focusRelativePane(-1);
-        focusActivePane();
-      },
-    },
+    })),
 
     // Clipboard
     {

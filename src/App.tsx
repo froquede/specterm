@@ -1,5 +1,6 @@
 import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
 import { useTabStore } from "./stores/tabs";
+import { getBackend } from "./backends";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
 import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
@@ -122,6 +123,23 @@ export default function App() {
     }
   }
 
+  // Markdown gets the rendered preview; every other text file opens in the
+  // read-only viewer. Extension-only routing keeps this cheap and predictable —
+  // TextPane itself decides whether the bytes are actually viewable.
+  const isMarkdownPath = (p: string) => /\.(md|markdown)$/i.test(p);
+
+  function handleOpenFile(path: string, mode: "split" | "tab") {
+    if (isMarkdownPath(path)) {
+      handleOpenMarkdown(path, mode);
+      return;
+    }
+    if (mode === "tab") {
+      store.createTextTab(path);
+    } else {
+      store.splitActivePane("h", { kind: "text" as const, filePath: path });
+    }
+  }
+
   // Move keyboard focus back into the active tab's terminal (or, if that pane
   // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
   function focusActivePane() {
@@ -158,6 +176,23 @@ export default function App() {
 
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);
+
+    // Open markdown files handed to us by the OS (Finder "Open With",
+    // double-click, or a path arg) in a new tab. The main process queues files
+    // that arrive before this listener attaches and replays them here.
+    let unlistenOpenPath: (() => void) | undefined;
+    getBackend().then((backend) =>
+      backend
+        .onOpenPath((filePath) => {
+          if (filePath.toLowerCase().endsWith(".md")) {
+            handleOpenMarkdown(filePath, "tab");
+          }
+        })
+        .then((un) => {
+          unlistenOpenPath = un;
+        })
+    );
+    onCleanup(() => unlistenOpenPath?.());
 
     // Drag a base16 theme file (.yaml/.json) onto the window to import it. Only
     // OS file drops are intercepted — internal pane drags don't carry a "Files"
@@ -200,17 +235,24 @@ export default function App() {
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
         sidebarOpen={store.state.sidebarView === "files"}
+        renamingTabId={store.state.renamingTabId}
         onSelect={(id) => store.setActiveTab(id)}
         onClose={(id) => store.closeTab(id)}
         onCreate={() => store.createTab()}
         onToggleSidebar={() => store.toggleSidebarView("files")}
         onOpenSettings={toggleSettings}
+        onStartRename={(id) => store.startRenameTab(id)}
+        onCommitRename={(id, title) => store.commitRenameTab(id, title)}
+        onCancelRename={() => store.cancelRenameTab()}
+        onReorder={(source, target, before) =>
+          store.moveTab(source, target, before)
+        }
         settingsOpen={settingsOpen()}
       />
       <div class="app-body">
         <FileTree
           open={store.state.sidebarView === "files"}
-          onOpenFile={handleOpenMarkdown}
+          onOpenFile={handleOpenFile}
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
         />
@@ -245,6 +287,12 @@ export default function App() {
                   // The state update already moved the active-pane highlight to
                   // sourceId; pull keyboard focus there too, deterministically,
                   // once the moved terminal has settled into its new DOM slot.
+                  requestAnimationFrame(() => focusPaneReliably(sourceId));
+                }}
+                onDropPaneToTab={(sourceId, tabId) => {
+                  store.movePaneToTab(sourceId, tabId);
+                  // The moved pane is now the target tab's active pane; bring
+                  // keyboard focus with it once it lands in the newly shown tab.
                   requestAnimationFrame(() => focusPaneReliably(sourceId));
                 }}
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}

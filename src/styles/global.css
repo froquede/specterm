@@ -133,6 +133,7 @@ body,
 }
 
 .tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -146,6 +147,12 @@ body,
   transition: color 0.2s ease, background 0.2s ease;
 }
 
+/* The tab currently being dragged to reorder — dimmed so the drop-indicator
+   on its neighbours reads as the thing that will move. */
+.tab.dragging {
+  opacity: 0.5;
+}
+
 .tab:hover {
   color: var(--fg);
   background: var(--bg-hover);
@@ -155,6 +162,14 @@ body,
   color: var(--fg);
   background: var(--bg);
   border-bottom: 2px solid var(--accent);
+}
+
+/* A dragged pane is hovering this chip — releasing detaches the pane into this
+   tab. Signal it as a live drop target, distinct from the plain hover state. */
+.tab.drop-tab {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 /* The accent marker sits on the edge facing the panes. */
@@ -167,6 +182,19 @@ body,
   max-width: 150px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* Inline rename editor — swaps in for .tab-title, same box, no input chrome. */
+.tab-title-input {
+  max-width: 150px;
+  width: 120px;
+  font: inherit;
+  color: inherit;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  padding: 1px 4px;
+  outline: none;
 }
 
 .tab-close {
@@ -773,6 +801,26 @@ body,
 }
 .drop-indicator-bottom {
   inset: 50% 0 0 0;
+}
+
+/* Drop-zone indicator shown on a tab's leading/trailing edge while another
+   tab is being dragged over it, previewing where it will land. */
+.tab-drop-indicator {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent);
+  pointer-events: none;
+  z-index: 40;
+}
+
+.tab-drop-indicator.before {
+  left: 0;
+}
+
+.tab-drop-indicator.after {
+  right: 0;
 }
 
 /* In-terminal find bar (⌘F / Ctrl+Shift+F), floated over the active pane. */

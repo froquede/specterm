@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { execSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -148,6 +149,12 @@ try {
   // so no clean-slate reset is needed.
   await win.waitForTimeout(1500);
 
+  // OS-clipboard ground truth, read/written from the Electron main process —
+  // what an external app would actually see. Used by the context-menu copy
+  // checks and the clipboard-reliability section further down.
+  const readOsClip = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  const writeOsClip = (t) => app.evaluate(({ clipboard }, text) => clipboard.writeText(text), t);
+
   const s0 = await state(win);
   const home = s0.crumbTitle;
   check("sidebar opens at home", !!home && (WIN ? /:/.test(home) : home.startsWith("/")), home);
@@ -264,6 +271,85 @@ try {
     check("cd fav-N expands to the favorite path", eqPath(cwdFav, joinPath(favBase, favDir)), `expected=${joinPath(favBase, favDir)} cwd=${cwdFav} favs=${favLS}`);
   } else {
     skip("cd fav-N expands to the favorite path", "no favoritable subdirectory");
+  }
+
+  // 6b2) v0.12.0 — right-click context menu on a file-tree row. Its OS actions
+  // are proved by ground truth, not by watching a file manager pop: copy writes
+  // to the *OS* clipboard (read from the main process), "open terminal here"
+  // moves the pty cwd, and reveal is asserted by intercepting the main-process
+  // shell call so no real Explorer/Finder window opens during the run.
+  const cm0 = await state(win);
+  const cmDir =
+    ["Windows", "usr", "etc", "Users", "home"].find((n) => cm0.dirNames.includes(n)) ||
+    cm0.dirNames.find((n) => n && n !== ".." && !n.startsWith("$") && !n.startsWith("."));
+  if (cmDir) {
+    const cmBase = cm0.crumbTitle;
+    const cmTarget = joinPath(cmBase, cmDir);
+    const cmEntry = win
+      .locator(".file-tree-content .file-tree-entry", {
+        has: win.locator(".file-tree-name", { hasText: rx(cmDir) }),
+      })
+      .first();
+
+    // Neutralise the real reveal so CI never spawns a file-manager window; the
+    // stub records the path the app asked to reveal so we can assert on it.
+    await app.evaluate(({ shell }) => {
+      globalThis.__revealArg = null;
+      shell.showItemInFolder = (p) => { globalThis.__revealArg = p; };
+      shell.openPath = (p) => { globalThis.__revealArg = p; return Promise.resolve(""); };
+    });
+
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(300);
+    check("right-click opens the row context menu", await win.locator(".file-tree-context-menu").isVisible());
+
+    // Copy path → the OS clipboard holds the row's absolute path.
+    await writeOsClip("<<STALE>>");
+    await win.locator('.file-tree-menu-item[data-action="copy-path"]').click();
+    await win.waitForTimeout(300);
+    const cmPath = await readOsClip();
+    check("context menu: Copy path writes the row path", eqPath(cmPath, cmTarget), `clip=${cmPath} want=${cmTarget}`);
+    check("context menu closes after an action", !(await win.locator(".file-tree-context-menu").isVisible()));
+
+    // Copy name → just the basename.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await writeOsClip("<<STALE>>");
+    await win.locator('.file-tree-menu-item[data-action="copy-name"]').click();
+    await win.waitForTimeout(300);
+    const cmName = await readOsClip();
+    check("context menu: Copy name writes the row name", cmName === cmDir, `clip=${cmName} want=${cmDir}`);
+
+    // Reveal → the app asks the OS to reveal exactly this path.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await win.locator('.file-tree-menu-item[data-action="reveal"]').click();
+    await win.waitForTimeout(400);
+    const cmReveal = await app.evaluate(() => globalThis.__revealArg);
+    check("context menu: Reveal calls the OS file manager with the path", eqPath(cmReveal, cmTarget), `arg=${cmReveal} want=${cmTarget}`);
+
+    // Open terminal here → the active pane's shell cds into the directory.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await win.locator('.file-tree-menu-item[data-action="cd"]').click();
+    await win.waitForTimeout(1500);
+    const cmCwd = await terminalCwd(win, "ctxcd");
+    check("context menu: Open terminal here cds the terminal", eqPath(cmCwd, cmTarget), `cwd=${cmCwd} want=${cmTarget}`);
+
+    // Escape (and an outside click) dismiss the menu.
+    await cmEntry.click({ button: "right" });
+    await win.waitForTimeout(200);
+    await win.keyboard.press("Escape");
+    await win.waitForTimeout(200);
+    check("context menu: Escape dismisses it", !(await win.locator(".file-tree-context-menu").isVisible()));
+  } else {
+    skip("right-click opens the row context menu", "no safe subdirectory to target");
+    skip("context menu: Copy path writes the row path", "no safe subdirectory to target");
+    skip("context menu closes after an action", "no safe subdirectory to target");
+    skip("context menu: Copy name writes the row name", "no safe subdirectory to target");
+    skip("context menu: Reveal calls the OS file manager with the path", "no safe subdirectory to target");
+    skip("context menu: Open terminal here cds the terminal", "no safe subdirectory to target");
+    skip("context menu: Escape dismisses it", "no safe subdirectory to target");
   }
 
   // 6c) PR #16 — root-edge drag-and-drop. Split side-by-side, then drag the
@@ -469,8 +555,7 @@ try {
   // the Electron main process — the ground truth an external app would see), and
   // paste must pull from it into the active pane. Regression guard for the
   // navigator.clipboard flakiness that made copy work "only inside the app".
-  const readOsClip = () => app.evaluate(({ clipboard }) => clipboard.readText());
-  const writeOsClip = (t) => app.evaluate(({ clipboard }, text) => clipboard.writeText(text), t);
+  // (readOsClip/writeOsClip are defined once near the top of the run.)
   const COPY_KEY = process.platform === "darwin" ? "Meta+C" : "Control+Shift+C";
   const PASTE_KEY = process.platform === "darwin" ? "Meta+Shift+V" : "Control+Shift+V";
 
@@ -563,6 +648,113 @@ try {
     skip("pane repaints after WebGL context loss", "no pane found");
   }
 
+  // 6h) Directional pane focus — ⌥+arrow moves focus to the pane visually
+  // adjacent in that direction (spatial, not tree order). Build a 2×2 grid,
+  // walk the four corners with the arrows, and confirm focus lands on the
+  // right neighbour; pressing into an outer edge is a no-op. The chord is the
+  // same on every OS (Alt+arrow); see keymap.ts.
+  const FOCUS_L = "Alt+ArrowLeft";
+  const FOCUS_R = "Alt+ArrowRight";
+  const FOCUS_U = "Alt+ArrowUp";
+  const FOCUS_D = "Alt+ArrowDown";
+  const activePaneId = () =>
+    win.evaluate(
+      () => document.querySelector(".pane-active")?.getAttribute("data-pane-id") ?? null
+    );
+  const cornerPanes = () =>
+    win.evaluate(() =>
+      Array.from(document.querySelectorAll("[data-pane-id]")).map((p) => {
+        const r = p.getBoundingClientRect();
+        return { id: p.getAttribute("data-pane-id"), cx: (r.left + r.right) / 2, cy: (r.top + r.bottom) / 2 };
+      })
+    );
+
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  let fp = await cornerPanes();
+  // Stacked split → two rows.
+  await focusPaneAt(fp[0].cx, fp[0].cy);
+  await win.keyboard.press(SPLIT_STACK);
+  await win.waitForTimeout(2000);
+  // Split the top row side-by-side.
+  fp = await cornerPanes();
+  const fTop = fp.reduce((a, b) => (a.cy < b.cy ? a : b));
+  await focusPaneAt(fTop.cx, fTop.cy);
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+  // Split the bottom row side-by-side → 2×2.
+  fp = await cornerPanes();
+  const fBottom = fp.reduce((a, b) => (a.cy > b.cy ? a : b));
+  await focusPaneAt(fBottom.cx, fBottom.cy);
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+
+  fp = await cornerPanes();
+  let TL, TR, BL, BR;
+  if (fp.length === 4) {
+    const xs = fp.map((p) => p.cx);
+    const ys = fp.map((p) => p.cy);
+    const midX = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const midY = (Math.min(...ys) + Math.max(...ys)) / 2;
+    const corner = (left, top) =>
+      fp.find((p) => p.cx < midX === left && p.cy < midY === top);
+    TL = corner(true, true);
+    TR = corner(false, true);
+    BL = corner(true, false);
+    BR = corner(false, false);
+  }
+  const grid2x2 = !!(TL && TR && BL && BR);
+  check(
+    "2×2 grid formed for directional focus",
+    grid2x2,
+    JSON.stringify(fp.map((p) => ({ cx: Math.round(p.cx), cy: Math.round(p.cy) })))
+  );
+
+  if (grid2x2) {
+    // Start at top-left, then trace a loop: right, down, left, up.
+    await focusPaneAt(TL.cx, TL.cy);
+    await win.waitForTimeout(250);
+
+    await win.keyboard.press(FOCUS_R);
+    await win.waitForTimeout(250);
+    const rId = await activePaneId();
+    check("⌥→ moves focus to the pane on the right", rId === TR.id, `active=${rId} expected TR=${TR.id}`);
+
+    await win.keyboard.press(FOCUS_D);
+    await win.waitForTimeout(250);
+    const dId = await activePaneId();
+    check("⌥↓ moves focus to the pane below", dId === BR.id, `active=${dId} expected BR=${BR.id}`);
+
+    await win.keyboard.press(FOCUS_L);
+    await win.waitForTimeout(250);
+    const lId = await activePaneId();
+    check("⌥← moves focus to the pane on the left", lId === BL.id, `active=${lId} expected BL=${BL.id}`);
+
+    await win.keyboard.press(FOCUS_U);
+    await win.waitForTimeout(250);
+    const uId = await activePaneId();
+    check("⌥↑ moves focus to the pane above", uId === TL.id, `active=${uId} expected TL=${TL.id}`);
+
+    // Outer edge: from the top-left pane, ⌥← and ⌥↑ have nowhere to go → no-op.
+    await win.keyboard.press(FOCUS_L);
+    await win.waitForTimeout(200);
+    const edgeL = await activePaneId();
+    await win.keyboard.press(FOCUS_U);
+    await win.waitForTimeout(200);
+    const edgeU = await activePaneId();
+    check(
+      "⌥ into an outer edge keeps focus put",
+      edgeL === TL.id && edgeU === TL.id,
+      `left→${edgeL} up→${edgeU} (TL=${TL.id})`
+    );
+  } else {
+    skip("⌥→ moves focus to the pane on the right", "2×2 grid did not form");
+    skip("⌥↓ moves focus to the pane below", "2×2 grid did not form");
+    skip("⌥← moves focus to the pane on the left", "2×2 grid did not form");
+    skip("⌥↑ moves focus to the pane above", "2×2 grid did not form");
+    skip("⌥ into an outer edge keeps focus put", "2×2 grid did not form");
+  }
+
   // 7) Default terminal path: set via UI, confirm persistence, reload, verify
   // a boot terminal spawns there (new tabs spawn lazily, so reload is reliable).
   await win.locator(".tab-settings").click();
@@ -640,6 +832,80 @@ try {
   check("toast appears once edits settle", (await slot()).toast);
   await win.waitForTimeout(2900);
   check("toast auto-dismisses", !(await slot()).toast);
+
+  // 8c) Window opacity. The slider drives the *OS* window's alpha. We read the
+  // real, external-observer opacity per platform: on Linux/X11 the app sets
+  // _NET_WM_WINDOW_OPACITY on its own window (Electron's setOpacity is a no-op
+  // there), so we read that property back via xprop; on Windows/macOS we read
+  // BrowserWindow.getOpacity. Both the OS value and the persisted setting are
+  // asserted. If the OS opacity can't be read (e.g. xprop absent), that one
+  // check skips rather than fails — but persistence is always asserted.
+  const settingsOpacity = () =>
+    win.evaluate(() => JSON.parse(localStorage.getItem("specterm.settings")).windowOpacity);
+
+  // This window's own X11 id, straight from Electron — never a name match (two
+  // Specterm windows could be open, e.g. the developer's own terminal).
+  const nativeXid = () =>
+    app.evaluate(({ BrowserWindow }) => {
+      const h = BrowserWindow.getAllWindows()[0].getNativeWindowHandle();
+      return h.length >= 4 ? h.readUInt32LE(0) : null;
+    });
+
+  // The window's actual OS opacity as a 0–1 fraction, or null if unreadable.
+  async function osOpacity() {
+    if (process.platform === "linux") {
+      const xid = await nativeXid();
+      if (xid == null) return null;
+      try {
+        const out = execSync(`xprop -id 0x${xid.toString(16)} _NET_WM_WINDOW_OPACITY`, {
+          encoding: "utf8",
+        });
+        const m = out.match(/=\s*(\d+)/);
+        return m ? Number(m[1]) / 0xffffffff : 1; // property absent ⇒ opaque
+      } catch {
+        return null; // xprop not installed
+      }
+    }
+    return app.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].getOpacity()
+    );
+  }
+
+  const baseOsOp = await osOpacity();
+  if (baseOsOp == null) {
+    skip("window starts fully opaque", "OS opacity unreadable (xprop missing)");
+  } else {
+    check("window starts fully opaque", Math.abs(baseOsOp - 1) < 0.02, `osOpacity=${baseOsOp}`);
+  }
+
+  await win.locator("#window-opacity").evaluate((el) => {
+    el.value = "0.6";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await win.waitForTimeout(500);
+  check("window opacity setting persists", Math.abs((await settingsOpacity()) - 0.6) < 0.001, `${await settingsOpacity()}`);
+
+  const dimmedOs = await osOpacity();
+  if (dimmedOs == null) {
+    skip("slider dims the OS window", "OS opacity unreadable (xprop missing)");
+  } else {
+    check("slider dims the OS window", Math.abs(dimmedOs - 0.6) < 0.03, `osOpacity=${dimmedOs}`);
+  }
+
+  // Reset returns the window (and the setting) to fully opaque.
+  await win
+    .locator("#window-opacity")
+    .locator("xpath=ancestor::div[contains(@class,'settings-section')]")
+    .locator(".settings-reset")
+    .click();
+  await win.waitForTimeout(500);
+  check("reset restores the window opacity setting", Math.abs((await settingsOpacity()) - 1) < 0.001, `${await settingsOpacity()}`);
+  const resetOs = await osOpacity();
+  if (resetOs == null) {
+    skip("reset restores full OS opacity", "OS opacity unreadable (xprop missing)");
+  } else {
+    check("reset restores full OS opacity", Math.abs(resetOs - 1) < 0.02, `osOpacity=${resetOs}`);
+  }
 
   // 9) Chrome layout: the tab bar's corner, the two sizes, and auto-hide.
   const layout = () =>
@@ -912,6 +1178,340 @@ try {
     }
   } else {
     skip("claude session: a drag copies its output", "claude CLI not on PATH");
+  }
+
+  // 13) Text viewer (open ANY file) + markdown/mermaid regression guard. Point
+  // the file tree at test/fixtures, then drive real clicks on the fixtures.
+  const fixturesDir = path.join(root, "test", "fixtures");
+  const binFixture = path.join(fixturesDir, "binary.bin");
+  // A file with NUL bytes — must be refused by the viewer, not shown as garbage.
+  fs.writeFileSync(binFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x03]));
+  try {
+    // Point BOTH startupPath and lastBrowsedPath at the fixtures dir —
+    // lastBrowsedPath takes precedence when the tree reopens, so setting the
+    // startup path alone wouldn't move it. Merge into the existing blob.
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, fixturesDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2500);
+    check("file tree lists the fixtures dir", (await state(win)).names.includes("sample.ts"), (await state(win)).names.join(","));
+
+    // 13a) A non-markdown file opens in the read-only viewer, highlighted.
+    await clickEntry(win, "sample.ts");
+    await win.waitForSelector(".text-pane", { timeout: 8000 });
+    await win.waitForTimeout(800); // lazy highlight.js chunk loads on first open
+    const tv = await win.evaluate(() => {
+      const pane = document.querySelector(".text-pane");
+      const code = pane?.querySelector(".text-code code");
+      const gutter = pane?.querySelector(".text-gutter");
+      const gutterText = gutter?.textContent || "";
+      return {
+        codeText: code?.textContent || "",
+        hasHljs: !!pane?.querySelector(".text-code [class^='hljs-']"),
+        lang: pane?.querySelector(".text-lang")?.textContent || "",
+        gutterFirst: gutterText.split("\n")[0],
+        gutterLines: gutterText.split("\n").length,
+      };
+    });
+    check("text viewer opens a non-markdown file", tv.codeText.includes("makeWidget"), tv.codeText.slice(0, 40));
+    check("text viewer numbers every line once", tv.gutterFirst === "1" && tv.gutterLines > 8, `first=${tv.gutterFirst} lines=${tv.gutterLines}`);
+    check("text viewer highlights syntax by language", tv.hasHljs && /typescript/i.test(tv.lang), `hljs=${tv.hasHljs} lang=${tv.lang}`);
+
+    // 13b) In-pane find marks matches. Click the Find button (openSearch) rather
+    // than the ⌘F chord, so the check doesn't race the pane's focus/isActive flip.
+    await win.locator(".text-pane .text-toolbar-btn", { hasText: "Find" }).first().click();
+    await win.waitForSelector(".text-search input", { timeout: 3000 });
+    await win.locator(".text-search input").fill("makeWidget");
+    await win.waitForTimeout(400);
+    const findCount = (await win.locator(".text-search-count").textContent()) || "";
+    const findMarks = await win.locator(".text-code mark.search-highlight").count();
+    check("text viewer find marks matches", findMarks >= 2 && /[1-9]/.test(findCount), `count="${findCount}" marks=${findMarks}`);
+    await win.keyboard.press("Escape");
+    await win.waitForTimeout(200);
+
+    // 13c) A binary file is refused, not rendered as mojibake.
+    await clickEntry(win, "binary.bin");
+    await win.waitForSelector(".text-error", { timeout: 8000 });
+    const binErr = (await win.locator(".text-error").first().textContent()) || "";
+    check("text viewer refuses a binary file", /binary/i.test(binErr), binErr.slice(0, 40));
+
+    // 13d) Markdown regression: rendering, Mermaid execution, and pan/zoom.
+    await clickEntry(win, "diagram.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForSelector(".markdown-content pre.mermaid svg", { timeout: 20000 });
+    const md = await win.evaluate(() => ({
+      htmlLen: (document.querySelector(".markdown-content")?.innerHTML || "").length,
+      hasSvg: !!document.querySelector(".markdown-content pre.mermaid svg"),
+      hasViewport: !!document.querySelector(".mermaid-viewport"),
+      hasInner: !!document.querySelector(".mermaid-inner"),
+      transformBefore: document.querySelector(".mermaid-inner")?.style.transform || "",
+    }));
+    check("markdown still renders", md.htmlLen > 20, `htmlLen=${md.htmlLen}`);
+    check("mermaid diagram renders to SVG", md.hasSvg, "");
+    check("mermaid pan/zoom viewport is wired", md.hasViewport && md.hasInner, JSON.stringify({ v: md.hasViewport, i: md.hasInner }));
+
+    // A wheel over the diagram must zoom it (set the inner transform scale). We
+    // dispatch the WheelEvent straight at the viewport — a synthesized
+    // mouse.wheel gesture is unreliable over a tiny nested split pane, and this
+    // still runs the real wheel handler synchronously.
+    const transformAfter = await win.evaluate(() => {
+      const vp = document.querySelector(".mermaid-viewport");
+      if (!vp) return null;
+      const r = vp.getBoundingClientRect();
+      vp.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -120,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      return document.querySelector(".mermaid-inner")?.style.transform || "";
+    });
+    check(
+      "mermaid wheel-zoom changes the transform",
+      transformAfter != null && transformAfter !== md.transformBefore && /scale\(/.test(transformAfter),
+      `before="${md.transformBefore}" after="${transformAfter}"`
+    );
+  } finally {
+    try { fs.unlinkSync(binFixture); } catch {}
+  }
+
+  // 14) Cross-tab pane detach: drag a pane's titlebar onto another tab's chip to
+  // move it there. The target chip highlights mid-drag; the drop moves the pane
+  // (splitting beside the target's active pane), brings that tab to the front,
+  // and leaves the source tab with the rest.
+  const activeTab = () =>
+    win.evaluate(() => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null);
+  const detachPaneCount = () => win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
+
+  // Fresh tab so this starts from a clean single pane, then split → 2 panes.
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  const srcTab = await activeTab();
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2000);
+  const srcPanesBefore = await detachPaneCount();
+
+  // Another fresh tab as the drop target, then back to the source tab.
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  const dstTab = await activeTab();
+  await win.locator(`.tab[data-tab-id="${srcTab}"]`).click();
+  await win.waitForTimeout(700);
+
+  if (srcPanesBefore === 2 && dstTab && dstTab !== srcTab) {
+    // Drag the first pane's titlebar onto the destination tab's chip.
+    const src = await win.evaluate(() => {
+      const tb = document.querySelector("[data-pane-id] .pane-titlebar").getBoundingClientRect();
+      return { x: tb.left + 24, y: (tb.top + tb.bottom) / 2 };
+    });
+    const chip = await win.locator(`.tab[data-tab-id="${dstTab}"]`).boundingBox();
+    await win.mouse.move(src.x, src.y);
+    await win.mouse.down();
+    await win.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2, { steps: 12 });
+    await win.waitForTimeout(300);
+    const highlight = await win.evaluate(
+      (id) => !!document.querySelector(`.tab[data-tab-id="${id}"]`)?.classList.contains("drop-tab"),
+      dstTab
+    );
+    check("dragging a pane over a tab highlights it as a drop target", highlight, "");
+    await win.mouse.up();
+    await win.waitForTimeout(1200);
+
+    check("dropping on a tab activates it", (await activeTab()) === dstTab, `active=${await activeTab()}`);
+    check("the pane detaches into the target tab", (await detachPaneCount()) === 2, `dst panes=${await detachPaneCount()}`);
+    await win.locator(`.tab[data-tab-id="${srcTab}"]`).click();
+    await win.waitForTimeout(600);
+    check("the source tab keeps the remaining pane", (await detachPaneCount()) === 1, `src panes=${await detachPaneCount()}`);
+  } else {
+    skip("dragging a pane over a tab highlights it as a drop target", "setup did not produce 2 panes + 2 tabs");
+    skip("dropping on a tab activates it", "setup did not produce 2 panes + 2 tabs");
+    skip("the pane detaches into the target tab", "setup did not produce 2 panes + 2 tabs");
+    skip("the source tab keeps the remaining pane", "setup did not produce 2 panes + 2 tabs");
+  }
+
+  // 15) Markdown editor: read → edit toggles CodeMirror (a lazy chunk), edits
+  // mark the pane dirty, and Save writes through to disk. Uses a throwaway .md
+  // in a temp dir so the test writes a real file without touching the repo.
+  const mdWorkDir = path.join(os.tmpdir(), `specterm-md-${process.pid}`);
+  fs.mkdirSync(mdWorkDir, { recursive: true });
+  const notePath = path.join(mdWorkDir, "note.md");
+  fs.writeFileSync(notePath, "# Hello\n\nworld\n");
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, mdWorkDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+
+    await clickEntry(win, "note.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    check("markdown opens in read mode", (await win.locator(".markdown-content h1").count()) === 1, "");
+
+    // Toggle to edit — CodeMirror mounts (loaded lazily on first switch).
+    await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+    await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+    await win.waitForTimeout(500);
+    check("Edit toggle mounts the CodeMirror editor", (await win.locator(".markdown-editor .cm-content").count()) === 1, "");
+
+    // Type at the end of the document.
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.type("\nEDITED_BY_E2E_777");
+    await win.waitForTimeout(300);
+    const isDirty = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("editing marks the pane dirty", isDirty, "");
+
+    // Save writes through to disk and clears the dirty flag.
+    await win.locator(".markdown-toolbar-btn", { hasText: "Save" }).first().click();
+    await win.waitForTimeout(600);
+    const onDisk = fs.readFileSync(notePath, "utf8");
+    check("Save writes the edited text to disk", onDisk.includes("EDITED_BY_E2E_777"), `tail=${JSON.stringify(onDisk.slice(-24))}`);
+    const stillDirty = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("Save clears the dirty indicator", !stillDirty, "");
+
+    // Back to preview: the reader now reflects the saved text.
+    await win.locator(".markdown-toolbar-btn", { hasText: "Preview" }).first().click();
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForTimeout(400);
+    const previewText = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+    check("Preview reflects the saved edit", previewText.includes("EDITED_BY_E2E_777"), previewText.slice(0, 40));
+  } finally {
+    try { fs.rmSync(mdWorkDir, { recursive: true, force: true }); } catch {}
+  }
+
+  // 16) Markdown editor — unsaved-edit safety. Refresh (which re-reads disk) is
+  // hidden while editing, and a dirty pane dragged to another tab carries its
+  // unsaved buffer with it (no silent re-read from disk, and no auto-save).
+  const safeDir = path.join(os.tmpdir(), `specterm-mdsafe-${process.pid}`);
+  fs.mkdirSync(safeDir, { recursive: true });
+  const safeNote = path.join(safeDir, "safe.md");
+  fs.writeFileSync(safeNote, "# Safe\n\nbody\n");
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, safeDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+    const safeSrcTab = await activeTab();
+
+    await clickEntry(win, "safe.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+    await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+    await win.waitForTimeout(500);
+    check("Refresh is hidden while editing", (await win.locator(".markdown-toolbar-btn", { hasText: "Refresh" }).count()) === 0, "");
+
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.type("\nUNSAVED_MOVE_XYZ");
+    await win.waitForTimeout(300);
+
+    const safeDstTab = await win.locator(".tab-new").click().then(async () => {
+      await win.waitForTimeout(1500);
+      return activeTab();
+    });
+    await win.locator(`.tab[data-tab-id="${safeSrcTab}"]`).click();
+    await win.waitForTimeout(700);
+
+    if (safeDstTab && safeDstTab !== safeSrcTab) {
+      const from = await win.evaluate(() => {
+        const panes = Array.from(document.querySelectorAll("[data-pane-id]"));
+        const md = panes.find((p) => p.querySelector(".markdown-pane, .markdown-editor"));
+        const tb = md.querySelector(".pane-titlebar").getBoundingClientRect();
+        return { x: tb.left + 24, y: (tb.top + tb.bottom) / 2 };
+      });
+      const chip = await win.locator(`.tab[data-tab-id="${safeDstTab}"]`).boundingBox();
+      await win.mouse.move(from.x, from.y);
+      await win.mouse.down();
+      await win.mouse.move(chip.x + chip.width / 2, chip.y + chip.height / 2, { steps: 12 });
+      await win.waitForTimeout(250);
+      await win.mouse.up();
+      await win.waitForTimeout(1500);
+
+      const preserved = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+      check("cross-tab move preserves unsaved markdown edits", preserved.includes("UNSAVED_MOVE_XYZ"), preserved.slice(0, 40));
+      check("cross-tab move does not auto-save to disk", !fs.readFileSync(safeNote, "utf8").includes("UNSAVED_MOVE_XYZ"), "");
+    } else {
+      skip("cross-tab move preserves unsaved markdown edits", "second tab did not open");
+      skip("cross-tab move does not auto-save to disk", "second tab did not open");
+    }
+  } finally {
+    try { fs.rmSync(safeDir, { recursive: true, force: true }); } catch {}
+  }
+
+  // 17) Markdown drafts persist across a reload (the auto-save that stands in for
+  // a close/quit guard): edit without saving, reload the whole renderer, and the
+  // unsaved text comes back — with disk untouched. Refresh then discards it.
+  const draftDir = path.join(os.tmpdir(), `specterm-draft-${process.pid}`);
+  fs.mkdirSync(draftDir, { recursive: true });
+  const draftNote = path.join(draftDir, "draft.md");
+  fs.writeFileSync(draftNote, "# Draft\n\nbody\n");
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, draftDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+
+    await clickEntry(win, "draft.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+    await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+    await win.waitForTimeout(500);
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.type("\nDRAFT_SURVIVES_RELOAD");
+    await win.waitForTimeout(700); // let the debounced draft persist to localStorage
+
+    // Reload the renderer — same as reopening the app.
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+    await clickEntry(win, "draft.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForTimeout(400);
+    const afterReload = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+    const dirtyAfterReload = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("unsaved markdown draft survives a reload", afterReload.includes("DRAFT_SURVIVES_RELOAD") && dirtyAfterReload, `dirty=${dirtyAfterReload}`);
+    check("draft is not auto-written to disk", !fs.readFileSync(draftNote, "utf8").includes("DRAFT_SURVIVES_RELOAD"), "");
+
+    // Refresh discards the draft and shows the on-disk copy, clean.
+    await win.locator(".markdown-toolbar-btn", { hasText: "Refresh" }).first().click();
+    await win.waitForTimeout(600);
+    const afterRefresh = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+    const dirtyAfterRefresh = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("Refresh discards the draft", !afterRefresh.includes("DRAFT_SURVIVES_RELOAD") && !dirtyAfterRefresh, "");
+  } finally {
+    try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch {}
   }
 
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
