@@ -68,29 +68,37 @@ function buildDecorations(view: EditorView): DecorationSet {
   const ranges: { from: number; to: number; deco: Decoration }[] = [];
   const tree = syntaxTree(view.state);
 
-  tree.iterate({
-    enter: (node) => {
-      const cls = CONTENT_CLASS[node.name];
-      if (cls && node.to > node.from) {
-        ranges.push({
-          from: node.from,
-          to: node.to,
-          deco: Decoration.mark({ class: cls }),
-        });
-      }
-
-      if (HIDDEN_MARKS.has(node.name)) {
-        // Reveal a delimiter when the cursor is inside its enclosing styled
-        // node (the heading line, the emphasis span, the link, …).
-        const parent = node.node.parent;
-        const pf = parent ? parent.from : node.from;
-        const pt = parent ? parent.to : node.to;
-        if (!selectionTouches(view, pf, pt) && node.to > node.from) {
-          ranges.push({ from: node.from, to: node.to, deco: hiddenDeco });
+  // Only decorate the visible viewport, not the whole document — this runs on
+  // every cursor move, and an O(document) tree walk on a large file is exactly
+  // the main-thread jank a fast terminal must avoid. The plugin already rebuilds
+  // on viewportChanged, so scrolling keeps the styling in sync.
+  for (const { from: vFrom, to: vTo } of view.visibleRanges) {
+    tree.iterate({
+      from: vFrom,
+      to: vTo,
+      enter: (node) => {
+        const cls = CONTENT_CLASS[node.name];
+        if (cls && node.to > node.from) {
+          ranges.push({
+            from: node.from,
+            to: node.to,
+            deco: Decoration.mark({ class: cls }),
+          });
         }
-      }
-    },
-  });
+
+        if (HIDDEN_MARKS.has(node.name)) {
+          // Reveal a delimiter when the cursor is inside its enclosing styled
+          // node (the heading line, the emphasis span, the link, …).
+          const parent = node.node.parent;
+          const pf = parent ? parent.from : node.from;
+          const pt = parent ? parent.to : node.to;
+          if (!selectionTouches(view, pf, pt) && node.to > node.from) {
+            ranges.push({ from: node.from, to: node.to, deco: hiddenDeco });
+          }
+        }
+      },
+    });
+  }
 
   // Decoration.set sorts + validates ordering (including equal-start marks).
   return Decoration.set(

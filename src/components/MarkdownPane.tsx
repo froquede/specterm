@@ -13,23 +13,41 @@ import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
 
 interface MarkdownPaneProps {
   filePath: string;
-  // Stable id of the pane this markdown view lives in. Used to carry an unsaved
-  // buffer across a remount (e.g. a cross-tab pane move, which disposes and
-  // recreates the component) so edits aren't silently re-read from disk.
-  paneId?: string;
   // Whether this pane is the focused one. ⌘F only acts on the active pane so a
   // single keypress doesn't toggle search in every open markdown pane at once.
   isActive?: boolean;
   onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
 }
 
-// Unsaved editor buffers, keyed by pane id, kept across the component's remount.
-// A markdown pane's state is component-local, so moving the pane between tabs
-// (which recreates the component) would otherwise lose unsaved edits — this is
-// the markdown analogue of the terminal registry that keeps PTYs alive across
-// the same move. Entries live only while dirty: written on unmount-if-dirty,
-// consumed on mount, cleared on save.
-const unsavedBuffers = new Map<string, { content: string; savedText: string }>();
+// Unsaved edits are auto-persisted as a "draft" in localStorage, keyed by file
+// path. localStorage is synchronous and cheap for small text, so this costs
+// effectively nothing — and it means unsaved work survives everything that would
+// otherwise drop it: a cross-tab pane move (which recreates the component), a
+// reload, or closing the app. The draft is written debounced while editing (and
+// flushed on unmount), consulted on load, and cleared on save.
+const DRAFT_PREFIX = "specterm.mddraft:";
+const draftKey = (filePath: string) => DRAFT_PREFIX + filePath;
+function readDraft(filePath: string): string | null {
+  try {
+    return localStorage.getItem(draftKey(filePath));
+  } catch {
+    return null;
+  }
+}
+function writeDraft(filePath: string, content: string) {
+  try {
+    localStorage.setItem(draftKey(filePath), content);
+  } catch {
+    // localStorage full/unavailable — the edit just won't survive a hard close.
+  }
+}
+function clearDraft(filePath: string) {
+  try {
+    localStorage.removeItem(draftKey(filePath));
+  } catch {
+    /* ignore */
+  }
+}
 
 export default function MarkdownPane(props: MarkdownPaneProps) {
   let contentRef!: HTMLDivElement;
@@ -54,21 +72,29 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   // Store the original rendered HTML so we can re-highlight without re-rendering
   let renderedHtml = "";
 
-  async function loadFile() {
+  // `force` re-reads from disk and discards any draft (the Refresh button); the
+  // default honors a persisted draft so unsaved edits survive a move/reload.
+  async function loadFile(force = false) {
     try {
       setError(null);
       const backend = await getBackend();
       const text = await backend.readTextFile(props.filePath);
       setSavedText(text);
-      setContent(text);
-      setDirty(false);
-      // If the editor is open, replace its buffer with the reloaded text.
+
+      const draft = force ? null : readDraft(props.filePath);
+      // A draft that already matches disk is stale (saved elsewhere) — drop it.
+      if (draft !== null && draft === text) clearDraft(props.filePath);
+      const initial = draft !== null && draft !== text ? draft : text;
+
+      setContent(initial);
+      setDirty(initial !== text);
+      // If the editor is open, replace its buffer with the loaded content.
       if (editorView) {
         editorView.dispatch({
           changes: {
             from: 0,
             to: editorView.state.doc.length,
-            insert: text,
+            insert: initial,
           },
         });
       }
@@ -86,10 +112,21 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
       setSavedText(text);
       setContent(text);
       setDirty(false);
-      if (props.paneId) unsavedBuffers.delete(props.paneId);
+      clearDraft(props.filePath);
     } catch (e) {
       setError(`Failed to save file: ${props.filePath}\n${e}`);
     }
+  }
+
+  // Persist the current buffer as a draft, debounced so keystrokes don't hammer
+  // localStorage. A buffer that matches disk clears the draft instead.
+  let draftTimer: number | null = null;
+  function persistDraft(buffer: string) {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = window.setTimeout(() => {
+      if (buffer === savedText()) clearDraft(props.filePath);
+      else writeDraft(props.filePath, buffer);
+    }, 400);
   }
 
   function toggleMode() {
@@ -114,7 +151,11 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
       view = createMarkdownEditor({
         doc: initialDoc,
         parent: editorRef,
-        onDocChanged: (v) => setDirty(v.state.doc.toString() !== savedText()),
+        onDocChanged: (v) => {
+          const buffer = v.state.doc.toString();
+          setDirty(buffer !== savedText());
+          persistDraft(buffer);
+        },
         onSave: save,
       });
       editorView = view;
@@ -132,27 +173,21 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   });
 
   onMount(() => {
-    // A pending unsaved buffer (this pane was moved between tabs while dirty)
-    // wins over the on-disk copy — restore it instead of re-reading the file.
-    const cached = props.paneId ? unsavedBuffers.get(props.paneId) : undefined;
-    if (cached) {
-      unsavedBuffers.delete(props.paneId!);
-      setSavedText(cached.savedText);
-      setContent(cached.content);
-      setDirty(cached.content !== cached.savedText);
-    } else {
-      loadFile();
-    }
+    // loadFile() restores a persisted draft when there is one, so a pane moved
+    // between tabs (or reopened after a reload/close) comes back with its unsaved
+    // edits rather than the on-disk copy.
+    loadFile();
   });
 
-  // On unmount with unsaved edits, stash the buffer keyed by pane id so a
-  // remount (cross-tab move) can restore it rather than losing the edits to a
-  // disk re-read. Read the live editor if it's still up, else the carried-back
-  // content() the editor effect's own cleanup leaves behind.
+  // Flush the draft synchronously on unmount if still dirty, in case the debounce
+  // hadn't fired (e.g. a fast cross-tab move right after a keystroke). Read the
+  // live editor if it's up, else the buffer the editor effect's cleanup carried
+  // back into content().
   onCleanup(() => {
-    if (!props.paneId || !dirty()) return;
+    if (draftTimer) clearTimeout(draftTimer);
+    if (!dirty()) return;
     const buffer = editorView ? editorView.state.doc.toString() : content();
-    unsavedBuffers.set(props.paneId, { content: buffer, savedText: savedText() });
+    if (buffer !== savedText()) writeDraft(props.filePath, buffer);
   });
 
   createEffect(async () => {
@@ -415,9 +450,9 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
             >
               Search
             </button>
-            {/* Refresh re-reads from disk, so it's read-mode only — in edit mode
-                it would silently discard unsaved changes. */}
-            <button class="markdown-toolbar-btn" onClick={loadFile}>
+            {/* Refresh re-reads from disk (discarding any draft), so it's
+                read-mode only — in edit mode it would drop unsaved changes. */}
+            <button class="markdown-toolbar-btn" onClick={() => loadFile(true)}>
               Refresh
             </button>
           </Show>

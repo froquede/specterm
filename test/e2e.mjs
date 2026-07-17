@@ -1460,6 +1460,60 @@ try {
     try { fs.rmSync(safeDir, { recursive: true, force: true }); } catch {}
   }
 
+  // 17) Markdown drafts persist across a reload (the auto-save that stands in for
+  // a close/quit guard): edit without saving, reload the whole renderer, and the
+  // unsaved text comes back — with disk untouched. Refresh then discards it.
+  const draftDir = path.join(os.tmpdir(), `specterm-draft-${process.pid}`);
+  fs.mkdirSync(draftDir, { recursive: true });
+  const draftNote = path.join(draftDir, "draft.md");
+  fs.writeFileSync(draftNote, "# Draft\n\nbody\n");
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, draftDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+
+    await clickEntry(win, "draft.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+    await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+    await win.waitForTimeout(500);
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.type("\nDRAFT_SURVIVES_RELOAD");
+    await win.waitForTimeout(700); // let the debounced draft persist to localStorage
+
+    // Reload the renderer — same as reopening the app.
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+    await clickEntry(win, "draft.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForTimeout(400);
+    const afterReload = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+    const dirtyAfterReload = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("unsaved markdown draft survives a reload", afterReload.includes("DRAFT_SURVIVES_RELOAD") && dirtyAfterReload, `dirty=${dirtyAfterReload}`);
+    check("draft is not auto-written to disk", !fs.readFileSync(draftNote, "utf8").includes("DRAFT_SURVIVES_RELOAD"), "");
+
+    // Refresh discards the draft and shows the on-disk copy, clean.
+    await win.locator(".markdown-toolbar-btn", { hasText: "Refresh" }).first().click();
+    await win.waitForTimeout(600);
+    const afterRefresh = await win.evaluate(() => document.querySelector(".markdown-content")?.textContent || "");
+    const dirtyAfterRefresh = await win.evaluate(() =>
+      (document.querySelector(".markdown-filepath")?.textContent || "").trim().startsWith("●")
+    );
+    check("Refresh discards the draft", !afterRefresh.includes("DRAFT_SURVIVES_RELOAD") && !dirtyAfterRefresh, "");
+  } finally {
+    try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch {}
+  }
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
   // --- summary ---
