@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { getBackend } from "../backends";
 
 // User-tunable settings, persisted to localStorage so they survive restarts.
 // This is the first real "preferences" surface in specterm — the Settings panel
@@ -11,6 +12,12 @@ import { createSignal } from "solid-js";
 // - unfocusedOpacity drives the `--unfocused-split-opacity` CSS variable (see
 //   styles/global.css): the visible fraction of a non-active pane, so 1 = no
 //   dimming, lower = washed further toward the fill.
+// - windowOpacity is the alpha of the whole OS window (via
+//   backend.setWindowOpacity: BrowserWindow.setOpacity on Windows/macOS, the
+//   _NET_WM_WINDOW_OPACITY property on Linux/X11), so lower values let the
+//   desktop behind the terminal show through. 1 = fully opaque (the default).
+//   Unlike unfocusedOpacity this is not a CSS variable — it's a native window
+//   property, applied through the backend on every change and once at startup.
 // - startupPath is the directory new terminals spawn in AND the folder the file
 //   tree opens at. Blank = the OS home directory.
 // - lastBrowsedPath is the folder the file tree was last showing; it takes
@@ -26,6 +33,12 @@ const STORAGE_KEY = "specterm.settings";
 export const UNFOCUSED_OPACITY_DEFAULT = 0.35;
 export const UNFOCUSED_OPACITY_MIN = 0.1;
 export const UNFOCUSED_OPACITY_MAX = 1;
+
+// Whole-window transparency. Default 1 (opaque); a floor of 0.3 keeps the
+// terminal legible enough to find the slider again if someone drags it low.
+export const WINDOW_OPACITY_DEFAULT = 1;
+export const WINDOW_OPACITY_MIN = 0.3;
+export const WINDOW_OPACITY_MAX = 1;
 
 // The four corners the tab bar can anchor to: "<edge>-<side>".
 export const TAB_BAR_CORNERS = [
@@ -55,6 +68,11 @@ const clampOpacity = clampTo(
   UNFOCUSED_OPACITY_MAX,
   UNFOCUSED_OPACITY_DEFAULT
 );
+const clampWindowOpacity = clampTo(
+  WINDOW_OPACITY_MIN,
+  WINDOW_OPACITY_MAX,
+  WINDOW_OPACITY_DEFAULT
+);
 const clampTabBarHeight = clampTo(
   TAB_BAR_HEIGHT_MIN,
   TAB_BAR_HEIGHT_MAX,
@@ -68,6 +86,7 @@ const clampSidebarWidth = clampTo(
 
 interface Persisted {
   unfocusedOpacity: number;
+  windowOpacity: number;
   startupPath: string;
   lastBrowsedPath: string;
   tabBarCorner: TabBarCorner;
@@ -78,6 +97,7 @@ interface Persisted {
 
 const DEFAULTS: Persisted = {
   unfocusedOpacity: UNFOCUSED_OPACITY_DEFAULT,
+  windowOpacity: WINDOW_OPACITY_DEFAULT,
   startupPath: "",
   lastBrowsedPath: "",
   tabBarCorner: TAB_BAR_CORNER_DEFAULT,
@@ -100,6 +120,11 @@ function load(): Persisted {
         p.unfocusedOpacity,
         clampOpacity,
         DEFAULTS.unfocusedOpacity
+      ),
+      windowOpacity: num(
+        p.windowOpacity,
+        clampWindowOpacity,
+        DEFAULTS.windowOpacity
       ),
       startupPath:
         typeof p.startupPath === "string" ? p.startupPath : DEFAULTS.startupPath,
@@ -136,6 +161,9 @@ const initial = load();
 const [unfocusedOpacity, setUnfocusedOpacitySignal] = createSignal(
   initial.unfocusedOpacity
 );
+const [windowOpacity, setWindowOpacitySignal] = createSignal(
+  initial.windowOpacity
+);
 const [startupPath, setStartupPathSignal] = createSignal(initial.startupPath);
 const [lastBrowsedPath, setLastBrowsedPathSignal] = createSignal(
   initial.lastBrowsedPath
@@ -149,6 +177,7 @@ const [sidebarWidth, setSidebarWidthSignal] = createSignal(initial.sidebarWidth)
 
 export {
   unfocusedOpacity,
+  windowOpacity,
   startupPath,
   lastBrowsedPath,
   tabBarCorner,
@@ -174,12 +203,25 @@ function applyCssVars() {
   root.setProperty("--sidebar-width", `${sidebarWidth()}px`);
 }
 
+// Window opacity is a native window property, not a CSS variable, so it goes
+// through the backend rather than the DOM. Fire-and-forget: on a platform/WM
+// that can't honor it (some Linux compositors), the call simply no-ops and the
+// window stays opaque — never a reason to break settings.
+function applyWindowOpacity() {
+  getBackend()
+    .then((backend) => backend.setWindowOpacity(windowOpacity()))
+    .catch(() => {
+      /* backend unavailable or opacity unsupported — leave the window opaque. */
+    });
+}
+
 function persist() {
   try {
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         unfocusedOpacity: unfocusedOpacity(),
+        windowOpacity: windowOpacity(),
         startupPath: startupPath(),
         lastBrowsedPath: lastBrowsedPath(),
         tabBarCorner: tabBarCorner(),
@@ -201,6 +243,16 @@ export function setUnfocusedOpacity(v: number) {
 
 export function resetUnfocusedOpacity() {
   setUnfocusedOpacity(UNFOCUSED_OPACITY_DEFAULT);
+}
+
+export function setWindowOpacity(v: number) {
+  setWindowOpacitySignal(clampWindowOpacity(v));
+  applyWindowOpacity();
+  persist();
+}
+
+export function resetWindowOpacity() {
+  setWindowOpacity(WINDOW_OPACITY_DEFAULT);
 }
 
 // --- Chrome layout ---------------------------------------------------------
@@ -251,7 +303,8 @@ export function setLastBrowsedPath(v: string) {
   persist();
 }
 
-// Apply persisted values to the DOM once at startup. Called from App's onMount.
+// Apply persisted values once at startup. Called from App's onMount.
 export function initSettings() {
   applyCssVars();
+  applyWindowOpacity();
 }

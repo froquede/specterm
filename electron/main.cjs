@@ -4,6 +4,7 @@ const os = require("os");
 const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
+const { execFile } = require("child_process");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -338,6 +339,57 @@ ipcMain.handle("is-fullscreen", () => {
 ipcMain.handle("set-fullscreen", (_event, value) => {
   if (mainWindow) {
     mainWindow.setFullScreen(Boolean(value));
+  }
+});
+
+// Whole-window alpha so the desktop shows through the terminal. Clamp to
+// [0.3, 1] — the same floor the renderer enforces — so a bad value can never
+// render the window invisible and unrecoverable.
+//
+// Windows/macOS honor BrowserWindow.setOpacity natively. On Linux/X11 that call
+// is a no-op (Electron never sets the property the compositor reads), so we set
+// _NET_WM_WINDOW_OPACITY on our own window ourselves via xprop — the value a
+// compositing WM (Mutter, KWin, picom…) applies. Best-effort: on a bare X11
+// session with no compositor, or without x11-utils installed, it simply doesn't
+// dim, exactly as before.
+function setX11WindowOpacity(win, opacity) {
+  let xid;
+  try {
+    // getNativeWindowHandle returns the window's own X11 id (little-endian in
+    // the buffer) — set the property on THIS window, never a name match.
+    const handle = win.getNativeWindowHandle();
+    if (handle.length < 4) return;
+    xid = handle.readUInt32LE(0);
+  } catch {
+    return;
+  }
+  // _NET_WM_WINDOW_OPACITY is a 32-bit CARDINAL: 0xFFFFFFFF = opaque.
+  const cardinal = Math.round(0xffffffff * opacity) >>> 0;
+  execFile(
+    "xprop",
+    [
+      "-id",
+      `0x${xid.toString(16)}`,
+      "-f",
+      "_NET_WM_WINDOW_OPACITY",
+      "32c",
+      "-set",
+      "_NET_WM_WINDOW_OPACITY",
+      String(cardinal),
+    ],
+    () => {
+      /* xprop missing or failed — leave the window opaque. */
+    }
+  );
+}
+
+ipcMain.handle("set-window-opacity", (_event, value) => {
+  if (!mainWindow) return;
+  const n = Number(value);
+  const opacity = Number.isFinite(n) ? Math.min(1, Math.max(0.3, n)) : 1;
+  mainWindow.setOpacity(opacity); // Windows/macOS
+  if (process.platform === "linux") {
+    setX11WindowOpacity(mainWindow, opacity);
   }
 });
 
