@@ -6,7 +6,8 @@
   "author": "Roque Francisco <roquefsd@gmail.com>",
   "contributors": [
     "Lucas Casanova (https://github.com/cas0la)",
-    "Henrique Begrow (https://github.com/hbegrow)"
+    "Henrique Begrow (https://github.com/hbegrow)",
+    "Fernando Vinícius Fernandes (https://github.com/Maggnity)"
   ],
   "type": "module",
   "main": "electron/main.cjs",
