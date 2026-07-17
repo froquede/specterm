@@ -27,8 +27,7 @@
   window instead of opening a duplicate.
 - **Inline tab rename and drag-to-reorder.** Double-click a tab to rename it in
   place (tmux-style: the name then sticks against shell-driven title updates
-  until cleared), and drag tabs along the bar to reorder them. Thanks to
-  [@Maggnity](https://github.com/Maggnity).
+  until cleared), and drag tabs along the bar to reorder them.
 - **Sidebar right-click menu.** The file tree gains a context menu, including
   **Reveal in Finder / Explorer / file manager** to jump from a path straight to
   the native OS file browser, and "open a terminal here".
