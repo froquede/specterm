@@ -9,6 +9,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
 - **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
 - **Markdown preview** -- render `.md` files inline with Mermaid diagram support
+- **Text & code viewer** -- open any other text file from the sidebar in a read-only, syntax-highlighted view with line numbers and find; binaries are declined and huge files are capped, so it never stalls the terminal
 - **Themes** -- five built-ins plus a 325-scheme base16 gallery (and paste/file/drag import); recolors the terminal and the whole app at once
 - **Configurable chrome** -- put the tab bar in any of the window's four corners, size it and the sidebar, or auto-hide the bar so the panes take the whole window
 - **Find in terminal** -- search the scrollback of the active pane
@@ -41,8 +42,9 @@ free for terminal control codes).
 | Increase / decrease font size | `⌘=` / `⌘-` | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
 | Reset font size | `⌘0` | `Ctrl+Shift+0` |
 
-The markdown preview has its own find box, on the same `⌘F` / `Ctrl+Shift+F`,
-when a markdown pane is focused. Fullscreen is the `⊞` icon in the tab bar.
+The markdown preview and the text/code viewer each have their own find box, on
+the same `⌘F` / `Ctrl+Shift+F`, when that pane is focused. Fullscreen is the `⊞`
+icon in the tab bar.
 
 ## Selection and the mouse
 

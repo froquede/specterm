@@ -122,6 +122,23 @@ export default function App() {
     }
   }
 
+  // Markdown gets the rendered preview; every other text file opens in the
+  // read-only viewer. Extension-only routing keeps this cheap and predictable —
+  // TextPane itself decides whether the bytes are actually viewable.
+  const isMarkdownPath = (p: string) => /\.(md|markdown)$/i.test(p);
+
+  function handleOpenFile(path: string, mode: "split" | "tab") {
+    if (isMarkdownPath(path)) {
+      handleOpenMarkdown(path, mode);
+      return;
+    }
+    if (mode === "tab") {
+      store.createTextTab(path);
+    } else {
+      store.splitActivePane("h", { kind: "text" as const, filePath: path });
+    }
+  }
+
   // Move keyboard focus back into the active tab's terminal (or, if that pane
   // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
   function focusActivePane() {
@@ -217,7 +234,7 @@ export default function App() {
       <div class="app-body">
         <FileTree
           open={store.state.sidebarView === "files"}
-          onOpenFile={handleOpenMarkdown}
+          onOpenFile={handleOpenFile}
           onCdPath={cdActivePane}
           onDismiss={focusActivePane}
         />

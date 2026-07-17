@@ -184,6 +184,23 @@ export function useTabStore() {
       return tab;
     },
 
+    createTextTab(filePath: string) {
+      const leaf = createLeaf({ kind: "text", filePath });
+      const tab: Tab = {
+        id: nanoid(8),
+        title: filePath.split(/[\\/]/).pop() || "Text",
+        manualTitle: false,
+        root: leaf,
+        activePaneId: leaf.id,
+      };
+      update((s) => ({
+        ...s,
+        tabs: [...s.tabs, tab],
+        activeTabId: tab.id,
+      }));
+      return tab;
+    },
+
     closeTab(tabId: string) {
       const s = state();
       const idx = s.tabs.findIndex((t) => t.id === tabId);

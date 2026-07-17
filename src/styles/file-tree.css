@@ -328,10 +328,16 @@
   color: var(--ansi-green);
 }
 
-/* Other files — not interactive */
+/* Other files — open in the read-only text viewer. Kept dimmer than markdown
+   so .md still reads as the "rich" target, but interactive all the same. */
 .file-tree-other {
-  color: var(--fg-faint);
-  cursor: default;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.file-tree-other:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
 }
 
 .file-tree-loading,

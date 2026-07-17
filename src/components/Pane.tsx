@@ -3,6 +3,7 @@ import type { PaneType, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
 import MarkdownPane from "./MarkdownPane";
+import TextPane from "./TextPane";
 import TerminalSearch from "./TerminalSearch";
 import { searchPaneId } from "../stores/terminal-search";
 import {
@@ -42,13 +43,14 @@ export default function Pane(props: PaneProps) {
   const [termTitle, setTermTitle] = createSignal("Terminal");
 
   // Label shown in the title-bar: the shell-reported title for terminals, the
-  // file name for markdown panes.
-  const label = () =>
-    props.pane.kind === "markdown"
-      ? (props.pane as PaneType & { kind: "markdown" }).filePath
-          .split(/[\\/]/)
-          .pop() || "Markdown"
-      : termTitle();
+  // file name for markdown and text panes.
+  const label = () => {
+    if (props.pane.kind === "markdown" || props.pane.kind === "text") {
+      const filePath = (props.pane as PaneType & { kind: "markdown" | "text" }).filePath;
+      return filePath.split(/[\\/]/).pop() || (props.pane.kind === "markdown" ? "Markdown" : "Text");
+    }
+    return termTitle();
+  };
 
   // Pointer-driven drag from the title-bar. We don't preventDefault so the
   // compatibility mousedown still bubbles to the pane root and focuses it;
@@ -114,7 +116,7 @@ export default function Pane(props: PaneProps) {
 
   return (
     <div
-      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""}`}
+      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""}`}
       data-pane-id={paneId}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}
@@ -152,6 +154,9 @@ export default function Pane(props: PaneProps) {
         </Show>
         <Show when={props.pane.kind === "markdown" ? (props.pane as PaneType & { kind: "markdown" }).filePath : null} keyed>
           {(filePath) => <MarkdownPane filePath={filePath} isActive={props.isActive} onOpenMarkdown={props.onOpenMarkdown} />}
+        </Show>
+        <Show when={props.pane.kind === "text" ? (props.pane as PaneType & { kind: "text" }).filePath : null} keyed>
+          {(filePath) => <TextPane filePath={filePath} isActive={props.isActive} />}
         </Show>
         <Show when={props.pane.kind === "terminal" && searchPaneId() === paneId}>
           <TerminalSearch paneId={paneId} />

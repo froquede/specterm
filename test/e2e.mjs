@@ -1180,6 +1180,109 @@ try {
     skip("claude session: a drag copies its output", "claude CLI not on PATH");
   }
 
+  // 13) Text viewer (open ANY file) + markdown/mermaid regression guard. Point
+  // the file tree at test/fixtures, then drive real clicks on the fixtures.
+  const fixturesDir = path.join(root, "test", "fixtures");
+  const binFixture = path.join(fixturesDir, "binary.bin");
+  // A file with NUL bytes — must be refused by the viewer, not shown as garbage.
+  fs.writeFileSync(binFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x03]));
+  try {
+    // Point BOTH startupPath and lastBrowsedPath at the fixtures dir —
+    // lastBrowsedPath takes precedence when the tree reopens, so setting the
+    // startup path alone wouldn't move it. Merge into the existing blob.
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, fixturesDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2500);
+    check("file tree lists the fixtures dir", (await state(win)).names.includes("sample.ts"), (await state(win)).names.join(","));
+
+    // 13a) A non-markdown file opens in the read-only viewer, highlighted.
+    await clickEntry(win, "sample.ts");
+    await win.waitForSelector(".text-pane", { timeout: 8000 });
+    await win.waitForTimeout(800); // lazy highlight.js chunk loads on first open
+    const tv = await win.evaluate(() => {
+      const pane = document.querySelector(".text-pane");
+      const code = pane?.querySelector(".text-code code");
+      const gutter = pane?.querySelector(".text-gutter");
+      const gutterText = gutter?.textContent || "";
+      return {
+        codeText: code?.textContent || "",
+        hasHljs: !!pane?.querySelector(".text-code [class^='hljs-']"),
+        lang: pane?.querySelector(".text-lang")?.textContent || "",
+        gutterFirst: gutterText.split("\n")[0],
+        gutterLines: gutterText.split("\n").length,
+      };
+    });
+    check("text viewer opens a non-markdown file", tv.codeText.includes("makeWidget"), tv.codeText.slice(0, 40));
+    check("text viewer numbers every line once", tv.gutterFirst === "1" && tv.gutterLines > 8, `first=${tv.gutterFirst} lines=${tv.gutterLines}`);
+    check("text viewer highlights syntax by language", tv.hasHljs && /typescript/i.test(tv.lang), `hljs=${tv.hasHljs} lang=${tv.lang}`);
+
+    // 13b) In-pane find marks matches. Click the Find button (openSearch) rather
+    // than the ⌘F chord, so the check doesn't race the pane's focus/isActive flip.
+    await win.locator(".text-pane .text-toolbar-btn", { hasText: "Find" }).first().click();
+    await win.waitForSelector(".text-search input", { timeout: 3000 });
+    await win.locator(".text-search input").fill("makeWidget");
+    await win.waitForTimeout(400);
+    const findCount = (await win.locator(".text-search-count").textContent()) || "";
+    const findMarks = await win.locator(".text-code mark.search-highlight").count();
+    check("text viewer find marks matches", findMarks >= 2 && /[1-9]/.test(findCount), `count="${findCount}" marks=${findMarks}`);
+    await win.keyboard.press("Escape");
+    await win.waitForTimeout(200);
+
+    // 13c) A binary file is refused, not rendered as mojibake.
+    await clickEntry(win, "binary.bin");
+    await win.waitForSelector(".text-error", { timeout: 8000 });
+    const binErr = (await win.locator(".text-error").first().textContent()) || "";
+    check("text viewer refuses a binary file", /binary/i.test(binErr), binErr.slice(0, 40));
+
+    // 13d) Markdown regression: rendering, Mermaid execution, and pan/zoom.
+    await clickEntry(win, "diagram.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForSelector(".markdown-content pre.mermaid svg", { timeout: 20000 });
+    const md = await win.evaluate(() => ({
+      htmlLen: (document.querySelector(".markdown-content")?.innerHTML || "").length,
+      hasSvg: !!document.querySelector(".markdown-content pre.mermaid svg"),
+      hasViewport: !!document.querySelector(".mermaid-viewport"),
+      hasInner: !!document.querySelector(".mermaid-inner"),
+      transformBefore: document.querySelector(".mermaid-inner")?.style.transform || "",
+    }));
+    check("markdown still renders", md.htmlLen > 20, `htmlLen=${md.htmlLen}`);
+    check("mermaid diagram renders to SVG", md.hasSvg, "");
+    check("mermaid pan/zoom viewport is wired", md.hasViewport && md.hasInner, JSON.stringify({ v: md.hasViewport, i: md.hasInner }));
+
+    // A wheel over the diagram must zoom it (set the inner transform scale). We
+    // dispatch the WheelEvent straight at the viewport — a synthesized
+    // mouse.wheel gesture is unreliable over a tiny nested split pane, and this
+    // still runs the real wheel handler synchronously.
+    const transformAfter = await win.evaluate(() => {
+      const vp = document.querySelector(".mermaid-viewport");
+      if (!vp) return null;
+      const r = vp.getBoundingClientRect();
+      vp.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -120,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      return document.querySelector(".mermaid-inner")?.style.transform || "";
+    });
+    check(
+      "mermaid wheel-zoom changes the transform",
+      transformAfter != null && transformAfter !== md.transformBefore && /scale\(/.test(transformAfter),
+      `before="${md.transformBefore}" after="${transformAfter}"`
+    );
+  } finally {
+    try { fs.unlinkSync(binFixture); } catch {}
+  }
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
   // --- summary ---

@@ -188,7 +188,10 @@ export default function FileTree(props: FileTreeProps) {
   function activateEntry(entry: DirEntry, mode: "split" | "tab") {
     if (entry.isDirectory) {
       navigateTo(entry.path);
-    } else if (entry.name.endsWith(".md")) {
+    } else {
+      // Any file opens — markdown renders as a preview, everything else in the
+      // read-only text viewer (which refuses binaries itself). See App's
+      // handleOpenFile.
       props.onOpenFile(entry.path, mode);
     }
   }
@@ -526,8 +529,8 @@ export default function FileTree(props: FileTreeProps) {
                 <For each={filteredEntries()}>
                   {(entry, index) => {
                     const isMd = !entry.isDirectory && entry.name.endsWith(".md");
-                    const isClickable = entry.isDirectory || isMd;
-
+                    // Everything is openable now: directories navigate, files
+                    // open in a viewer. Markdown keeps its own icon/accent.
                     return (
                       <div
                         class={`file-tree-entry ${
@@ -537,7 +540,7 @@ export default function FileTree(props: FileTreeProps) {
                               ? "file-tree-md"
                               : "file-tree-other"
                         }${index() === selectedIndex() ? " is-selected" : ""}`}
-                        onClick={(e) => isClickable && handleClick(entry, e)}
+                        onClick={(e) => handleClick(entry, e)}
                         onContextMenu={(e) => openMenu(entry, index(), e)}
                         onMouseEnter={() => setSelectedIndex(index())}
                         title={entry.path}
