@@ -17,6 +17,12 @@ export const [dropTarget, setDropTarget] = createSignal<{
   root?: boolean;
 } | null>(null);
 
+// The id of the tab-chip the cursor is hovering during a pane drag. When set,
+// releasing detaches the dragged pane into that tab (a cross-tab move) instead
+// of splitting a pane in the current tab. Cleared when the cursor leaves the
+// tab bar or the drag ends.
+export const [dropTabId, setDropTabId] = createSignal<string | null>(null);
+
 // Edge thresholds: the central 40% box is "center" (swap); otherwise the
 // nearest border decides the split side.
 export function computeDropEdge(

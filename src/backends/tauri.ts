@@ -1,7 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { readTextFile, readDir as tauriReadDir } from "@tauri-apps/plugin-fs";
+import {
+  readTextFile,
+  writeTextFile as tauriWriteTextFile,
+  readDir as tauriReadDir,
+} from "@tauri-apps/plugin-fs";
 import type {
   Backend,
   SpawnPtyOptions,
@@ -52,6 +56,10 @@ export class TauriBackend implements Backend {
     return readTextFile(path);
   }
 
+  async writeTextFile(path: string, content: string): Promise<void> {
+    return tauriWriteTextFile(path, content);
+  }
+
   async readDir(path: string): Promise<FileEntry[]> {
     const entries = await tauriReadDir(path);
     return entries.map((e) => ({
@@ -69,6 +77,13 @@ export class TauriBackend implements Backend {
 
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     return listen("fs-change", () => cb());
+  }
+
+  async onOpenPath(cb: (path: string) => void): Promise<UnlistenFn> {
+    // Tauri file-association / single-instance file delivery isn't wired on this
+    // experimental backend yet; Electron is the shipping target. No-op unlisten.
+    void cb;
+    return () => {};
   }
 
   async clipboardHasImage(): Promise<boolean> {

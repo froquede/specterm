@@ -25,6 +25,9 @@ contextBridge.exposeInMainWorld("specterm", {
   // Filesystem
   readTextFile: (path) => ipcRenderer.invoke("read-text-file", path),
 
+  writeTextFile: (path, content) =>
+    ipcRenderer.invoke("write-text-file", path, content),
+
   readDir: (path) => ipcRenderer.invoke("read-dir", path),
 
   listDrives: () => ipcRenderer.invoke("list-drives"),
@@ -45,6 +48,14 @@ contextBridge.exposeInMainWorld("specterm", {
       ipcRenderer.removeListener("fs-change", handler);
       ipcRenderer.invoke("unwatch-dir");
     };
+  },
+
+  // A file the OS asked us to open (Finder "Open With", double-click, CLI arg).
+  // The main process queues these until the renderer subscribes, then replays.
+  onOpenPath: (cb) => {
+    const handler = (_event, path) => cb(path);
+    ipcRenderer.on("open-path", handler);
+    return () => ipcRenderer.removeListener("open-path", handler);
   },
 
   // Window

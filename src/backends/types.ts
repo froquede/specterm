@@ -29,10 +29,14 @@ export interface Backend {
 
   // Filesystem
   readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
+  // A file the OS asked the app to open (Finder "Open With", double-click, CLI
+  // path arg). Fires once per file, replaying any that queued before subscribe.
+  onOpenPath(cb: (path: string) => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.
   clipboardHasImage(): Promise<boolean>;

@@ -187,7 +187,7 @@ export function swapLeaves(
 }
 
 /** Split the target leaf, placing `leaf` on the side named by `edge`. */
-function insertBeside(
+export function insertBeside(
   root: SplitNode,
   targetId: PaneId,
   leaf: SplitNode,

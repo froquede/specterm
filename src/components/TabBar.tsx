@@ -2,6 +2,7 @@ import { createSignal, For, onMount, onCleanup } from "solid-js";
 import { getBackend, type UnlistenFn } from "../backends";
 import { shortcutLabel } from "../lib/platform";
 import { tabBarSide } from "../stores/settings";
+import { draggingPaneId, dropTabId } from "../stores/pane-drag";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -95,7 +96,18 @@ export default function TabBar(props: TabBarProps) {
         <For each={props.tabs}>
           {(tab) => (
             <div
-              class={`tab ${tab.id === props.activeTabId ? "active" : ""}`}
+              class="tab"
+              classList={{
+                active: tab.id === props.activeTabId,
+                // Highlighted while a dragged pane hovers this chip — release
+                // detaches the pane into this tab. Never the source tab (always
+                // the active one), where the drop would be a no-op.
+                "drop-tab":
+                  draggingPaneId() !== null &&
+                  dropTabId() === tab.id &&
+                  tab.id !== props.activeTabId,
+              }}
+              data-tab-id={tab.id}
               onClick={() => props.onSelect(tab.id)}
               onMouseDown={(e) => {
                 if (e.button === 1) {

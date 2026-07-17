@@ -15,12 +15,14 @@ interface SpectermAPI {
   onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
+  writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   listDrives(): Promise<DriveEntry[]>;
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
   watchDir(path: string, cb: () => void): () => void;
+  onOpenPath(cb: (path: string) => void): () => void;
   getHomePath(): Promise<string>;
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
@@ -70,6 +72,10 @@ export class ElectronBackend implements Backend {
     return this.api.readTextFile(path);
   }
 
+  async writeTextFile(path: string, content: string): Promise<void> {
+    return this.api.writeTextFile(path, content);
+  }
+
   async readDir(path: string): Promise<FileEntry[]> {
     return this.api.readDir(path);
   }
@@ -93,6 +99,10 @@ export class ElectronBackend implements Backend {
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     const home = await this.getHomePath();
     return this.api.watchDir(home, cb);
+  }
+
+  async onOpenPath(cb: (path: string) => void): Promise<UnlistenFn> {
+    return this.api.onOpenPath(cb);
   }
 
   async getHomePath(): Promise<string> {

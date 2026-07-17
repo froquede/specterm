@@ -157,6 +157,14 @@ body,
   border-bottom: 2px solid var(--accent);
 }
 
+/* A dragged pane is hovering this chip — releasing detaches the pane into this
+   tab. Signal it as a live drop target, distinct from the plain hover state. */
+.tab.drop-tab {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
 /* The accent marker sits on the edge facing the panes. */
 .app[data-tab-edge="bottom"] .tab.active {
   border-bottom: none;

@@ -10,6 +10,8 @@ import {
   setDraggingPaneId,
   dropTarget,
   setDropTarget,
+  dropTabId,
+  setDropTabId,
   computeDropEdge,
   isRootEdgeDrop,
 } from "../stores/pane-drag";
@@ -28,6 +30,7 @@ interface PaneProps {
     edge: DropEdge,
     atRoot?: boolean
   ) => void;
+  onDropToTab?: (sourceId: PaneId, tabId: string) => void;
 }
 
 export default function Pane(props: PaneProps) {
@@ -62,6 +65,16 @@ export default function Pane(props: PaneProps) {
       // Overlays are pointer-events:none, so this resolves to the pane under
       // the cursor, whose ancestor carries data-pane-id.
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
+      // Over a tab-chip? The drop detaches this pane into that tab. This wins
+      // over pane-edge targeting, so clear the pane drop indicator too.
+      const tabEl = el?.closest<HTMLElement>("[data-tab-id]");
+      const overTabId = tabEl?.getAttribute("data-tab-id");
+      if (overTabId) {
+        setDropTarget(null);
+        setDropTabId(overTabId);
+        return;
+      }
+      setDropTabId(null);
       const paneEl = el?.closest<HTMLElement>("[data-pane-id]");
       const targetId = paneEl?.getAttribute("data-pane-id");
       if (!paneEl || !targetId || targetId === paneId) {
@@ -85,9 +98,12 @@ export default function Pane(props: PaneProps) {
       bar.removeEventListener("pointerup", onUp);
       bar.removeEventListener("pointercancel", onUp);
       const dt = dropTarget();
+      const tabId = dropTabId();
       setDraggingPaneId(null);
       setDropTarget(null);
-      if (dt) props.onDrop?.(paneId, dt.paneId, dt.edge, dt.root);
+      setDropTabId(null);
+      if (tabId) props.onDropToTab?.(paneId, tabId);
+      else if (dt) props.onDrop?.(paneId, dt.paneId, dt.edge, dt.root);
     }
 
     bar.addEventListener("pointermove", onMove);
@@ -103,6 +119,7 @@ export default function Pane(props: PaneProps) {
     if (draggingPaneId() === paneId) {
       setDraggingPaneId(null);
       setDropTarget(null);
+      setDropTabId(null);
     }
   });
 

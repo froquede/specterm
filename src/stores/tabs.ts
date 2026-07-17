@@ -5,6 +5,7 @@ import type {
   Tab,
   PaneType,
   PaneId,
+  TabId,
   SplitNode,
   SidebarView,
 } from "../types";
@@ -12,6 +13,9 @@ import {
   createLeaf,
   collectLeaves,
   firstLeafId,
+  findLeafNode,
+  insertBeside,
+  closePane,
   moveLeaf,
   moveLeafToRootEdge,
   findParentSplit,
@@ -356,6 +360,56 @@ export function useTabStore() {
             : t
         ),
       }));
+    },
+
+    // Detach a pane from its tab and graft it into another one. The pane's leaf
+    // keeps its id, so its live terminal (kept alive in the registry across the
+    // remount — TerminalPane only detaches, never destroys, on unmount) rides
+    // along intact. It lands split beside the target tab's active pane, becomes
+    // that tab's active pane, and the target tab is brought to the front. If the
+    // moved pane was the last one in its source tab, that now-empty tab is
+    // dropped. No-op when source and target are the same tab.
+    movePaneToTab(sourcePaneId: PaneId, targetTabId: TabId) {
+      const s = state();
+      const srcIdx = s.tabs.findIndex((t) => findLeafNode(t.root, sourcePaneId));
+      const tgtIdx = s.tabs.findIndex((t) => t.id === targetTabId);
+      if (srcIdx === -1 || tgtIdx === -1 || srcIdx === tgtIdx) return;
+
+      const srcTab = s.tabs[srcIdx];
+      const tgtTab = s.tabs[tgtIdx];
+      const leaf = findLeafNode(srcTab.root, sourcePaneId);
+      if (!leaf) return;
+
+      const prunedSrc = closePane(srcTab.root, sourcePaneId);
+      const newTgtRoot = insertBeside(
+        tgtTab.root,
+        tgtTab.activePaneId,
+        leaf,
+        "right"
+      );
+
+      let newTabs = s.tabs.map((t, i) => {
+        if (i === tgtIdx) {
+          return { ...t, root: newTgtRoot, activePaneId: sourcePaneId };
+        }
+        if (i === srcIdx && prunedSrc !== null) {
+          return {
+            ...t,
+            root: prunedSrc,
+            activePaneId:
+              t.activePaneId === sourcePaneId
+                ? firstLeafId(prunedSrc)
+                : t.activePaneId,
+          };
+        }
+        return t;
+      });
+      // The source tab emptied out — its only pane just left. Drop it.
+      if (prunedSrc === null) {
+        newTabs = newTabs.filter((_, i) => i !== srcIdx);
+      }
+
+      update(() => ({ ...s, tabs: newTabs, activeTabId: targetTabId }));
     },
 
     // Force the orientation of the split that directly contains `paneId`.
