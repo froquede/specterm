@@ -1,0 +1,227 @@
+/* Read-only text/code viewer (components/TextPane.tsx). Chrome mirrors the
+   markdown pane; the body is a line-numbered, horizontally scrollable code view.
+   Syntax-highlight token colors below map highlight.js classes onto the active
+   theme's ANSI palette, so the viewer recolors with the theme like everything
+   else in the app. */
+
+.text-pane {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.text-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  padding: 0 12px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
+.text-filepath {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+
+.text-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.text-lang {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  background: var(--bg-hover);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.text-toolbar-btn {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: inherit;
+}
+
+.text-toolbar-btn:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+/* Find bar — same shape as the markdown one. */
+.text-search {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.text-search input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--fg);
+  font-family: inherit;
+}
+
+.text-search-count {
+  font-size: 11px;
+  color: var(--fg-muted);
+  min-width: 48px;
+  text-align: right;
+}
+
+.text-search-btn {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+}
+
+.text-search-btn:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.text-truncated {
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--ansi-yellow);
+  background: color-mix(in srgb, var(--ansi-yellow) 12%, transparent);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.text-error {
+  padding: 16px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  white-space: pre-wrap;
+}
+
+/* Body: gutter + code, sharing one scroll box so they scroll together. */
+.text-body {
+  flex: 1;
+  display: flex;
+  overflow: auto;
+  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  tab-size: 4;
+}
+
+.text-gutter {
+  margin: 0;
+  padding: 8px 10px 8px 12px;
+  text-align: right;
+  color: var(--fg-faint);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  user-select: none;
+  white-space: pre;
+  /* Stays visible when the code scrolls horizontally. */
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
+
+.text-code {
+  margin: 0;
+  padding: 8px 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.text-code code {
+  white-space: pre;
+  color: var(--fg);
+  font-family: inherit;
+}
+
+/* --- highlight.js token → theme ANSI mapping ---------------------------- */
+.text-code .hljs-comment,
+.text-code .hljs-quote {
+  color: var(--fg-faint);
+  font-style: italic;
+}
+.text-code .hljs-keyword,
+.text-code .hljs-selector-tag,
+.text-code .hljs-literal,
+.text-code .hljs-doctag {
+  color: var(--ansi-magenta);
+}
+.text-code .hljs-string,
+.text-code .hljs-regexp,
+.text-code .hljs-meta .hljs-string {
+  color: var(--ansi-green);
+}
+.text-code .hljs-number,
+.text-code .hljs-symbol,
+.text-code .hljs-bullet {
+  color: var(--ansi-yellow);
+}
+.text-code .hljs-title,
+.text-code .hljs-title.function_,
+.text-code .hljs-section {
+  color: var(--ansi-blue);
+}
+.text-code .hljs-title.class_,
+.text-code .hljs-type,
+.text-code .hljs-built_in,
+.text-code .hljs-class .hljs-title {
+  color: var(--ansi-cyan);
+}
+.text-code .hljs-attr,
+.text-code .hljs-attribute,
+.text-code .hljs-variable,
+.text-code .hljs-template-variable,
+.text-code .hljs-property {
+  color: var(--ansi-red);
+}
+.text-code .hljs-tag .hljs-name {
+  color: var(--ansi-red);
+}
+.text-code .hljs-meta,
+.text-code .hljs-params {
+  color: var(--fg-muted);
+}
+.text-code .hljs-emphasis {
+  font-style: italic;
+}
+.text-code .hljs-strong {
+  font-weight: bold;
+}
+.text-code .hljs-deletion {
+  color: var(--ansi-red);
+}
+.text-code .hljs-addition {
+  color: var(--ansi-green);
+}

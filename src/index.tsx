@@ -5,6 +5,7 @@ import { isMac } from "./lib/platform";
 import "@xterm/xterm/css/xterm.css";
 import "./styles/global.css";
 import "./styles/markdown.css";
+import "./styles/text.css";
 import "./styles/file-tree.css";
 
 // Platform hook for OS-specific styling (e.g. macOS traffic-light spacing).
