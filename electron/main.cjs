@@ -5,6 +5,7 @@ const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
 const { execFile } = require("child_process");
+const { autoUpdater } = require("electron-updater");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -520,6 +521,105 @@ function buildAppMenu() {
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
+
+// === Auto-update (electron-updater) ===
+// Pulls new releases from the GitHub feed declared in package.json `build.publish`
+// (public repo → no token needed). The renderer drives the flow: it asks to
+// check, then to download, then to install; every step's progress is streamed
+// back over the "updater:event" channel so Settings can show live status.
+//
+// Manual download (autoDownload=false) — we never fetch a build behind the
+// user's back; they press the buttons. autoInstallOnAppQuit stays on so a
+// downloaded-but-not-installed update still lands on the next quit.
+let updaterWired = false;
+
+function sendUpdaterEvent(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("updater:event", payload);
+  }
+}
+
+// Never forward electron-updater's raw error to the renderer: its message/stack
+// can embed the full HTTP response (including GitHub Set-Cookie headers), which
+// has no business rendering in the Settings UI. Log the detail to the main
+// process only and hand the renderer a short, safe, category-based message.
+function reportUpdaterError(err) {
+  console.error("[updater]", err);
+  const raw = String((err && (err.message || err.code)) || err || "");
+  let message = "Update failed. Please try again later.";
+  if (/ENOTFOUND|ENETUNREACH|ETIMEDOUT|ECONNREFUSED|net::/i.test(raw)) {
+    message = "Couldn't reach the update server. Check your connection.";
+  } else if (/\b404\b/.test(raw)) {
+    message = "No update feed found for this release.";
+  } else if (/\b403\b|rate limit/i.test(raw)) {
+    message = "Update server is rate-limiting. Try again shortly.";
+  } else if (/sha512|checksum|integrity/i.test(raw)) {
+    message = "Downloaded update failed its integrity check.";
+  }
+  sendUpdaterEvent({ status: "error", message });
+  return message;
+}
+
+function wireAutoUpdater() {
+  if (updaterWired) return;
+  updaterWired = true;
+
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  autoUpdater.on("checking-for-update", () =>
+    sendUpdaterEvent({ status: "checking" })
+  );
+  autoUpdater.on("update-available", (info) =>
+    sendUpdaterEvent({ status: "available", version: info.version })
+  );
+  autoUpdater.on("update-not-available", (info) =>
+    sendUpdaterEvent({ status: "not-available", version: info.version })
+  );
+  autoUpdater.on("download-progress", (p) =>
+    sendUpdaterEvent({ status: "progress", percent: p.percent })
+  );
+  autoUpdater.on("update-downloaded", (info) =>
+    sendUpdaterEvent({ status: "downloaded", version: info.version })
+  );
+  autoUpdater.on("error", (err) => reportUpdaterError(err));
+}
+
+// Check: unpackaged/dev has no app-update.yml, so electron-updater throws.
+// Report a "dev" status instead of surfacing that as an error in the UI.
+ipcMain.handle("updater:check", async () => {
+  if (!app.isPackaged) {
+    sendUpdaterEvent({ status: "dev", version: app.getVersion() });
+    return { status: "dev", version: app.getVersion() };
+  }
+  wireAutoUpdater();
+  try {
+    await autoUpdater.checkForUpdates();
+    return { status: "ok" };
+  } catch (err) {
+    return { status: "error", message: reportUpdaterError(err) };
+  }
+});
+
+ipcMain.handle("updater:download", async () => {
+  if (!app.isPackaged) return { status: "dev" };
+  wireAutoUpdater();
+  try {
+    await autoUpdater.downloadUpdate();
+    return { status: "ok" };
+  } catch (err) {
+    return { status: "error", message: reportUpdaterError(err) };
+  }
+});
+
+// Quit and swap in the downloaded update. isSilent=false shows the installer
+// wizard on Windows/NSIS; isForceRunAfter relaunches the app afterward.
+ipcMain.handle("updater:install", () => {
+  if (!app.isPackaged) return;
+  autoUpdater.quitAndInstall(false, true);
+});
+
+ipcMain.handle("updater:current-version", () => app.getVersion());
 
 // === App lifecycle ===
 

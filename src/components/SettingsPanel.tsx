@@ -42,6 +42,16 @@ import {
 } from "../stores/settings";
 import { getBackend } from "../backends";
 import {
+  updaterPhase,
+  updaterVersion,
+  updaterPercent,
+  updaterError,
+  upToDateTick,
+  checkForUpdate,
+  downloadUpdate,
+  installUpdate,
+} from "../stores/updater";
+import {
   activeTheme,
   availableThemes,
   galleryThemes,
@@ -231,6 +241,93 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     clearTimeout(debounceTimer);
     clearTimeout(hideTimer);
   });
+
+  // === Auto-update ===
+  // The button is the whole flow: "Check for updates" → "New vX available" →
+  // (click) the button turns into a 0–100% progress bar while downloading →
+  // "Restart Specterm?" once done. Two absolute toasters fade in above the
+  // button: "up to date" after a check finds none, and "Update finished,
+  // restart to apply" when a download completes. The state machine and host
+  // subscription live in stores/updater (they outlive this lazily-mounted
+  // panel); here we read the signals and drive the toasts.
+  const [toastMsg, setToastMsg] = createSignal("");
+  const [toastMounted, setToastMounted] = createSignal(false);
+  const [toastVisible, setToastVisible] = createSignal(false);
+  let toastHideTimer: ReturnType<typeof setTimeout> | undefined;
+  let toastUnmountTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function flashToast(msg: string) {
+    clearTimeout(toastHideTimer);
+    clearTimeout(toastUnmountTimer);
+    setToastMsg(msg);
+    setToastMounted(true);
+    // Next frame: flip to visible so the enter transition runs from hidden.
+    requestAnimationFrame(() => setToastVisible(true));
+    toastHideTimer = setTimeout(() => {
+      setToastVisible(false);
+      toastUnmountTimer = setTimeout(() => setToastMounted(false), 300);
+    }, 5000);
+  }
+
+  // The store bumps upToDateTick each time a check finds the app current. Skip
+  // the mount run (not a check) and flash on every later bump.
+  createEffect((previous: number | undefined) => {
+    const tick = upToDateTick();
+    if (previous !== undefined && tick !== previous) {
+      flashToast("Your Specterm is up to date");
+    }
+    return tick;
+  });
+
+  // A download that just completed: flash the finish toaster once, on the
+  // transition into "downloaded" (not on a mount where it's already there).
+  createEffect((wasDownloaded: boolean | undefined) => {
+    const isDownloaded = updaterPhase() === "downloaded";
+    if (wasDownloaded === false && isDownloaded) {
+      flashToast("Update finished, restart to apply");
+    }
+    return isDownloaded;
+  });
+
+  onCleanup(() => {
+    clearTimeout(toastHideTimer);
+    clearTimeout(toastUnmountTimer);
+  });
+
+  function onUpdaterButton() {
+    const phase = updaterPhase();
+    if (phase === "available") {
+      void downloadUpdate();
+    } else if (phase === "downloaded") {
+      void installUpdate();
+    } else if (phase === "downloading") {
+      // The bar is progressing — clicks are inert (button is disabled anyway).
+      return;
+    } else {
+      // idle / error → run a fresh check.
+      void checkForUpdate();
+    }
+  }
+
+  const updaterLabel = () => {
+    switch (updaterPhase()) {
+      case "checking":
+        return "Checking…";
+      case "available":
+        return `New v${updaterVersion()} available`;
+      case "downloading":
+        return `Downloading… ${updaterPercent()}%`;
+      case "downloaded":
+        return "Restart Specterm?";
+      case "error":
+        return "Retry check";
+      default:
+        return "Check for updates";
+    }
+  };
+  const updaterDownloading = () => updaterPhase() === "downloading";
+  const updaterBusy = () =>
+    updaterPhase() === "checking" || updaterDownloading();
 
   const pct = () => Math.round(unfocusedOpacity() * 100);
   const winPct = () => Math.round(windowOpacity() * 100);
@@ -625,6 +722,61 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           <div class="settings-hint">
             Panes take the whole window; the bar slides back in when you reach
             for its edge.
+          </div>
+        </div>
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <span class="settings-label">Updates</span>
+          </div>
+          {/* Toast anchor: position:relative so the absolutely-positioned
+              up-to-date toast sits directly above the button, overlapping the
+              content, and fades in/out. */}
+          <div class="updater-control">
+            <Show when={toastMounted()}>
+              <div
+                class="updater-toast"
+                classList={{ visible: toastVisible() }}
+                role="status"
+                aria-live="polite"
+              >
+                {toastMsg()}
+              </div>
+            </Show>
+            {/* While downloading the button becomes a progress bar: an accent
+                fill grows left→right to the percentage. A second copy of the
+                label, clipped to the filled region and painted in the bg color,
+                overlays the base label so the text stays legible on both the
+                filled (accent) and unfilled (chrome) sides. */}
+            <button
+              class="settings-action updater-button"
+              classList={{
+                ready: updaterPhase() === "downloaded",
+                downloading: updaterDownloading(),
+              }}
+              style={
+                updaterDownloading()
+                  ? { "--progress": `${updaterPercent()}%` }
+                  : undefined
+              }
+              disabled={updaterBusy()}
+              onClick={onUpdaterButton}
+            >
+              <Show when={updaterDownloading()}>
+                <span class="updater-fill" aria-hidden="true" />
+                <span class="updater-label over" aria-hidden="true">
+                  {updaterLabel()}
+                </span>
+              </Show>
+              <span class="updater-label base">{updaterLabel()}</span>
+            </button>
+          </div>
+          <Show when={updaterError()}>
+            <div class="settings-error">{updaterError()}</div>
+          </Show>
+          <div class="settings-hint">
+            Checks GitHub for the latest release and installs it in place.
           </div>
         </div>
       </div>

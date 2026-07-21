@@ -5,6 +5,7 @@ import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
 import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
 import { initTheme, importBase16Theme } from "./stores/theme";
+import { initUpdater } from "./stores/updater";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd } from "./lib/fspath";
@@ -173,6 +174,12 @@ export default function App() {
 
     // Apply the persisted color theme (CSS variables + terminal palette).
     initTheme();
+
+    // Check GitHub for a newer release once, on this cold start. The single-
+    // instance lock means relaunching an already-running Specterm just focuses
+    // the window without re-running this — so it's "check on open", and any
+    // later check is the manual button in Settings.
+    void initUpdater();
 
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);

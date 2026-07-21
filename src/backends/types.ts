@@ -18,6 +18,31 @@ export interface DriveEntry {
   path: string;
 }
 
+// Live status streamed from the host while an update check/download runs. Also
+// the shape the renderer reduces into its Settings UI.
+//   dev          — running unpackaged; no update feed available
+//   checking     — a check is in flight
+//   available    — a newer release exists (version = its tag)
+//   not-available— already on the latest
+//   progress     — download running (percent 0–100)
+//   downloaded   — ready to install on restart
+//   error        — something failed (message = why)
+export type UpdaterStatus =
+  | "dev"
+  | "checking"
+  | "available"
+  | "not-available"
+  | "progress"
+  | "downloaded"
+  | "error";
+
+export interface UpdaterEvent {
+  status: UpdaterStatus;
+  version?: string;
+  percent?: number;
+  message?: string;
+}
+
 export interface Backend {
   // PTY
   spawnPty(opts: SpawnPtyOptions): Promise<number>;
@@ -55,4 +80,13 @@ export interface Backend {
   // Whole-window alpha (0–1); values below 1 let the desktop show through.
   // A no-op on backends/platforms that can't honor it.
   setWindowOpacity(value: number): Promise<void>;
+
+  // Auto-update. checkForUpdate/downloadUpdate kick off async work whose
+  // progress arrives via onUpdaterEvent; installUpdate quits and swaps in the
+  // downloaded build. No-ops on backends that can't self-update.
+  checkForUpdate(): Promise<void>;
+  downloadUpdate(): Promise<void>;
+  installUpdate(): Promise<void>;
+  getCurrentVersion(): Promise<string>;
+  onUpdaterEvent(cb: (event: UpdaterEvent) => void): Promise<UnlistenFn>;
 }
