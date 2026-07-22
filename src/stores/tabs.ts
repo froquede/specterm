@@ -25,10 +25,14 @@ import {
   type DropEdge,
   type FocusDirection,
 } from "../lib/split-tree";
-import { destroyTerminal, getTerminalInstance } from "../lib/terminal-registry";
+import {
+  destroyTerminal,
+  getTerminalInstance,
+  getTerminalCwd,
+} from "../lib/terminal-registry";
 
-function createTerminalTab(): Tab {
-  const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd: "" });
+function createTerminalTab(cwd = ""): Tab {
+  const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd });
   return {
     id: nanoid(8),
     title: "Terminal",
@@ -161,7 +165,13 @@ export function useTabStore() {
     },
 
     createTab() {
-      const tab = createTerminalTab();
+      // Same inheritance as a split: a new tab opens where the pane you were in
+      // is. The active pane may be a markdown/text view with no shell, in which
+      // case there's nothing to inherit and the startup path applies.
+      const current = state().tabs.find((t) => t.id === state().activeTabId);
+      const tab = createTerminalTab(
+        current ? getTerminalCwd(current.activePaneId) : ""
+      );
       update((s) => ({
         ...s,
         tabs: [...s.tabs, tab],
@@ -244,7 +254,15 @@ export function useTabStore() {
       const tab = s.tabs[idx];
       // Pre-build the new leaf so we know its id and can make it the active
       // pane — the freshly split terminal is where typing should land.
-      const newLeaf = createLeaf(newPane);
+      // A new terminal inherits the directory of the pane being split, so a
+      // split lands where you're working instead of back at the startup path.
+      // Only when the source has no cwd to give (it's a markdown or text pane)
+      // does the new terminal fall back to the configured startup path.
+      const newLeaf = createLeaf(
+        newPane.kind === "terminal" && !newPane.cwd
+          ? { ...newPane, cwd: getTerminalCwd(tab.activePaneId) }
+          : newPane
+      );
       const newRoot = splitPaneInTree(tab.root, tab.activePaneId, direction, newLeaf);
 
       update(() => ({

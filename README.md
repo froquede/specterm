@@ -14,6 +14,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Configurable chrome** -- put the tab bar in any of the window's four corners, size it and the sidebar, or auto-hide the bar so the panes take the whole window
 - **Find in terminal** -- search the scrollback of the active pane
 - **WebGL rendering** -- GPU-accelerated terminal via xterm.js WebGL addon, with automatic recovery from a lost context
+- **Splits inherit the directory** -- a new pane or tab opens where the pane you split from is, not back at the startup path. The shell's directory is read from its own process, so it works without configuring your shell; `OSC 7` (which zsh and fish send by default) is used as a faster signal when it's there
 - **OSC protocol** -- captures title sequences and working directory updates
 - **Per-OS keybindings** -- macOS uses `⌘`; Linux/Windows keep the Kitty-style `Ctrl+Shift+<key>` scheme
 

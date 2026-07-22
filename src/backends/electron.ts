@@ -13,6 +13,7 @@ interface SpectermAPI {
   writePty(id: number, data: string): Promise<void>;
   resizePty(id: number, cols: number, rows: number): Promise<void>;
   killPty(id: number): Promise<void>;
+  ptyCwd(id: number): Promise<string | null>;
   onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
@@ -26,6 +27,7 @@ interface SpectermAPI {
   watchDir(path: string, cb: () => void): () => void;
   onOpenPath(cb: (path: string) => void): () => void;
   getHomePath(): Promise<string>;
+  getHostname(): Promise<string>;
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
@@ -62,6 +64,10 @@ export class ElectronBackend implements Backend {
 
   async killPty(id: number): Promise<void> {
     return this.api.killPty(id);
+  }
+
+  async ptyCwd(id: number): Promise<string | null> {
+    return this.api.ptyCwd(id);
   }
 
   async onPtyOutput(
@@ -119,6 +125,10 @@ export class ElectronBackend implements Backend {
 
   async getHomePath(): Promise<string> {
     return this.api.getHomePath();
+  }
+
+  async getHostname(): Promise<string> {
+    return this.api.getHostname();
   }
 
   async isFullscreen(): Promise<boolean> {

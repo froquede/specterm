@@ -39,6 +39,12 @@ export class TauriBackend implements Backend {
     return invoke("kill_pty", { id });
   }
 
+  // No `pty_cwd` command on the Tauri side yet; reporting null degrades to the
+  // configured startup path, exactly as on a platform that can't answer.
+  async ptyCwd(_id: number): Promise<string | null> {
+    return null;
+  }
+
   async onPtyOutput(
     cb: (id: number, data: Uint8Array) => void
   ): Promise<UnlistenFn> {
@@ -115,6 +121,12 @@ export class TauriBackend implements Backend {
 
   async getHomePath(): Promise<string> {
     return invoke<string>("get_home_path");
+  }
+
+  // No `get_hostname` command on the Tauri side yet. Blank means OSC 7 reports
+  // are accepted only in their unambiguous local forms (empty host/localhost).
+  async getHostname(): Promise<string> {
+    return "";
   }
 
   async isFullscreen(): Promise<boolean> {

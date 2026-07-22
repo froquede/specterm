@@ -5,10 +5,10 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
+import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit, ptyCwd } from "./pty";
 import { startupPath } from "../stores/settings";
 import { os } from "./platform";
-import { registerOscHandler } from "./osc";
+import { registerOscHandler, registerCwdHandler } from "./osc";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
@@ -66,6 +66,16 @@ export interface TerminalInstance {
   // pane's callback, re-wired on every attach.
   title: string;
   onTitle: ((title: string) => void) | null;
+  // The shell's working directory, kept current so a new pane can open where
+  // this one is. Seeded with the spawn cwd, then updated from OSC 7 when the
+  // shell reports it and re-read from the shell process after each command
+  // (refreshCwd) for the shells that don't. Never blank once spawned.
+  cwd: string;
+  // Set once this shell has sent an OSC 7. From then on it is the authority on
+  // its own directory and the process probe stops: the shell reports the moment
+  // it moves, knows about cases a process snapshot can blur (a subshell, a
+  // pushd), and costs no IPC. Shells that never report keep being probed.
+  cwdReportedByShell: boolean;
 }
 
 const instances = new Map<string, TerminalInstance>();
@@ -266,12 +276,48 @@ function foldInput(
   return { buffer, tracked: false };
 }
 
+// Re-read the shell's directory from its own process and cache it. Silent and
+// best-effort: a null answer (Windows, or a pty that exited between the ask and
+// the look) leaves the last known value alone rather than blanking it.
+async function refreshCwd(instance: TerminalInstance) {
+  if (instance.ptyId === null || instance.disposed) return;
+  // The shell reports for itself — don't second-guess it with a snapshot taken
+  // at a slightly different moment.
+  if (instance.cwdReportedByShell) return;
+  const cwd = await ptyCwd(instance.ptyId);
+  if (cwd && !instance.disposed) instance.cwd = cwd;
+}
+
+// A command just ran, so the directory may have moved. A bare `cd` lands
+// immediately, but a script that cds partway through takes longer — so probe
+// twice around the command instead of polling on a timer while the terminal
+// sits idle, which would cost an IPC round trip per second per pane forever.
+// Shells that send OSC 7 have already updated the value by now; this is the
+// fallback path, and re-reading is harmless when it agrees.
+const cwdProbes = new WeakMap<TerminalInstance, number[]>();
+
+function scheduleCwdRefresh(instance: TerminalInstance) {
+  for (const timer of cwdProbes.get(instance) ?? []) clearTimeout(timer);
+  cwdProbes.set(instance, [
+    window.setTimeout(() => refreshCwd(instance), 150),
+    window.setTimeout(() => refreshCwd(instance), 1500),
+  ]);
+}
+
+/** The live working directory of a pane's shell, or "" if it has no terminal. */
+export function getTerminalCwd(paneId: string): string {
+  return instances.get(paneId)?.cwd ?? "";
+}
+
 export async function createTerminalInstance(
   paneId: string,
   opts?: {
     onTitle?: (title: string) => void;
     onExit?: () => void;
     onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+    // Directory this terminal should open in — the live cwd of the pane it was
+    // split from. Blank for the boot terminal, which uses the startup path.
+    initialCwd?: string;
   }
 ): Promise<TerminalInstance> {
   // Return existing if already created
@@ -318,9 +364,21 @@ export async function createTerminalInstance(
     disposed: false,
     title: "Terminal",
     onTitle: opts?.onTitle ?? null,
+    // Where this terminal will spawn. The pane carries the directory it should
+    // inherit (the pane it was split from); blank falls back to the configured
+    // startup path, then to home main-side.
+    cwd: opts?.initialCwd || startupPath() || "",
+    cwdReportedByShell: false,
   };
 
   instances.set(paneId, instance);
+
+  // The shell's own report of its directory, when it sends one. Free and
+  // instant where available; refreshCwd covers the shells that stay quiet.
+  registerCwdHandler(term, (cwd) => {
+    instance.cwd = cwd;
+    instance.cwdReportedByShell = true;
+  });
 
   // Title is reported once here and cached on the instance, then forwarded to
   // whichever pane is currently mounted. Wiring it on the instance (not in a
@@ -341,6 +399,7 @@ export async function attachTerminal(
     onTitle?: (title: string) => void;
     onExit?: () => void;
     onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+    initialCwd?: string;
   }
 ) {
   let instance = instances.get(paneId);
@@ -481,14 +540,21 @@ export async function attachTerminal(
 
   fitAddon.fit();
 
-  // Spawn PTY. The configured startup directory (Settings) is passed through as
-  // cwd; blank → undefined, and the main process falls back to the OS home. A
-  // stale/deleted path is guarded main-side so spawning can't crash.
+  // Spawn PTY. instance.cwd is the directory inherited from the pane this one
+  // was split from, or the configured startup directory (Settings) for the boot
+  // terminal; blank → undefined, and the main process falls back to the OS
+  // home. A stale/deleted path is guarded main-side so spawning can't crash.
   instance.ptyId = await spawnPty({
     cols: term.cols,
     rows: term.rows,
-    cwd: startupPath() || undefined,
+    cwd: instance.cwd || undefined,
   });
+
+  // The spawn directory is only the starting point — from here the value has to
+  // track the user's `cd`s, or a split taken an hour later would still inherit
+  // where the shell began. Read it back once now so a shell rc that cds on
+  // startup is reflected too.
+  refreshCwd(instance);
 
   // Wire output
   instance.unlistenOutput = await onPtyOutput((id, data) => {
@@ -515,6 +581,10 @@ export async function attachTerminal(
 
     // Enter — try to expand the line before it reaches the shell.
     if (data === "\r" || data === "\n") {
+      // Whatever the command turns out to be, it may leave the shell somewhere
+      // new — including the `cd fav-N` expansion below, which is a cd by
+      // definition. Covers both paths out of this branch.
+      scheduleCwdRefresh(instance!);
       const m = lineTracked ? CD_FAV_RE.exec(lineBuffer.trim()) : null;
       const fav = m ? favoriteByIndex(Number(m[1])) : undefined;
       const typedLen = lineBuffer.length;

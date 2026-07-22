@@ -10,6 +10,8 @@ contextBridge.exposeInMainWorld("specterm", {
 
   killPty: (id) => ipcRenderer.invoke("kill-pty", id),
 
+  ptyCwd: (id) => ipcRenderer.invoke("pty-cwd", id),
+
   onPtyOutput: (cb) => {
     const handler = (_event, id, data) => cb(id, data);
     ipcRenderer.on("pty-output", handler);
@@ -42,6 +44,8 @@ contextBridge.exposeInMainWorld("specterm", {
   clipboardWriteText: (text) => ipcRenderer.invoke("clipboard-write-text", text),
 
   getHomePath: () => ipcRenderer.invoke("get-home-path"),
+
+  getHostname: () => ipcRenderer.invoke("get-hostname"),
 
   watchDir: (path, cb) => {
     ipcRenderer.invoke("watch-dir", path);

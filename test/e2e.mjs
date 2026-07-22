@@ -34,10 +34,14 @@ const eqPath = (a, b) =>
   a != null && b != null && (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
 const joinPath = (base, name) => base.replace(/[\\/]+$/, "") + SEP + name;
 
+// Whole-suite deadline. Raised from 180s when the cwd-inheritance checks landed:
+// the suite was finishing just under the old ceiling, so any further check —
+// and any slower machine — tipped it into a timeout that looks like a failure
+// but isn't one. Headroom here is cheap; a false red is not.
 const hard = setTimeout(() => {
   console.error("[e2e] HARD TIMEOUT");
   process.exit(2);
-}, 180000);
+}, 240000);
 hard.unref();
 
 // --- helpers ---------------------------------------------------------------
@@ -753,6 +757,84 @@ try {
     skip("⌥← moves focus to the pane on the left", "2×2 grid did not form");
     skip("⌥↑ moves focus to the pane above", "2×2 grid did not form");
     skip("⌥ into an outer edge keeps focus put", "2×2 grid did not form");
+  }
+
+  // 6i) A split opens where the pane it came from is, not at the startup path.
+  // The source pane is cd'd somewhere specific first, so the assertion can't
+  // pass by accident: the startup path is still unset at this point in the run
+  // (section 7 sets it), so a pane that failed to inherit lands in home, which
+  // is never the probe directory.
+  //
+  // The new pane's SPECTERM_CWD is the ground truth — it records the directory
+  // the main process actually spawned the shell in, so this proves inheritance
+  // reached the spawn rather than the shell having cd'd itself afterwards.
+  //
+  // Windows can't report a shell's live cwd (see the pty-cwd handler in
+  // electron/main.cjs), so inheritance there degrades to the startup path by
+  // design and the check is skipped rather than failed.
+  const INHERIT_CHECK = "a split inherits the directory of the pane it came from";
+  if (WIN) {
+    skip(INHERIT_CHECK, "no live-cwd source on Windows");
+  } else {
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(2000);
+
+    const INHERIT_DIR = "/usr";
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(`cd ${INHERIT_DIR}`);
+    await win.keyboard.press("Enter");
+    // The fallback path probes the shell process 150ms and 1500ms after Enter;
+    // wait past the second so the value is settled before splitting.
+    await win.waitForTimeout(1800);
+
+    const sourceCwd = await terminalCwd(win, "inherit_src");
+    await win.keyboard.press(SPLIT_SIDE);
+    await win.waitForTimeout(1500);
+    const splitSpawn = await spawnCwd(win, "inherit_split");
+
+    check(
+      INHERIT_CHECK,
+      sourceCwd === INHERIT_DIR && splitSpawn === INHERIT_DIR,
+      `source pane at ${sourceCwd}, split spawned in ${splitSpawn}, expected ${INHERIT_DIR}`
+    );
+  }
+
+  // 6j) The OSC 7 path, isolated from the process probe. The shell is left in
+  // one directory but reports a different one, so only a terminal that honors
+  // the report can spawn the split there — reading the shell's process would
+  // give the directory it's actually sitting in. That's not a realistic pairing
+  // (a real shell reports where it is), it's what makes the two sources
+  // distinguishable in a test.
+  const OSC7_CHECK = "an OSC 7 report from the shell sets the inherited directory";
+  if (WIN) {
+    skip(OSC7_CHECK, "no live-cwd source on Windows to distinguish it from");
+  } else {
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(2000);
+
+    const OSC7_DIR = "/etc";
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    // printf writes the raw sequence: ESC ] 7 ; file://<host><path> ESC \
+    await win.keyboard.type(
+      `printf '\\033]7;file://%s${OSC7_DIR}\\033\\\\' "$(hostname)"`
+    );
+    await win.keyboard.press("Enter");
+    // The sequence is applied as it's parsed, so there's no probe to outwait
+    // here — just let the shell echo the command and run it.
+    await win.waitForTimeout(700);
+
+    // Where the shell actually is — must differ from what it reported, or the
+    // check would pass with the report ignored.
+    const realCwd = await terminalCwd(win, "osc7_real");
+    await win.keyboard.press(SPLIT_SIDE);
+    await win.waitForTimeout(1500);
+    const oscSpawn = await spawnCwd(win, "osc7_split");
+
+    check(
+      OSC7_CHECK,
+      oscSpawn === OSC7_DIR && realCwd !== OSC7_DIR,
+      `reported ${OSC7_DIR}, shell really at ${realCwd}, split spawned in ${oscSpawn}`
+    );
   }
 
   // 7) Default terminal path: set via UI, confirm persistence, reload, verify
