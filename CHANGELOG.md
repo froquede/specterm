@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.13.0 — 2026-07-22
+
+### Added
+- **In-app updates.** A new **Updates** section at the bottom of Settings runs
+  the whole cycle from one button: *Check for updates* → *New vX available* →
+  a 0–100% download bar → *Restart Specterm?*. Specterm checks GitHub once on
+  each cold start; every step after that is user-initiated — nothing downloads
+  or installs behind your back. On Windows and Linux the install rides on
+  electron-updater; on macOS, where the builds are unsigned, Specterm downloads
+  the release itself, verifies it against the published sha512, and swaps the
+  app in place only after the replacement is confirmed — so a failed or
+  interrupted update can never leave you without a working app.
+
 ## 0.12.1 — 2026-07-17
 
 ### Fixed
