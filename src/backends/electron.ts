@@ -4,6 +4,7 @@ import type {
   FileEntry,
   DriveEntry,
   UnlistenFn,
+  UpdaterEvent,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -29,6 +30,11 @@ interface SpectermAPI {
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
   setWindowOpacity(value: number): Promise<void>;
+  checkForUpdate(): Promise<unknown>;
+  downloadUpdate(): Promise<unknown>;
+  installUpdate(): Promise<void>;
+  getCurrentVersion(): Promise<string>;
+  onUpdaterEvent(cb: (event: UpdaterEvent) => void): () => void;
 }
 
 declare global {
@@ -131,5 +137,27 @@ export class ElectronBackend implements Backend {
 
   async setWindowOpacity(value: number): Promise<void> {
     return this.api.setWindowOpacity(value);
+  }
+
+  async checkForUpdate(): Promise<void> {
+    await this.api.checkForUpdate();
+  }
+
+  async downloadUpdate(): Promise<void> {
+    await this.api.downloadUpdate();
+  }
+
+  async installUpdate(): Promise<void> {
+    return this.api.installUpdate();
+  }
+
+  async getCurrentVersion(): Promise<string> {
+    return this.api.getCurrentVersion();
+  }
+
+  async onUpdaterEvent(
+    cb: (event: UpdaterEvent) => void
+  ): Promise<UnlistenFn> {
+    return this.api.onUpdaterEvent(cb);
   }
 }

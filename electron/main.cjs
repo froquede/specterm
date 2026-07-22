@@ -1,10 +1,12 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, clipboard, session } = require("electron");
+const { app, BrowserWindow, ipcMain, shell, Menu, clipboard, session, net } = require("electron");
 const path = require("path");
 const os = require("os");
+const crypto = require("crypto");
 const pty = require("node-pty");
 const fs = require("fs");
 const { watch } = require("chokidar");
-const { execFile } = require("child_process");
+const { execFile, spawn } = require("child_process");
+const { autoUpdater } = require("electron-updater");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -520,6 +522,424 @@ function buildAppMenu() {
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
+
+// === Auto-update (electron-updater) ===
+// Pulls new releases from the GitHub feed declared in package.json `build.publish`
+// (public repo → no token needed). The renderer drives the flow: it asks to
+// check, then to download, then to install; every step's progress is streamed
+// back over the "updater:event" channel so Settings can show live status.
+//
+// Manual download (autoDownload=false) — we never fetch a build behind the
+// user's back; they press the buttons. autoInstallOnAppQuit only means anything
+// where electron-updater owns the download, i.e. everywhere except macOS.
+let updaterWired = false;
+const isMac = process.platform === "darwin";
+
+// macOS custom-updater state. electron-updater's mac path uses Squirrel.Mac,
+// which refuses to apply an update unless the app carries a valid, consistent
+// code signature — our builds are only ad-hoc signed, so Squirrel rejects them.
+// We keep electron-updater for *detection* (reading latest-mac.yml needs no
+// signature), then download + swap the .app bundle ourselves, exactly like the
+// terminal install script does.
+//
+// macUpdateFile is the asset the *check* resolved — url, sha512 and size copied
+// straight out of latest-mac.yml. The download must use this and nothing else:
+// re-deriving the asset from a second GitHub query would let the installed build
+// drift from the one the user was shown, and dropping the sha512 would mean
+// replacing a working app with bytes we never verified.
+let macLatestVersion = null;
+let macUpdateFile = null;
+let macStagedAppPath = null;
+let macStagedWorkDir = null;
+
+function sendUpdaterEvent(payload) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("updater:event", payload);
+  }
+}
+
+// Never forward electron-updater's raw error to the renderer: its message/stack
+// can embed the full HTTP response (including GitHub Set-Cookie headers), which
+// has no business rendering in the Settings UI. Log the detail to the main
+// process only and hand the renderer a short, safe, category-based message.
+function reportUpdaterError(err) {
+  console.error("[updater]", err);
+  const raw = String((err && (err.message || err.code)) || err || "");
+  let message = "Update failed. Please try again later.";
+  if (/ENOTFOUND|ENETUNREACH|ETIMEDOUT|ECONNREFUSED|net::/i.test(raw)) {
+    message = "Couldn't reach the update server. Check your connection.";
+  } else if (/\b404\b/.test(raw)) {
+    message = "No update feed found for this release.";
+  } else if (/\b403\b|rate limit/i.test(raw)) {
+    message = "Update server is rate-limiting. Try again shortly.";
+  } else if (/sha512|checksum|integrity|truncated|size mismatch/i.test(raw)) {
+    message = "Downloaded update failed its integrity check.";
+  } else if (/no macos package/i.test(raw)) {
+    message = "This release has no package for your Mac's architecture.";
+  }
+  sendUpdaterEvent({ status: "error", message });
+  return message;
+}
+
+function wireAutoUpdater() {
+  if (updaterWired) return;
+  updaterWired = true;
+
+  autoUpdater.autoDownload = false;
+  // On macOS the download never goes through electron-updater, so there is
+  // nothing staged for it to apply on quit — leaving this on would only claim a
+  // behavior we don't have.
+  autoUpdater.autoInstallOnAppQuit = !isMac;
+
+  autoUpdater.on("checking-for-update", () =>
+    sendUpdaterEvent({ status: "checking" })
+  );
+  autoUpdater.on("update-available", (info) => {
+    // Pin the exact asset this check resolved so the macOS custom flow (which
+    // bypasses Squirrel.Mac — see the mac section below) downloads that file and
+    // verifies it against that hash, rather than asking GitHub again later.
+    macLatestVersion = info.version;
+    macUpdateFile = isMac ? macAssetFromUpdateInfo(info) : null;
+    sendUpdaterEvent({ status: "available", version: info.version });
+  });
+  autoUpdater.on("update-not-available", (info) =>
+    sendUpdaterEvent({ status: "not-available", version: info.version })
+  );
+  autoUpdater.on("download-progress", (p) =>
+    sendUpdaterEvent({ status: "progress", percent: p.percent })
+  );
+  autoUpdater.on("update-downloaded", (info) =>
+    sendUpdaterEvent({ status: "downloaded", version: info.version })
+  );
+  autoUpdater.on("error", (err) => reportUpdaterError(err));
+}
+
+// === macOS custom updater ===
+// Detection still goes through electron-updater; only download + install are
+// hand-rolled here to sidestep Squirrel.Mac's signature requirement.
+
+// Which release owner/repo to hit. electron-builder bakes this into
+// app-update.yml (from build.publish) at package time; parse it so we never
+// hardcode a repo that could drift from the real publish target.
+function readUpdateFeedRepo() {
+  try {
+    const ymlPath = path.join(process.resourcesPath, "app-update.yml");
+    const text = fs.readFileSync(ymlPath, "utf8");
+    const owner = /(^|\n)\s*owner:\s*([^\s#]+)/.exec(text)?.[2];
+    const repo = /(^|\n)\s*repo:\s*([^\s#]+)/.exec(text)?.[2];
+    if (owner && repo) return { owner, repo };
+  } catch {
+    // fall through
+  }
+  return null;
+}
+
+// Pick the mac zip for *this* machine's architecture out of the update info the
+// check already parsed from latest-mac.yml. Returns null when the release has no
+// package for this arch — the caller turns that into a visible error rather than
+// installing a bundle for the wrong architecture, which would replace a working
+// app with one that cannot launch.
+function macAssetFromUpdateInfo(info) {
+  const files = Array.isArray(info && info.files) ? info.files : [];
+  const wantArch = process.arch === "arm64" ? "arm64" : "x64";
+  const file = files.find(
+    (f) =>
+      f &&
+      typeof f.url === "string" &&
+      new RegExp(`mac-${wantArch}\\.zip$`).test(f.url) &&
+      typeof f.sha512 === "string"
+  );
+  if (!file) return null;
+  return {
+    name: file.url,
+    sha512: file.sha512,
+    size: Number(file.size) || 0,
+    arch: wantArch,
+  };
+}
+
+// latest-mac.yml stores each asset as a bare filename, relative to the release
+// it belongs to. Rebuild the download URL from the feed's owner/repo plus the
+// version the check reported — the release workflow tags as v<version>.
+function macAssetUrl(fileName, version) {
+  const repo = readUpdateFeedRepo();
+  if (!repo) throw new Error("No update feed configured.");
+  return `https://github.com/${repo.owner}/${repo.repo}/releases/download/v${version}/${fileName}`;
+}
+
+// Stream a URL to disk, emitting "progress" as bytes arrive and hashing the body
+// as it goes (so integrity costs no extra pass over the file). Resolves the
+// sha512 digest, base64-encoded to match the encoding used in latest-mac.yml.
+//
+// Honors backpressure: a fast link into a slow disk would otherwise queue the
+// whole archive in memory.
+function downloadTo(url, destPath) {
+  return new Promise((resolve, reject) => {
+    const request = net.request({ url, redirect: "follow" });
+    request.setHeader("User-Agent", "Specterm-Updater");
+    request.on("response", (response) => {
+      if (response.statusCode !== 200) {
+        response.on("data", () => {});
+        reject(new Error(`Download HTTP ${response.statusCode}`));
+        return;
+      }
+      const total = Number(response.headers["content-length"]) || 0;
+      let received = 0;
+      const hash = crypto.createHash("sha512");
+      const out = fs.createWriteStream(destPath);
+
+      const fail = (err) => {
+        out.destroy();
+        reject(err);
+      };
+
+      response.on("data", (chunk) => {
+        received += chunk.length;
+        hash.update(chunk);
+        if (!out.write(chunk)) {
+          response.pause();
+          out.once("drain", () => response.resume());
+        }
+        if (total > 0) {
+          sendUpdaterEvent({
+            status: "progress",
+            percent: (received / total) * 100,
+          });
+        }
+      });
+      response.on("end", () => {
+        // A truncated body that never raised an error still has to fail here —
+        // this file is about to replace the user's installed app.
+        if (total > 0 && received !== total) {
+          fail(
+            new Error(`Download truncated: got ${received} of ${total} bytes.`)
+          );
+          return;
+        }
+        out.end(() => resolve(hash.digest("base64")));
+      });
+      response.on("error", fail);
+      out.on("error", fail);
+    });
+    request.on("error", reject);
+    request.end();
+  });
+}
+
+// Resolve the running .app bundle root from the executable path:
+// /Applications/Specterm.app/Contents/MacOS/Specterm → /Applications/Specterm.app
+function currentAppBundlePath() {
+  const marker = `.app${path.sep}Contents${path.sep}MacOS${path.sep}`;
+  const idx = process.execPath.indexOf(marker);
+  if (idx === -1) return null;
+  return process.execPath.slice(0, idx + ".app".length);
+}
+
+// Where staged updates live. Deliberately *not* app.getPath("temp"): macOS
+// purges $TMPDIR periodically, and a user who downloads today and restarts
+// tomorrow would reach the install step with the staged bundle already gone.
+function macUpdateRoot() {
+  return path.join(app.getPath("userData"), "updates");
+}
+
+// Drop every staged directory except `keep`. Each one holds a zip plus an
+// extracted .app — hundreds of MB per version — so without this the app quietly
+// hoards a copy of every update it ever downloaded.
+function pruneMacUpdateDirs(keep) {
+  const root = macUpdateRoot();
+  let entries = [];
+  try {
+    entries = fs.readdirSync(root);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    const full = path.join(root, entry);
+    if (full === keep) continue;
+    fs.rmSync(full, { recursive: true, force: true });
+  }
+}
+
+// Download the mac zip the check resolved, verify it against the sha512 from
+// latest-mac.yml, and extract the new .app. Leaves the extracted bundle at
+// macStagedAppPath and emits "downloaded".
+//
+// The hash is the whole point of this function: the install step deletes the
+// running application, so nothing may reach it that we haven't proven is the
+// file the update feed advertised. (It proves integrity, not provenance —
+// publisher identity needs a Developer ID signature, which these builds don't
+// carry. See the ad-hoc signing note above.)
+async function macDownloadUpdate() {
+  if (!macUpdateFile || !macLatestVersion) {
+    throw new Error(
+      `No macOS package for ${process.arch} in the latest release.`
+    );
+  }
+
+  const workDir = path.join(
+    macUpdateRoot(),
+    `specterm-update-${macLatestVersion}-${macUpdateFile.arch}`
+  );
+  fs.rmSync(workDir, { recursive: true, force: true });
+  fs.mkdirSync(workDir, { recursive: true });
+  pruneMacUpdateDirs(workDir);
+  const zipPath = path.join(workDir, macUpdateFile.name);
+
+  const digest = await downloadTo(
+    macAssetUrl(macUpdateFile.name, macLatestVersion),
+    zipPath
+  );
+  if (digest !== macUpdateFile.sha512) {
+    fs.rmSync(workDir, { recursive: true, force: true });
+    throw new Error("sha512 mismatch for the downloaded update.");
+  }
+  if (macUpdateFile.size > 0) {
+    const actual = fs.statSync(zipPath).size;
+    if (actual !== macUpdateFile.size) {
+      fs.rmSync(workDir, { recursive: true, force: true });
+      throw new Error(
+        `Update size mismatch: expected ${macUpdateFile.size}, got ${actual}.`
+      );
+    }
+  }
+
+  // ditto preserves bundle metadata and the ad-hoc signature (plain unzip can
+  // strip extended attributes and break the app).
+  const extractDir = path.join(workDir, "extracted");
+  fs.mkdirSync(extractDir, { recursive: true });
+  await new Promise((resolve, reject) =>
+    execFile("ditto", ["-x", "-k", zipPath, extractDir], (err) =>
+      err ? reject(err) : resolve()
+    )
+  );
+
+  const appName = fs
+    .readdirSync(extractDir)
+    .find((n) => n.endsWith(".app"));
+  if (!appName) throw new Error("Extracted package had no .app bundle.");
+  macStagedAppPath = path.join(extractDir, appName);
+  macStagedWorkDir = workDir;
+  // The archive is only needed to produce the bundle; the bundle is what the
+  // install step copies.
+  fs.rmSync(zipPath, { force: true });
+  sendUpdaterEvent({ status: "downloaded", version: macLatestVersion });
+}
+
+// Swap the staged bundle in for the running one, then relaunch. The app can't
+// overwrite its own bundle while running, so a detached shell waits for us to
+// quit and does the swap.
+//
+// The installed app is never deleted before its replacement is in place: the
+// new bundle is copied alongside and checked for a launchable executable, the
+// old one is moved aside (not removed), and only a successful rename of the new
+// bundle into place retires it. Any failure restores what was there. The naive
+// order — rm then copy — turns a full disk or a missing staged bundle into "the
+// user has no application at all", with no way to re-run the updater.
+function macInstallUpdate() {
+  const target = currentAppBundlePath();
+  if (!target || !macStagedAppPath || !fs.existsSync(macStagedAppPath)) {
+    throw new Error("No staged macOS update to install.");
+  }
+  const execName = path.basename(process.execPath);
+  const script = `#!/bin/bash
+set -e
+
+TARGET=${JSON.stringify(target)}
+STAGED=${JSON.stringify(macStagedAppPath)}
+WORKDIR=${JSON.stringify(macStagedWorkDir || "")}
+NEW="$TARGET.new"
+OLD="$TARGET.old"
+
+# Wait for this app to fully exit before touching its bundle. If it is somehow
+# still alive, abort rather than swap a bundle out from under a running process.
+for i in $(seq 1 60); do
+  if ! kill -0 ${process.pid} 2>/dev/null; then break; fi
+  sleep 0.5
+done
+if kill -0 ${process.pid} 2>/dev/null; then
+  exit 1
+fi
+
+rm -rf "$NEW" "$OLD"
+
+# Copy first, into a sibling path. ditto preserves bundle metadata and the
+# ad-hoc signature; plain cp/unzip can strip extended attributes.
+ditto "$STAGED" "$NEW"
+test -x "$NEW/Contents/MacOS/"${JSON.stringify(execName)}
+
+# Retire the current bundle only now, and only by moving it — so it is still
+# there to restore if the rename below fails.
+mv "$TARGET" "$OLD"
+if ! mv "$NEW" "$TARGET"; then
+  mv "$OLD" "$TARGET"
+  rm -rf "$NEW"
+  exit 1
+fi
+
+rm -rf "$OLD"
+if [ -n "$WORKDIR" ]; then rm -rf "$WORKDIR"; fi
+open "$TARGET"
+`;
+  const scriptPath = path.join(app.getPath("temp"), "specterm-install.sh");
+  fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+  const child = spawn("/bin/bash", [scriptPath], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+  app.quit();
+}
+
+// Check: unpackaged/dev has no app-update.yml, so electron-updater throws.
+// Report a "dev" status instead of surfacing that as an error in the UI.
+ipcMain.handle("updater:check", async () => {
+  if (!app.isPackaged) {
+    sendUpdaterEvent({ status: "dev", version: app.getVersion() });
+    return { status: "dev", version: app.getVersion() };
+  }
+  wireAutoUpdater();
+  try {
+    await autoUpdater.checkForUpdates();
+    return { status: "ok" };
+  } catch (err) {
+    return { status: "error", message: reportUpdaterError(err) };
+  }
+});
+
+ipcMain.handle("updater:download", async () => {
+  if (!app.isPackaged) return { status: "dev" };
+  wireAutoUpdater();
+  try {
+    // macOS: hand-rolled download+extract (Squirrel.Mac can't apply our ad-hoc
+    // signed builds). Windows/Linux use electron-updater's native downloader.
+    if (isMac) {
+      await macDownloadUpdate();
+    } else {
+      await autoUpdater.downloadUpdate();
+    }
+    return { status: "ok" };
+  } catch (err) {
+    return { status: "error", message: reportUpdaterError(err) };
+  }
+});
+
+// Quit and swap in the downloaded update. On Windows/Linux electron-updater
+// handles it (NSIS wizard / AppImage relaunch). On macOS we swap the .app
+// bundle ourselves, mirroring the terminal install.
+ipcMain.handle("updater:install", () => {
+  if (!app.isPackaged) return;
+  try {
+    if (isMac) {
+      macInstallUpdate();
+    } else {
+      autoUpdater.quitAndInstall(false, true);
+    }
+  } catch (err) {
+    reportUpdaterError(err);
+  }
+});
+
+ipcMain.handle("updater:current-version", () => app.getVersion());
 
 // === App lifecycle ===
 

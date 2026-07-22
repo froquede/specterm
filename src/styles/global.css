@@ -523,6 +523,115 @@ body,
   color: var(--accent);
 }
 
+/* === Auto-update control === */
+/* Anchor for the absolutely-positioned up-to-date toast, which overlaps the
+   button area and fades in/out. */
+.updater-control {
+  position: relative;
+  margin: 8px 0 6px;
+}
+
+.updater-button {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.updater-button:disabled {
+  cursor: default;
+}
+
+/* Downloading keeps full contrast (not the dimmed disabled look) since the fill
+   IS the feedback; the up-to-date "opacity" dim would wash the bar out. */
+.updater-button:disabled:not(.downloading) {
+  opacity: 0.7;
+}
+
+.updater-button:disabled:hover {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+/* An update is downloaded and waiting — draw the button in accent so
+   "Restart Specterm?" reads as the action to take. */
+.updater-button.ready {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Progress-bar state. The fill grows to --progress; the border turns accent so
+   the whole control reads as a bar. */
+.updater-button.downloading {
+  border-color: var(--accent);
+}
+
+.updater-button.downloading:hover {
+  border-color: var(--accent);
+  color: var(--fg);
+}
+
+/* Accent fill, left→right, sitting behind both label layers. */
+.updater-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: var(--progress, 0%);
+  background: var(--accent);
+  transition: width 0.15s ease;
+  z-index: 0;
+}
+
+/* Both label copies occupy the same box. `base` (below) is painted in the
+   normal fg for the unfilled side; `over` is painted in the bg color and
+   clipped to exactly the filled region, so text over the accent fill flips to a
+   contrasting color as the bar advances — never invisible. */
+.updater-label {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.updater-label.over {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--bg);
+  clip-path: inset(0 calc(100% - var(--progress, 0%)) 0 0);
+  z-index: 2;
+}
+
+/* Floats above the button, overlapping it; fades + slides on enter/leave. */
+.updater-toast {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  padding: 6px 10px;
+  font-size: 11px;
+  text-align: center;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  border: 1px solid var(--accent);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  opacity: 0;
+  transform: translateY(4px);
+  transition: opacity 0.25s ease, transform 0.25s ease;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.updater-toast.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .settings-search {
   width: 100%;
   margin: 8px 0 6px;

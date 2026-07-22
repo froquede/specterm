@@ -12,6 +12,7 @@ import type {
   FileEntry,
   DriveEntry,
   UnlistenFn,
+  UpdaterEvent,
 } from "./types";
 
 interface PtyOutput {
@@ -140,5 +141,32 @@ export class TauriBackend implements Backend {
     // native `set_window_opacity` command. Electron is the shipping target, so
     // this is a no-op stub (matching listDrives/clipboardHasImage) — the window
     // stays opaque under Tauri.
+  }
+
+  // Self-update isn't wired on the experimental Tauri backend; Electron is the
+  // shipping target with electron-updater. A check just reports "dev" through
+  // the same event channel the store consumes, so the Settings button resolves
+  // to the up-to-date state instead of sticking on "Checking…".
+  private updaterCb: ((event: UpdaterEvent) => void) | null = null;
+
+  async checkForUpdate(): Promise<void> {
+    this.updaterCb?.({ status: "dev", version: __APP_VERSION__ });
+  }
+
+  async downloadUpdate(): Promise<void> {}
+
+  async installUpdate(): Promise<void> {}
+
+  async getCurrentVersion(): Promise<string> {
+    return __APP_VERSION__;
+  }
+
+  async onUpdaterEvent(
+    cb: (event: UpdaterEvent) => void
+  ): Promise<UnlistenFn> {
+    this.updaterCb = cb;
+    return () => {
+      this.updaterCb = null;
+    };
   }
 }

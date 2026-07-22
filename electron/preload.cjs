@@ -73,4 +73,19 @@ contextBridge.exposeInMainWorld("specterm", {
   },
 
   setWindowOpacity: (value) => ipcRenderer.invoke("set-window-opacity", value),
+
+  // Auto-update
+  checkForUpdate: () => ipcRenderer.invoke("updater:check"),
+
+  downloadUpdate: () => ipcRenderer.invoke("updater:download"),
+
+  installUpdate: () => ipcRenderer.invoke("updater:install"),
+
+  getCurrentVersion: () => ipcRenderer.invoke("updater:current-version"),
+
+  onUpdaterEvent: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("updater:event", handler);
+    return () => ipcRenderer.removeListener("updater:event", handler);
+  },
 });
