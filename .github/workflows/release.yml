@@ -111,3 +111,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No Apple Developer cert in CI — skip signing so the mac build runs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # The Release body comes out empty, and the unsigned macOS build fails its
+      # first launch with "Specterm is damaged and can't be opened" unless the
+      # quarantine attribute is cleared. Seed the notes with that command so it
+      # is on the download page itself, not only in the README. Runs on the mac
+      # leg only (one writer), and appends — hand-written notes added later, or
+      # by another leg, survive. See docs/macos-install.md.
+      - name: Seed release notes with the macOS quarantine step
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          body=$(gh release view "$TAG" --json body --jq .body || echo "")
+          case "$body" in
+            *com.apple.quarantine*) echo "Already present; leaving notes alone."; exit 0 ;;
+          esac
+          { printf '%s' "$body"; cat .github/release-notes-macos.md; } > notes.md
+          gh release edit "$TAG" --notes-file notes.md
