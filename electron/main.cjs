@@ -210,9 +210,23 @@ function createWindow() {
     return { action: "deny" };
   });
 
+  // Send genuinely external links to the default browser, but never hijack
+  // in-app navigations. Comparing full URLs treated every same-origin reload
+  // (the Vite dev server's, a trailing-slash difference, a hash change) as
+  // "external" and fired openExternal + preventDefault on it — in dev that
+  // preventing-then-reopening looped the browser and stalled the renderer.
+  // Gate on origin instead: same-origin (and non-http, e.g. file://) stays in
+  // the window; only a different http(s) origin goes out.
   mainWindow.webContents.on("will-navigate", (event, url) => {
-    const currentUrl = mainWindow.webContents.getURL();
-    if (url !== currentUrl) {
+    let external = false;
+    try {
+      const target = new URL(url);
+      const current = new URL(mainWindow.webContents.getURL());
+      external = /^https?:$/.test(target.protocol) && target.origin !== current.origin;
+    } catch {
+      external = false;
+    }
+    if (external) {
       event.preventDefault();
       shell.openExternal(url);
     }

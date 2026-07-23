@@ -11,6 +11,7 @@ import type { BindingSpec, Chord } from "./keybindings";
 import type { useTabStore } from "./tabs";
 import {
   getTerminalInstance,
+  selectComposerText,
   increaseFontSize,
   decreaseFontSize,
   resetFontSize,
@@ -221,6 +222,29 @@ export function createKeymap({
         // Electron's native ⌘C never fires. So we write the selection here.
         const domSel = window.getSelection()?.toString();
         if (domSel) clipboardWriteText(domSel);
+      },
+    },
+    // Select + copy the input composer — ⌘⇧A on macOS, Ctrl+Shift+A on
+    // Win/Linux. A literal chord (meta+shift here, byOS Ctrl+Shift there) rather
+    // than the cmd() ⌘⇧→Ctrl+Alt mapping, so both platforms land on Shift+A.
+    // Scoped on purpose: it grabs just the Claude Code composer box the cursor
+    // is in (falling back to the cursor's logical line at a bare shell prompt)
+    // instead of the whole scrollback a plain select-all grabs, highlights it,
+    // and copies the typed text to the clipboard in one press. Bare Ctrl+A stays
+    // free for the shell's readline "beginning of line"; ⌘A/Ctrl+A also stay
+    // free for the markdown editor's native select-all.
+    {
+      id: "terminal.selectComposer",
+      key: "a",
+      meta: true,
+      shift: true,
+      byOS: kitty("a"),
+      label: "Select & copy input composer",
+      run: () => {
+        const paneId = store.activeTab?.activePaneId;
+        if (!paneId || !getTerminalInstance(paneId)) return;
+        const text = selectComposerText(paneId);
+        if (text) clipboardWriteText(text);
       },
     },
     // Find in the active terminal — ⌘F (Ctrl+Shift+F on Win/Linux). Toggles a

@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { Terminal } from "@xterm/xterm";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme, IBuffer } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -200,6 +200,98 @@ export function setTerminalFontFamily(family: string) {
 
 export function getTerminalInstance(paneId: string): TerminalInstance | undefined {
   return instances.get(paneId);
+}
+
+// Claude Code marks its composer input line with a ❯ (U+276F) caret glyph, then
+// a non-breaking space, then the text. It hides the real terminal cursor and
+// paints its own, so we can't anchor on buf.cursorY — we find the marker line
+// instead. The statusline below the composer is a horizontal rule of ─ (U+2500).
+const PROMPT_MARKER = "❯";
+const COMPOSER_RULE_RE = /^─{5,}/;
+
+function bufferLineText(buf: IBuffer, row: number): string {
+  return buf.getLine(row)?.translateToString(true) ?? "";
+}
+
+// Locate the composer: the lowest ❯ marker line in the viewport, extended down
+// over continuation rows (Shift+Enter wraps the message onto more lines) until
+// the statusline rule or a blank row closes it. Null when no composer is on
+// screen (a plain shell prompt).
+function findComposer(
+  buf: IBuffer,
+  viewTop: number,
+  viewBottom: number
+): { top: number; bottom: number } | null {
+  let top = -1;
+  for (let r = viewBottom; r >= viewTop; r--) {
+    if (bufferLineText(buf, r).trimStart().startsWith(PROMPT_MARKER)) {
+      top = r;
+      break;
+    }
+  }
+  if (top === -1) return null;
+  let bottom = top;
+  for (let r = top + 1; r <= viewBottom; r++) {
+    const t = bufferLineText(buf, r).trim();
+    if (t === "" || COMPOSER_RULE_RE.test(t)) break;
+    bottom = r;
+  }
+  return { top, bottom };
+}
+
+// Pull the typed text out of the composer rows: strip the ❯ marker (and the
+// non-breaking space that trails it) from the first row, and the two-space
+// alignment continuation rows carry under it. Heuristic — tuned to Claude Code —
+// so exotic indentation may not survive exactly, but the message body does.
+function extractComposerText(buf: IBuffer, top: number, bottom: number): string {
+  const rows: string[] = [];
+  for (let r = top; r <= bottom; r++) {
+    let s = bufferLineText(buf, r);
+    s =
+      r === top
+        // Strip the ❯ marker plus the whitespace/non-breaking-space around it.
+        // NBSP (U+00A0) is spelled out because \s doesn't match it everywhere.
+        ? s.replace(/^[\s ]*❯[\s ]*/, "")
+        : s.replace(/^ {0,2}/, ""); // continuation alignment
+    rows.push(s.replace(/\s+$/, ""));
+  }
+  return rows.join("\n").replace(/\s+$/, "");
+}
+
+// Fall back to the logical line at the cursor (following soft-wrap) when there's
+// no composer on screen — keeps the shortcut useful at a plain shell prompt.
+function currentLogicalLine(buf: IBuffer, cursorRow: number): { top: number; bottom: number } {
+  let top = cursorRow;
+  while (top > 0 && buf.getLine(top)?.isWrapped) top--;
+  let bottom = cursorRow;
+  while (bottom < buf.length - 1 && buf.getLine(bottom + 1)?.isWrapped) bottom++;
+  return { top, bottom };
+}
+
+// Select the active pane's input area and return its text for the clipboard.
+// Prefers the Claude Code composer (the intended target); at a bare shell prompt
+// it degrades to the cursor's logical line. Bound to Cmd/Ctrl+Shift+A (see
+// keymap) as a scoped alternative to selecting the whole scrollback.
+export function selectComposerText(paneId: string): string | null {
+  const inst = instances.get(paneId);
+  if (!inst || inst.disposed) return null;
+  const { term } = inst;
+  const buf = term.buffer.active;
+  const viewTop = buf.baseY;
+  const viewBottom = buf.baseY + term.rows - 1;
+
+  const composer = findComposer(buf, viewTop, viewBottom);
+  const region =
+    composer ?? currentLogicalLine(buf, buf.baseY + buf.cursorY);
+
+  term.clearSelection();
+  term.selectLines(region.top, region.bottom);
+  term.focus();
+
+  const text = composer
+    ? extractComposerText(buf, region.top, region.bottom)
+    : term.getSelection();
+  return text.trim() ? text : null;
 }
 
 // --- "cd fav-N" expansion -------------------------------------------------
