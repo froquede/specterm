@@ -124,6 +124,30 @@ jobs:
           # No Apple Developer cert in CI — skip signing so the mac build runs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # Safety net for re-runs and tag re-pushes: electron-builder refuses to
+      # attach assets to a Release that was published more than ~2 hours ago
+      # ("skipped publishing ... existing release published more than 2 hours
+      # ago"). That once left v0.13.0 with no Linux artifacts after the tag was
+      # moved and rebuilt. The files exist in build-output/ regardless, so push
+      # them straight to the Release with the API, which has no such guard.
+      # --clobber overwrites same-named assets so this is safe to re-run.
+      - name: Ensure built artifacts are attached to the Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(build-output/*.AppImage build-output/*.deb build-output/*.exe \
+                  build-output/*.dmg build-output/*.zip build-output/latest*.yml \
+                  build-output/*.blockmap)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No build artifacts found to upload." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${assets[@]}" --clobber
+
       # The Release body comes out empty, and the unsigned macOS build fails its
       # first launch with "Specterm is damaged and can't be opened" unless the
       # quarantine attribute is cleared. Seed the notes with that command so it
