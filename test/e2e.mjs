@@ -755,6 +755,81 @@ try {
     skip("⌥ into an outer edge keeps focus put", "2×2 grid did not form");
   }
 
+  // 6i) Closing the active pane hands focus back to the pane it came from.
+  // Regression guard: closePane used to call firstLeafId(newRoot), so splitting
+  // off a pane and closing it dropped you on the tree's *first* leaf — with a
+  // 2×2 grid, the top-left pane rather than the one you were working in.
+  // Reuses the grid built above: focus the bottom-right pane, split off a new
+  // one, close it, and require focus to land back on bottom-right (not TL).
+  const CLOSE_PANE = process.platform === "darwin" ? "Meta+W" : "Control+Shift+W";
+  if (grid2x2) {
+    await focusPaneAt(BR.cx, BR.cy);
+    await win.waitForTimeout(250);
+    const mruBefore = await activePaneId();
+
+    await win.keyboard.press(SPLIT_SIDE);
+    await win.waitForTimeout(2000);
+    const mruSpawned = await activePaneId();
+
+    await win.keyboard.press(CLOSE_PANE);
+    await win.waitForTimeout(1000);
+    const mruAfter = await activePaneId();
+
+    check(
+      "closing a pane returns focus to the previously active one",
+      mruBefore === BR.id && mruSpawned !== mruBefore && mruAfter === mruBefore,
+      `before=${mruBefore} spawned=${mruSpawned} after=${mruAfter} (BR=${BR.id}, TL=${TL?.id})`
+    );
+  } else {
+    skip(
+      "closing a pane returns focus to the previously active one",
+      "2×2 grid did not form"
+    );
+  }
+
+  // 6j) The tab-level twin: closing the active tab returns to the tab you were
+  // last on, not to whichever tab slides into the closed one's index. Visit the
+  // first tab, then the last, then close the last — focus must go back to the
+  // first. The old index rule would have landed on the second-to-last instead.
+  const mruActiveTab = () =>
+    win.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+  const mruTabIds = () =>
+    win.evaluate(() =>
+      Array.from(document.querySelectorAll(".tab")).map((t) =>
+        t.getAttribute("data-tab-id")
+      )
+    );
+
+  const tabIdsBefore = await mruTabIds();
+  if (tabIdsBefore.length >= 3) {
+    const firstTab = tabIdsBefore[0];
+    const lastTab = tabIdsBefore[tabIdsBefore.length - 1];
+    const indexPick = tabIdsBefore[tabIdsBefore.length - 2];
+
+    await win.locator(`.tab[data-tab-id="${firstTab}"]`).click();
+    await win.waitForTimeout(400);
+    await win.locator(`.tab[data-tab-id="${lastTab}"]`).click();
+    await win.waitForTimeout(400);
+    const tabBeforeClose = await mruActiveTab();
+
+    await win.locator(`.tab[data-tab-id="${lastTab}"] .tab-close`).click();
+    await win.waitForTimeout(800);
+    const tabAfterClose = await mruActiveTab();
+
+    check(
+      "closing a tab returns to the previously active one",
+      tabBeforeClose === lastTab && tabAfterClose === firstTab,
+      `before=${tabBeforeClose} after=${tabAfterClose} expected=${firstTab} (index rule would give ${indexPick})`
+    );
+  } else {
+    skip(
+      "closing a tab returns to the previously active one",
+      `needs 3+ tabs, had ${tabIdsBefore.length}`
+    );
+  }
+
   // 7) Default terminal path: set via UI, confirm persistence, reload, verify
   // a boot terminal spawns there (new tabs spawn lazily, so reload is reliable).
   await win.locator(".tab-settings").click();
