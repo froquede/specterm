@@ -318,10 +318,66 @@ ipcMain.handle("kill-pty", (_event, id) => {
   ptyInstances.delete(id);
 });
 
+// Where a terminal's shell currently is, asked of the OS rather than of the
+// shell. A new pane should open in the directory you're looking at, and the
+// portable way to learn that — OSC 7 — only works if the shell is configured to
+// emit it: zsh and fish do out of the box, but a plain bash (no VTE hook, empty
+// PROMPT_COMMAND) reports nothing at all, which is the common case on Linux.
+// So the shell's own process is the source of truth and OSC 7 is treated as a
+// faster hint on top of it (see registerCwdHandler in src/lib/osc.ts).
+//
+//   Linux — /proc/<pid>/cwd is a symlink to the live working directory.
+//   macOS — no /proc; lsof reports the cwd descriptor (-d cwd) in field format.
+//   Windows — neither exists, and the Win32 equivalent needs a native call into
+//             the target process, so this returns null and the caller falls
+//             back to the configured startup path.
+//
+// Every failure path returns null instead of throwing: the pty may have exited
+// between the renderer asking and us looking, and a missing cwd is never worth
+// breaking a split over.
+ipcMain.handle("pty-cwd", async (_event, id) => {
+  const instance = ptyInstances.get(id);
+  if (!instance || instance.disposed) return null;
+
+  const pid = instance.process.pid;
+  if (!pid) return null;
+
+  try {
+    if (process.platform === "linux") {
+      return await fs.promises.readlink(`/proc/${pid}/cwd`);
+    }
+    if (process.platform === "darwin") {
+      const out = await new Promise((resolve, reject) => {
+        execFile("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], (err, stdout) =>
+          err ? reject(err) : resolve(stdout)
+        );
+      });
+      // -F output is one field per line, each prefixed by its letter; the cwd
+      // path is the `n` line. Take the last one — lsof emits the process
+      // header (p<pid>) first, and only one n line follows for -d cwd.
+      const line = out
+        .split("\n")
+        .filter((l) => l.startsWith("n"))
+        .pop();
+      return line ? line.slice(1) : null;
+    }
+  } catch (_) {
+    // Process gone, /proc unreadable, or lsof missing — no cwd to report.
+  }
+  return null;
+});
+
 // === Filesystem IPC ===
 
 ipcMain.handle("get-home-path", () => {
   return os.homedir();
+});
+
+// This machine's name, used to tell a local OSC 7 report from one arriving over
+// ssh — the sequence carries the host that produced it, and a remote path is
+// meaningless locally. See registerCwdHandler in src/lib/osc.ts.
+ipcMain.handle("get-hostname", () => {
+  return os.hostname();
 });
 
 ipcMain.handle("read-text-file", async (_event, filePath) => {

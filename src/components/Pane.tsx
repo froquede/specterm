@@ -161,6 +161,11 @@ export default function Pane(props: PaneProps) {
         <Show when={props.pane.kind === "terminal"}>
           <TerminalPane
             paneId={paneId}
+            cwd={
+              props.pane.kind === "terminal"
+                ? (props.pane as PaneType & { kind: "terminal" }).cwd
+                : undefined
+            }
             onTitle={(t) => {
               setTermTitle(t);
               props.onTitle?.(t);

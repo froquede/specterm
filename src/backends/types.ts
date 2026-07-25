@@ -49,6 +49,10 @@ export interface Backend {
   writePty(id: number, data: string): Promise<void>;
   resizePty(id: number, cols: number, rows: number): Promise<void>;
   killPty(id: number): Promise<void>;
+  // The shell's live working directory, read from the OS process. null when the
+  // pty is gone or the platform can't report it (Windows) — callers fall back
+  // to the configured startup path rather than treating this as an error.
+  ptyCwd(id: number): Promise<string | null>;
   onPtyOutput(cb: (id: number, data: Uint8Array) => void): Promise<UnlistenFn>;
   onPtyExit(cb: (id: number) => void): Promise<UnlistenFn>;
 
@@ -66,6 +70,8 @@ export interface Backend {
   // path arg). Fires once per file, replaying any that queued before subscribe.
   onOpenPath(cb: (path: string) => void): Promise<UnlistenFn>;
   getHomePath(): Promise<string>;
+  /** This machine's hostname, for validating OSC 7 reports. */
+  getHostname(): Promise<string>;
   // True when the OS clipboard holds an image — drives image-vs-text paste.
   clipboardHasImage(): Promise<boolean>;
   // OS text clipboard. Routed through the host (not navigator.clipboard) so

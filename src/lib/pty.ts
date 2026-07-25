@@ -28,6 +28,17 @@ export async function killPty(id: number): Promise<void> {
   return backend.killPty(id);
 }
 
+// Best-effort: null whenever the OS or backend can't answer, never a throw —
+// this is called opportunistically while the user types.
+export async function ptyCwd(id: number): Promise<string | null> {
+  try {
+    const backend = await getBackend();
+    return await backend.ptyCwd(id);
+  } catch {
+    return null;
+  }
+}
+
 export function onPtyOutput(
   callback: (id: number, data: Uint8Array) => void
 ): Promise<UnlistenFn> {
