@@ -77,6 +77,20 @@ jobs:
           echo "CC=gcc-10" >> "$GITHUB_ENV"
           echo "CXX=g++-10" >> "$GITHUB_ENV"
 
+          # The runner images ship `gh`, but this container doesn't — and the
+          # "Ensure built artifacts are attached" step below is a bash `gh`
+          # call, so without this the Linux leg fails at the very step that
+          # exists to stop the Linux artifacts going missing (v0.14.0 went red
+          # here after its artifacts had already uploaded). Installed from the
+          # release tarball rather than the apt repo: one pinned download, no
+          # keyring/sources dance, and it goes through the same retry.
+          GH_CLI_VERSION=2.63.2
+          retry curl -fsSL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          install -m 0755 "/tmp/gh_${GH_CLI_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+          gh --version
+
       - uses: actions/checkout@v4
 
       - name: Install Node.js
