@@ -28,6 +28,11 @@ export interface Tab {
   manualTitle: boolean;
   root: SplitNode;
   activePaneId: PaneId;
+  // Panes focused before `activePaneId`, most recent first, excluding it.
+  // Closing the active pane hands focus to the first entry here that's still
+  // alive, so you land back where you came from instead of at the tree's
+  // first leaf. Pruned on close and capped — see FOCUS_HISTORY_LIMIT.
+  paneHistory: PaneId[];
 }
 
 // What currently occupies the single sidebar slot in .app-body. The file tree
@@ -38,6 +43,10 @@ export type SidebarView = "files" | "settings";
 export interface AppState {
   tabs: Tab[];
   activeTabId: TabId;
+  // The tab-level twin of Tab.paneHistory: tabs visited before `activeTabId`,
+  // most recent first. Closing the active tab returns to the last one you were
+  // actually on, rather than to whichever tab inherits its index.
+  tabHistory: TabId[];
   sidebarView: SidebarView | null; // null = sidebar closed
   renamingTabId: TabId | null; // tab whose title is currently being edited inline
 }

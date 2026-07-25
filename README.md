@@ -178,6 +178,17 @@ Distributable installers are built in CI by `.github/workflows/release.yml`:
 - **Windows** → NSIS installer (`.exe`)
 - **macOS** → `.dmg` + `.zip` (Apple silicon, unsigned)
 
+Because the macOS build is unsigned, the first launch fails with *"Specterm is
+damaged and can't be opened"* — Gatekeeper's message for a quarantined ad-hoc
+bundle. Clear the quarantine attribute once after installing:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Specterm.app
+```
+
+See [docs/macos-install.md](docs/macos-install.md) for the full explanation and
+what notarizing would take.
+
 Versioning is **semantic** (`MAJOR.MINOR.FIX`). To cut a release: land the work
 on `main`, bump `version` in `package.json`, update `CHANGELOG.md`, then push a
 matching tag — the tag push is what triggers the build and publishes a GitHub

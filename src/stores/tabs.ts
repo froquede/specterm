@@ -39,6 +39,59 @@ function createTerminalTab(cwd = ""): Tab {
     manualTitle: false,
     root: leaf,
     activePaneId: leaf.id,
+    paneHistory: [],
+  };
+}
+
+// --- Focus history (MRU) ---------------------------------------------------
+// Both tabs and panes remember where focus came from, so closing the active one
+// returns you there instead of to a position-derived neighbour. Without this,
+// splitting a pane and closing the new one dumps you on the tree's *first* leaf
+// — which, with three or more panes, is nowhere near where you were working.
+//
+// The lists are plain MRU stacks: most recent first, no duplicates, and they
+// never contain the currently active id (it's re-pushed only when focus moves
+// away from it). They're bounded because a long session cycling panes would
+// otherwise grow them without limit; 32 is far past any reachable pane count
+// and keeps the whole thing to one small array per tab.
+
+const FOCUS_HISTORY_LIMIT = 32;
+
+function pushMru<T>(history: T[], id: T | null | undefined): T[] {
+  if (id === null || id === undefined) return history;
+  return [id, ...history.filter((x) => x !== id)].slice(0, FOCUS_HISTORY_LIMIT);
+}
+
+// Focus `paneId` within `tab`, recording where focus is leaving from.
+function focusPaneInTab(tab: Tab, paneId: PaneId): Tab {
+  if (tab.activePaneId === paneId) return tab;
+  return {
+    ...tab,
+    activePaneId: paneId,
+    // Push the outgoing pane and drop the incoming one: the active id is never
+    // also in the history, so reseatFocus can take the head without checking.
+    paneHistory: pushMru(tab.paneHistory, tab.activePaneId).filter(
+      (id) => id !== paneId
+    ),
+  };
+}
+
+// Rebuild a tab around a pruned tree: drop dead ids from the history and, when
+// the pane that just went away held focus, hand it to the most recent survivor.
+// Falling back to the first leaf keeps the old behavior for the one case it was
+// ever right — a pane closed before anything else in the tab was focused.
+function reseatFocus(tab: Tab, newRoot: SplitNode, closedId: PaneId): Tab {
+  const alive = new Set(collectLeaves(newRoot).map((l) => l.id));
+  const history = tab.paneHistory.filter((id) => alive.has(id));
+  if (tab.activePaneId !== closedId) {
+    return { ...tab, root: newRoot, paneHistory: history };
+  }
+  const [recent, ...rest] = history;
+  return {
+    ...tab,
+    root: newRoot,
+    activePaneId: recent ?? firstLeafId(newRoot),
+    paneHistory: recent ? rest : history,
   };
 }
 
@@ -48,6 +101,7 @@ const initialTab = createTerminalTab();
 const [state, setStateRaw] = createSignal<AppState>({
   tabs: [initialTab],
   activeTabId: initialTab.id,
+  tabHistory: [],
   sidebarView: "files",
   renamingTabId: null,
 });
@@ -176,6 +230,7 @@ export function useTabStore() {
         ...s,
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId),
       }));
       return tab;
     },
@@ -188,11 +243,13 @@ export function useTabStore() {
         manualTitle: false,
         root: leaf,
         activePaneId: leaf.id,
+        paneHistory: [],
       };
       update((s) => ({
         ...s,
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId),
       }));
       return tab;
     },
@@ -205,11 +262,13 @@ export function useTabStore() {
         manualTitle: false,
         root: leaf,
         activePaneId: leaf.id,
+        paneHistory: [],
       };
       update((s) => ({
         ...s,
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId),
       }));
       return tab;
     },
@@ -228,22 +287,39 @@ export function useTabStore() {
           ...s,
           tabs: [tab],
           activeTabId: tab.id,
+          tabHistory: [],
         }));
       } else {
-        const newActiveId =
-          s.activeTabId === tabId
-            ? newTabs[Math.min(idx, newTabs.length - 1)].id
-            : s.activeTabId;
+        // Drop the closed tab from the history, then — if it was the active one
+        // — fall back onto the most recent tab still open. Only when nothing
+        // survives there does position decide, as it always used to.
+        const alive = new Set(newTabs.map((t) => t.id));
+        const history = s.tabHistory.filter((id) => alive.has(id));
+        const [recent, ...rest] = history;
+        const closingActive = s.activeTabId === tabId;
         update(() => ({
           ...s,
           tabs: newTabs,
-          activeTabId: newActiveId,
+          activeTabId: closingActive
+            ? recent ?? newTabs[Math.min(idx, newTabs.length - 1)].id
+            : s.activeTabId,
+          tabHistory: closingActive && recent ? rest : history,
         }));
       }
     },
 
     setActiveTab(tabId: string) {
-      update((s) => ({ ...s, activeTabId: tabId }));
+      update((s) =>
+        s.activeTabId === tabId
+          ? s
+          : {
+              ...s,
+              activeTabId: tabId,
+              tabHistory: pushMru(s.tabHistory, s.activeTabId).filter(
+                (id) => id !== tabId
+              ),
+            }
+      );
     },
 
     splitActivePane(direction: "h" | "v", newPane: PaneType) {
@@ -268,7 +344,7 @@ export function useTabStore() {
       update(() => ({
         ...s,
         tabs: s.tabs.map((t, i) =>
-          i === idx ? { ...t, root: newRoot, activePaneId: newLeaf.id } : t
+          i === idx ? focusPaneInTab({ ...t, root: newRoot }, newLeaf.id) : t
         ),
       }));
       return newLeaf.id;
@@ -291,15 +367,10 @@ export function useTabStore() {
         return;
       }
 
-      const newActivePaneId =
-        tab.activePaneId === paneId ? firstLeafId(newRoot) : tab.activePaneId;
-
       update(() => ({
         ...s,
         tabs: s.tabs.map((t, i) =>
-          i === idx
-            ? { ...t, root: newRoot, activePaneId: newActivePaneId }
-            : t
+          i === idx ? reseatFocus(t, newRoot, paneId) : t
         ),
       }));
     },
@@ -311,9 +382,7 @@ export function useTabStore() {
 
       update(() => ({
         ...s,
-        tabs: s.tabs.map((t, i) =>
-          i === idx ? { ...t, activePaneId: paneId } : t
-        ),
+        tabs: s.tabs.map((t, i) => (i === idx ? focusPaneInTab(t, paneId) : t)),
       }));
     },
 
@@ -332,9 +401,7 @@ export function useTabStore() {
 
       update(() => ({
         ...s,
-        tabs: s.tabs.map((t, i) =>
-          i === idx ? { ...t, activePaneId: nextId } : t
-        ),
+        tabs: s.tabs.map((t, i) => (i === idx ? focusPaneInTab(t, nextId) : t)),
       }));
     },
 
@@ -392,9 +459,7 @@ export function useTabStore() {
       update(() => ({
         ...s,
         tabs: s.tabs.map((t, i) =>
-          i === idx
-            ? { ...t, root: newRoot, activePaneId: sourceId }
-            : t
+          i === idx ? focusPaneInTab({ ...t, root: newRoot }, sourceId) : t
         ),
       }));
     },
@@ -427,17 +492,13 @@ export function useTabStore() {
 
       let newTabs = s.tabs.map((t, i) => {
         if (i === tgtIdx) {
-          return { ...t, root: newTgtRoot, activePaneId: sourcePaneId };
+          return focusPaneInTab({ ...t, root: newTgtRoot }, sourcePaneId);
         }
+        // The pane left this tab, so as far as the source tab is concerned it
+        // was closed — same reseat, so the tab you detached *from* keeps focus
+        // where you last were rather than snapping to its first pane.
         if (i === srcIdx && prunedSrc !== null) {
-          return {
-            ...t,
-            root: prunedSrc,
-            activePaneId:
-              t.activePaneId === sourcePaneId
-                ? firstLeafId(prunedSrc)
-                : t.activePaneId,
-          };
+          return reseatFocus(t, prunedSrc, sourcePaneId);
         }
         return t;
       });
@@ -446,7 +507,15 @@ export function useTabStore() {
         newTabs = newTabs.filter((_, i) => i !== srcIdx);
       }
 
-      update(() => ({ ...s, tabs: newTabs, activeTabId: targetTabId }));
+      const alive = new Set(newTabs.map((t) => t.id));
+      update(() => ({
+        ...s,
+        tabs: newTabs,
+        activeTabId: targetTabId,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId).filter(
+          (id) => id !== targetTabId && alive.has(id)
+        ),
+      }));
     },
 
     // Force the orientation of the split that directly contains `paneId`.

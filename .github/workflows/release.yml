@@ -54,8 +54,20 @@ jobs:
       - name: Install build toolchain (Linux container)
         if: matrix.container
         run: |
-          apt-get update
-          apt-get install -y --no-install-recommends \
+          # Ubuntu's apt mirrors have transient outages; a single failed fetch
+          # here otherwise kills the whole Linux leg (and, on a tag re-push,
+          # leaves the release with no Linux artifacts). Retry both update and
+          # install a few times before giving up.
+          retry() {
+            for attempt in 1 2 3 4 5; do
+              "$@" && return 0
+              echo "apt attempt $attempt failed; retrying in 15s..." >&2
+              sleep 15
+            done
+            return 1
+          }
+          retry apt-get update
+          retry apt-get install -y --no-install-recommends \
             git curl ca-certificates xz-utils file \
             build-essential python3 gcc-10 g++-10 \
             fakeroot dpkg libfuse2
@@ -111,3 +123,46 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # No Apple Developer cert in CI — skip signing so the mac build runs.
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # Safety net for re-runs and tag re-pushes: electron-builder refuses to
+      # attach assets to a Release that was published more than ~2 hours ago
+      # ("skipped publishing ... existing release published more than 2 hours
+      # ago"). That once left v0.13.0 with no Linux artifacts after the tag was
+      # moved and rebuilt. The files exist in build-output/ regardless, so push
+      # them straight to the Release with the API, which has no such guard.
+      # --clobber overwrites same-named assets so this is safe to re-run.
+      - name: Ensure built artifacts are attached to the Release
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          shopt -s nullglob
+          assets=(build-output/*.AppImage build-output/*.deb build-output/*.exe \
+                  build-output/*.dmg build-output/*.zip build-output/latest*.yml \
+                  build-output/*.blockmap)
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No build artifacts found to upload." >&2
+            exit 1
+          fi
+          gh release upload "$TAG" "${assets[@]}" --clobber
+
+      # The Release body comes out empty, and the unsigned macOS build fails its
+      # first launch with "Specterm is damaged and can't be opened" unless the
+      # quarantine attribute is cleared. Seed the notes with that command so it
+      # is on the download page itself, not only in the README. Runs on the mac
+      # leg only (one writer), and appends — hand-written notes added later, or
+      # by another leg, survive. See docs/macos-install.md.
+      - name: Seed release notes with the macOS quarantine step
+        if: runner.os == 'macOS' && startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          body=$(gh release view "$TAG" --json body --jq .body || echo "")
+          case "$body" in
+            *com.apple.quarantine*) echo "Already present; leaving notes alone."; exit 0 ;;
+          esac
+          { printf '%s' "$body"; cat .github/release-notes-macos.md; } > notes.md
+          gh release edit "$TAG" --notes-file notes.md
