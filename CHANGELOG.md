@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.14.0 — 2026-07-24
+
+### Added
+- **Splits and new tabs open where you already are.** A new pane inherits the
+  working directory of the pane it was split from, instead of dropping you back
+  at the configured startup path. The directory is read from the shell's own
+  process (`/proc` on Linux, `lsof` on macOS), so it works without configuring
+  your shell; when the shell sends `OSC 7` — zsh and fish do by default, and most
+  prompt frameworks add it — that report is preferred, since it arrives the
+  moment the directory changes and costs nothing. A report naming another host
+  (an ssh session) is dropped rather than pointing a local pane at a path that
+  only exists on the remote machine. Windows can't report a shell's live
+  directory without a native call into the process, so inheritance there still
+  falls back to the startup path.
+- **Select & copy the input composer.** **⌘⇧A** (Ctrl+Shift+A on Linux/Windows)
+  highlights just the Claude Code prompt box the cursor is in and copies the
+  typed text, instead of a plain select-all grabbing the whole scrollback. At a
+  bare shell prompt it falls back to the cursor's logical line. Bare `Ctrl+A`
+  stays free for readline's "beginning of line", and `⌘A` for the markdown
+  editor's own select-all.
+
+### Fixed
+- **Closing a pane or tab returns focus to where you came from.** Closing the
+  active pane handed focus to the first leaf of the split tree, so splitting off
+  a pane and closing it dropped you on the top-left pane rather than the one you
+  were working in; closing a tab had the same shape one level up, picking the
+  replacement by index. Both now keep a most-recently-used focus history and hand
+  focus to the most recent survivor, falling back to the old position rule only
+  when nothing was focused before.
+- **`cd fav-N` on Windows lands in the favorite path again.** The expansion
+  injects a PowerShell one-liner into the input line in a single burst, and
+  ConPTY/PSReadLine strips the lone backslashes out of it — `C:\Users\x` reached
+  `Set-Location` as `C:Usersx`, so the jump silently failed. The path is now
+  emitted forward-slashed, which PowerShell accepts as a separator and which
+  survives injection intact. Linux and macOS were never affected.
+- **Same-origin reloads stay in the window.** `will-navigate` compared full URLs,
+  so any same-origin navigation (a trailing slash, a hash change, the dev
+  server's reload) counted as an external link and fired `openExternal` — which
+  in development looped the default browser and stalled the renderer. It now
+  compares origins, and only a genuinely different http(s) origin goes out.
+
 ## 0.13.0 — 2026-07-22
 
 ### Added
