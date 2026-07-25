@@ -236,7 +236,14 @@ function cdFavCommand(dir: string, favPath: string): string {
   if (os === "windows") {
     // PowerShell escapes a single quote by doubling it; -LiteralPath avoids
     // glob/[] interpretation of the path.
-    const q = (p: string) => `'${p.replace(/'/g, "''")}'`;
+    //
+    // Backslashes must become forward slashes first: when this line is injected
+    // into the shell's input in one burst, ConPTY/PSReadLine drops the lone
+    // backslashes from the favorite path (`C:\Users\x` arrives as `C:Usersx`),
+    // so Set-Location fails with PathNotFound and the jump silently breaks.
+    // PowerShell accepts `/` as a path separator, and `/` survives injection
+    // intact, so emit the path forward-slashed.
+    const q = (p: string) => `'${p.replace(/\\/g, "/").replace(/'/g, "''")}'`;
     return (
       `if (Test-Path -LiteralPath ${q(dir)}) ` +
       `{ Set-Location -LiteralPath ${q(dir)} } ` +
