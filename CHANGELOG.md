@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased (0.15.0)
+## 0.15.0 — 2026-07-27
 
 ### Added
 - **Reopen what you closed.** **⌘⇧T** (`Ctrl+Shift+R` on Linux/Windows) brings

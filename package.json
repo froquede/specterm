@@ -1,13 +1,14 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "author": "Roque Francisco <roquefsd@gmail.com>",
   "contributors": [
     "Lucas Casanova (https://github.com/cas0la)",
     "Henrique Begrow (https://github.com/hbegrow)",
-    "Fernando Vinícius Fernandes (https://github.com/Maggnity)"
+    "Fernando Vinícius Fernandes (https://github.com/Maggnity)",
+    "Marcelo Muller (https://github.com/marcelomuller)"
   ],
   "type": "module",
   "main": "electron/main.cjs",
