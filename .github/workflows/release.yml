@@ -145,10 +145,19 @@ jobs:
       # moved and rebuilt. The files exist in build-output/ regardless, so push
       # them straight to the Release with the API, which has no such guard.
       # --clobber overwrites same-named assets so this is safe to re-run.
+      #
+      # GH_REPO is what keeps this working inside the Linux container. Without
+      # it `gh` finds the repository by shelling out to git, and git refuses to
+      # read a checkout owned by another uid — which is exactly the situation in
+      # the container, where the workspace belongs to the runner user:
+      #   fatal: detected dubious ownership in repository at '/__w/specterm/...'
+      # Naming the repo outright skips that lookup entirely, and is narrower
+      # than marking the tree safe globally just so one command can find it.
       - name: Ensure built artifacts are attached to the Release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |
