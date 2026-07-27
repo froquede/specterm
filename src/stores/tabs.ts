@@ -25,7 +25,19 @@ import {
   type DropEdge,
   type FocusDirection,
 } from "../lib/split-tree";
-import { destroyTerminal, getTerminalInstance } from "../lib/terminal-registry";
+import {
+  destroyTerminal,
+  releaseTerminal,
+  getTerminalInstance,
+} from "../lib/terminal-registry";
+import { releasePty } from "../lib/pty";
+import type { TransferTab } from "../backends/types";
+import {
+  rebuildTab,
+  serializeLeaf,
+  serializeTab,
+  transferPtyIds,
+} from "../lib/transfer";
 
 function createTerminalTab(): Tab {
   const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd: "" });
@@ -38,12 +50,13 @@ function createTerminalTab(): Tab {
   };
 }
 
-const initialTab = createTerminalTab();
-
-// Use createSignal instead of createStore for full object replacement
+// The window opens with no tabs and App.tsx calls initWindow() once it has asked
+// the host what this window is for. A window created by a tear-off is handed a
+// tab, and starting empty is what keeps it from spawning a throwaway shell (with
+// the user's rc files and all) only to kill it a tick later.
 const [state, setStateRaw] = createSignal<AppState>({
-  tabs: [initialTab],
-  activeTabId: initialTab.id,
+  tabs: [],
+  activeTabId: "",
   sidebarView: "files",
   renamingTabId: null,
 });
@@ -67,6 +80,41 @@ function killPanesInTree(root: SplitNode) {
       destroyTerminal(leaf.id);
     }
   }
+}
+
+// The tear-off counterpart of killPanesInTree: drop this window's terminals
+// without killing the shells behind them — another window is about to adopt them.
+function releasePanesInTree(root: SplitNode) {
+  for (const leaf of collectLeaves(root)) {
+    if (leaf.pane.kind === "terminal") {
+      releaseTerminal(leaf.id);
+    }
+  }
+}
+
+// The PTYs actually running under a subtree, in the order the panes appear.
+function livePtyIds(root: SplitNode): number[] {
+  const ids: number[] = [];
+  for (const leaf of collectLeaves(root)) {
+    if (leaf.pane.kind !== "terminal") continue;
+    const instance = getTerminalInstance(leaf.id);
+    if (instance && !instance.disposed && instance.ptyId !== null) {
+      ids.push(instance.ptyId);
+    }
+  }
+  return ids;
+}
+
+// What a torn-off pane's tab should be called in the window that receives it.
+function paneTitle(leaf: SplitNode): string {
+  if (leaf.type !== "leaf") return "Terminal";
+  if (leaf.pane.kind === "terminal") {
+    return getTerminalInstance(leaf.id)?.title || "Terminal";
+  }
+  return (
+    leaf.pane.filePath.split(/[\\/]/).pop() ||
+    (leaf.pane.kind === "markdown" ? "Markdown" : "Text")
+  );
 }
 
 // Recursive tree operations (return new objects for immutability)
@@ -168,6 +216,124 @@ export function useTabStore() {
         activeTabId: tab.id,
       }));
       return tab;
+    },
+
+    // Fill a freshly opened window, once the host has said what it is for: the
+    // tab a tear-off handed it, or a plain new terminal. Idempotent — a reload
+    // that finds tabs already there leaves them alone.
+    initWindow(transfer: TransferTab | null) {
+      if (state().tabs.length > 0) return;
+      const tab = transfer ? rebuildTab(transfer) : createTerminalTab();
+      update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
+      return tab;
+    },
+
+    // A tab another window tore off and dropped onto this one.
+    adoptTab(transfer: TransferTab) {
+      const tab = rebuildTab(transfer);
+      update((s) => ({
+        ...s,
+        tabs: [...s.tabs, tab],
+        activeTabId: tab.id,
+      }));
+      return tab;
+    },
+
+    // Hand a whole tab to another window.
+    //
+    // The PTYs are released *before* the snapshot is taken, and that order is
+    // the point: from the release on, the host buffers their output instead of
+    // sending it here, so everything printed up to that instant is in the
+    // snapshot and everything after is in the buffer — nothing is lost, nothing
+    // arrives twice. Then the terminals are dropped without killing the shells.
+    //
+    // Refuses on the window's only tab: that move would just rebuild this window
+    // somewhere else and leave an empty one behind.
+    async takeTab(tabId: TabId): Promise<TransferTab | null> {
+      const s = state();
+      if (s.tabs.length <= 1) return null;
+      const tab = s.tabs.find((t) => t.id === tabId);
+      if (!tab) return null;
+
+      await releasePty(livePtyIds(tab.root));
+      const transfer = serializeTab(tab);
+      if (!transfer) return null;
+
+      releasePanesInTree(tab.root);
+
+      const current = state();
+      const idx = current.tabs.findIndex((t) => t.id === tabId);
+      if (idx === -1) return transfer; // closed under us mid-handover
+      const remaining = current.tabs.filter((t) => t.id !== tabId);
+      if (remaining.length === 0) {
+        const fresh = createTerminalTab();
+        update(() => ({ ...current, tabs: [fresh], activeTabId: fresh.id }));
+        return transfer;
+      }
+      update(() => ({
+        ...current,
+        tabs: remaining,
+        activeTabId:
+          current.activeTabId === tabId
+            ? remaining[Math.min(idx, remaining.length - 1)].id
+            : current.activeTabId,
+      }));
+      return transfer;
+    },
+
+    // Hand a single pane to another window, where it lands as a one-pane tab.
+    // Same release-then-serialize ordering as takeTab. Refuses when it is the
+    // last pane of the window's only tab.
+    async takePane(paneId: PaneId): Promise<TransferTab | null> {
+      const s = state();
+      const tab = s.tabs.find((t) => findLeafNode(t.root, paneId));
+      if (!tab) return null;
+      const leaf = findLeafNode(tab.root, paneId);
+      if (!leaf) return null;
+      if (s.tabs.length <= 1 && tab.root.type === "leaf") return null;
+
+      await releasePty(livePtyIds(leaf));
+      const transfer = serializeLeaf(leaf, paneTitle(leaf));
+      if (!transfer) return null;
+
+      releasePanesInTree(leaf);
+
+      const current = state();
+      const idx = current.tabs.findIndex((t) => t.id === tab.id);
+      if (idx === -1) return transfer; // closed under us mid-handover
+
+      const pruned = closePane(current.tabs[idx].root, paneId);
+      if (pruned === null) {
+        // That was the tab's only pane — the tab goes with it.
+        const remaining = current.tabs.filter((_, i) => i !== idx);
+        const fallback = remaining.length
+          ? remaining[Math.min(idx, remaining.length - 1)]
+          : createTerminalTab();
+        update(() => ({
+          ...current,
+          tabs: remaining.length ? remaining : [fallback],
+          activeTabId:
+            current.activeTabId === tab.id ? fallback.id : current.activeTabId,
+        }));
+        return transfer;
+      }
+
+      update(() => ({
+        ...current,
+        tabs: current.tabs.map((t, i) =>
+          i === idx
+            ? {
+                ...t,
+                root: pruned,
+                activePaneId:
+                  t.activePaneId === paneId
+                    ? firstLeafId(pruned)
+                    : t.activePaneId,
+              }
+            : t
+        ),
+      }));
+      return transfer;
     },
 
     createMarkdownTab(filePath: string) {

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Multiple windows.** `⌘N` (`Ctrl+Shift+N`) opens another Specterm window,
+  with its own tabs, splits and terminals. Windows are fully independent —
+  closing one kills only its own shells — while theme, terminal font and pinned
+  favourites stay in step across all of them the moment you change them
+  anywhere. (Font *zoom* stays per-window, like a browser's.)
+- **Tear a tab or a pane out into its own window.** Drag a tab — or any pane, by
+  its title bar — past the edge of the window and let go. Drop it on another
+  Specterm window and it moves in there; drop it anywhere else and it becomes a
+  window of its own, opening where you released it. The shell comes along
+  alive: the process is handed over rather than restarted, its scrollback is
+  carried across, and anything it prints mid-move is buffered and replayed in
+  order, so a running build doesn't lose a line. A full-screen program (vim,
+  htop, Claude Code) redraws itself in the new window the same way it does on
+  any terminal resize.
+
 ## 0.13.0 — 2026-07-22
 
 ### Added

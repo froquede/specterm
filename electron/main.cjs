@@ -1,4 +1,14 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, clipboard, session, net } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  Menu,
+  clipboard,
+  session,
+  net,
+  screen,
+} = require("electron");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
@@ -81,33 +91,73 @@ function resolveShell() {
   return { shell: process.env.SHELL || "/bin/bash", args: [] };
 }
 
-// PTY instance management
+// PTY instance management. Each instance records which window owns it (`wc`),
+// so output routes to that window alone and closing a window kills only its own
+// terminals. A PTY in mid-transfer between windows has `wc === null` and buffers
+// its output into `pending` until the destination window adopts it.
 const ptyInstances = new Map();
 let nextPtyId = 1;
-let mainWindow = null;
-let fsWatcher = null;
+
+// Every open window. A Set — rather than a `mainWindow` singleton — is what lets
+// the rest of this file stay window-agnostic: outbound IPC either targets the
+// window resolved from a request's sender, or fans out across these.
+const windows = new Set();
+
+// Per-window filesystem watcher, keyed by webContents id: each window watches
+// for its own sidebar, and its watcher dies with it.
+const fsWatchers = new Map();
+
+// What a freshly created window picks up on mount, keyed by webContents id: the
+// tab a tear-off handed it, and whether it owns the one automatic update check
+// of this process. Consumed exactly once, via "take-window-init".
+const windowInit = new Map();
+
+// Set once the automatic (launch-time) update check has been handed to a window,
+// so opening more windows doesn't re-check GitHub on every one.
+let updateCheckClaimed = false;
+
+// Windows whose renderer has finished loading and is listening for "open-path".
+const readyWindows = new WeakSet();
+
+function openWindows() {
+  return [...windows].filter((w) => !w.isDestroyed());
+}
+
+// The window a renderer request came from.
+function windowOf(event) {
+  return BrowserWindow.fromWebContents(event.sender);
+}
+
+// Where a window-less action (an OS "Open With", a second launch) should land:
+// whatever the user is looking at, falling back to the most recent window.
+function targetWindow() {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windows.has(focused)) return focused;
+  const open = openWindows();
+  return open.length ? open[open.length - 1] : null;
+}
 
 // Files the OS asked us to open (Finder "Open With", double-click, or a CLI
-// path arg) that may arrive before the renderer has finished loading — macOS
-// fires `open-file` even before `app` is ready. Queue them and drain once the
-// renderer is up; while it's up, send straight through.
+// path arg) that may arrive before any renderer has finished loading — macOS
+// fires `open-file` even before `app` is ready. Queue them and drain into the
+// first window that comes up; once one is up, send straight through.
 const pendingOpenPaths = [];
-let rendererReady = false;
 
 function openPath(filePath) {
   if (!filePath) return;
-  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("open-path", filePath);
+  const win = targetWindow();
+  if (win && readyWindows.has(win)) {
+    win.webContents.send("open-path", filePath);
   } else {
     pendingOpenPaths.push(filePath);
   }
 }
 
-function flushOpenPaths() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  rendererReady = true;
+function flushOpenPaths(win) {
+  if (!win || win.isDestroyed()) return;
+  readyWindows.add(win);
   while (pendingOpenPaths.length) {
-    mainWindow.webContents.send("open-path", pendingOpenPaths.shift());
+    win.webContents.send("open-path", pendingOpenPaths.shift());
   }
 }
 
@@ -150,14 +200,47 @@ if (!singleInstanceOk) {
   app.on("second-instance", (_event, argv) => {
     const p = markdownPathFromArgv(argv);
     if (p) openPath(p);
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    const win = targetWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
 }
 
-function createWindow() {
+const WINDOW_WIDTH = 1200;
+const WINDOW_HEIGHT = 800;
+
+// Where a torn-off tab's new window should sit: centered on the drop point, but
+// nudged back inside the display it landed on so no window opens with its title
+// bar off-screen (which on macOS would leave it undraggable).
+function windowBoundsAt(point) {
+  const area = screen.getDisplayNearestPoint(point).workArea;
+  const x = Math.round(point.x - WINDOW_WIDTH / 2);
+  const y = Math.round(point.y - 20);
+  return {
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    x: Math.min(Math.max(x, area.x), area.x + area.width - WINDOW_WIDTH),
+    y: Math.min(Math.max(y, area.y), area.y + area.height - WINDOW_HEIGHT),
+  };
+}
+
+// Kill every PTY a window owned. Called when that window closes: its terminals
+// die with it, while PTYs belonging to other windows — and any mid-transfer
+// (`wc === null`, see the tear-off flow) — are left alone.
+function killPtysOwnedBy(wc) {
+  for (const [id, instance] of ptyInstances) {
+    if (instance.wc !== wc) continue;
+    if (!instance.disposed) {
+      instance.process.kill();
+      instance.disposed = true;
+    }
+    ptyInstances.delete(id);
+  }
+}
+
+function createWindow(opts = {}) {
   const isMac = process.platform === "darwin";
 
   // Solid, opaque window on every platform — no transparency, blur or vibrancy.
@@ -172,9 +255,10 @@ function createWindow() {
       }
     : { backgroundColor: "#1a1b26" };
 
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+  const win = new BrowserWindow({
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    ...(opts.bounds || {}),
     title: "Specterm",
     autoHideMenuBar: true,
     ...platformWindow,
@@ -185,34 +269,40 @@ function createWindow() {
     },
   });
 
-  // Remove menu bar entirely
-  mainWindow.setMenuBarVisibility(false);
+  windows.add(win);
 
-  // Fresh window: the renderer hasn't attached its open-path listener yet, so
-  // any queued file waits until did-finish-load flushes it below.
-  rendererReady = false;
+  // What this window collects on mount. The automatic update check belongs to
+  // the first window only — every later one would otherwise re-hit the GitHub
+  // feed just for being opened.
+  windowInit.set(win.webContents.id, {
+    tab: opts.tab ?? null,
+    autoCheckUpdates: !updateCheckClaimed,
+  });
+  updateCheckClaimed = true;
+
+  // Remove menu bar entirely
+  win.setMenuBarVisibility(false);
 
   // In dev, connect to Vite dev server; in prod, load built files
   if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
   // Once the renderer is loaded, hand it any files queued while it booted (and
   // mark it ready so later open-file events go straight through). Fires again on
   // reloads — harmless, the queue is empty by then.
-  mainWindow.webContents.on("did-finish-load", flushOpenPaths);
+  win.webContents.on("did-finish-load", () => flushOpenPaths(win));
 
   // Open external links in default browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
 
-  mainWindow.webContents.on("will-navigate", (event, url) => {
-    const currentUrl = mainWindow.webContents.getURL();
-    if (url !== currentUrl) {
+  win.webContents.on("will-navigate", (event, url) => {
+    if (url !== win.webContents.getURL()) {
       event.preventDefault();
       shell.openExternal(url);
     }
@@ -220,21 +310,60 @@ function createWindow() {
 
   // Notify the renderer when the OS fullscreen state changes (e.g. macOS green
   // button, F11, or our own toggle) so the tab-bar icon stays in sync.
-  mainWindow.on("enter-full-screen", () => {
-    mainWindow?.webContents.send("fullscreen-change", true);
+  win.on("enter-full-screen", () => {
+    if (!win.isDestroyed()) win.webContents.send("fullscreen-change", true);
   });
-  mainWindow.on("leave-full-screen", () => {
-    mainWindow?.webContents.send("fullscreen-change", false);
+  win.on("leave-full-screen", () => {
+    if (!win.isDestroyed()) win.webContents.send("fullscreen-change", false);
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  // Tear down everything this window owned. `closed` fires after the webContents
+  // is gone, so capture its id up front.
+  const wc = win.webContents;
+  const wcId = wc.id;
+  win.on("closed", () => {
+    windows.delete(win);
+    windowInit.delete(wcId);
+    killPtysOwnedBy(wc);
+    const watcher = fsWatchers.get(wcId);
+    if (watcher) {
+      watcher.close();
+      fsWatchers.delete(wcId);
+    }
   });
+
+  return win;
 }
 
 // === IPC Handlers ===
 
-ipcMain.handle("spawn-pty", (_event, opts) => {
+// How much output to hold for a PTY in transit between windows (a tear-off).
+// Enough to cover the window-creation gap even for a chatty process; past that
+// the oldest bytes go, exactly as scrollback does.
+const TRANSIT_BUFFER_LIMIT = 1024 * 1024;
+
+// Route PTY output to the window that owns it. A PTY handed over by a tear-off
+// has no owner for the moment it takes the destination window to boot, so its
+// output is parked instead of dropped — otherwise a build running in the torn-off
+// tab would lose whatever it printed mid-flight.
+function deliverPtyOutput(instance, id, data) {
+  if (instance.wc === null) {
+    instance.pending.push(data);
+    instance.pendingBytes += data.length;
+    while (
+      instance.pendingBytes > TRANSIT_BUFFER_LIMIT &&
+      instance.pending.length > 1
+    ) {
+      instance.pendingBytes -= instance.pending.shift().length;
+    }
+    return;
+  }
+  if (!instance.wc.isDestroyed()) {
+    instance.wc.send("pty-output", id, Array.from(data));
+  }
+}
+
+ipcMain.handle("spawn-pty", (event, opts) => {
   const { shell, args } = resolveShell();
   const id = nextPtyId++;
 
@@ -270,29 +399,69 @@ ipcMain.handle("spawn-pty", (_event, opts) => {
     env,
   });
 
-  ptyInstances.set(id, { process: ptyProcess, disposed: false });
+  const instance = {
+    process: ptyProcess,
+    disposed: false,
+    // The window this terminal belongs to. Reassigned by adopt-pty when a
+    // tear-off moves the terminal to another window; null while in transit.
+    wc: event.sender,
+    pending: [],
+    pendingBytes: 0,
+  };
+  ptyInstances.set(id, instance);
 
   ptyProcess.onData((data) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(
-        "pty-output",
-        id,
-        Array.from(Buffer.from(data))
-      );
-    }
+    deliverPtyOutput(instance, id, Buffer.from(data));
   });
 
   ptyProcess.onExit(() => {
-    const instance = ptyInstances.get(id);
-    if (instance) {
-      instance.disposed = true;
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("pty-exit", id);
+    instance.disposed = true;
+    if (instance.wc && !instance.wc.isDestroyed()) {
+      instance.wc.send("pty-exit", id);
     }
   });
 
   return id;
+});
+
+// Hand a set of PTYs over: they keep running with no owner, buffering output,
+// until the destination window adopts them. The source window calls this before
+// it drops its terminals, so no output falls through the gap.
+ipcMain.handle("release-pty", (_event, ids) => {
+  for (const id of Array.isArray(ids) ? ids : [ids]) {
+    const instance = ptyInstances.get(id);
+    if (!instance) continue;
+    instance.wc = null;
+    instance.pending = [];
+    instance.pendingBytes = 0;
+  }
+});
+
+// Take ownership of a released PTY. The buffered output comes back as the return
+// value rather than as an event, which is what fixes the ordering: the adopting
+// renderer writes the serialized scrollback first, then these bytes, and only
+// then does live output start flowing to it.
+ipcMain.handle("adopt-pty", (event, id, cols, rows) => {
+  const instance = ptyInstances.get(id);
+  if (!instance) return { buffered: [], exited: true };
+
+  instance.wc = event.sender;
+  const buffered = instance.pending.length
+    ? Array.from(Buffer.concat(instance.pending))
+    : [];
+  instance.pending = [];
+  instance.pendingBytes = 0;
+
+  if (!instance.disposed && cols > 0 && rows > 0) {
+    try {
+      instance.process.resize(cols, rows);
+    } catch {
+      // The process died between the check and the resize. The adopting window
+      // learns that from `exited` below; failing the adopt instead would leave
+      // it with a pane and no terminal.
+    }
+  }
+  return { buffered, exited: instance.disposed };
 });
 
 ipcMain.handle("write-pty", (_event, id, data) => {
@@ -397,47 +566,52 @@ ipcMain.handle("clipboard-write-text", (_event, text) => {
   clipboard.writeText(typeof text === "string" ? text : String(text));
 });
 
-ipcMain.handle("watch-dir", (_event, dirPath) => {
-  if (fsWatcher) {
-    fsWatcher.close();
-  }
+// One watcher per window: each has its own sidebar browsing its own directory,
+// and only that window is told when something under it changes.
+ipcMain.handle("watch-dir", (event, dirPath) => {
+  const wc = event.sender;
+  const previous = fsWatchers.get(wc.id);
+  if (previous) previous.close();
 
-  fsWatcher = watch(dirPath, {
+  const watcher = watch(dirPath, {
     ignored: /(^|[/\\])\.|node_modules|target|dist|build/,
     persistent: true,
     ignoreInitial: true,
     depth: 5,
     usePolling: false,
   });
+  fsWatchers.set(wc.id, watcher);
 
-  fsWatcher.on("all", (_eventType, changedPath) => {
+  watcher.on("all", (_eventType, changedPath) => {
     if (
       typeof changedPath === "string" &&
       changedPath.endsWith(".md") &&
-      mainWindow &&
-      !mainWindow.isDestroyed()
+      !wc.isDestroyed()
     ) {
-      mainWindow.webContents.send("fs-change");
+      wc.send("fs-change");
     }
   });
 });
 
-ipcMain.handle("unwatch-dir", () => {
-  if (fsWatcher) {
-    fsWatcher.close();
-    fsWatcher = null;
+ipcMain.handle("unwatch-dir", (event) => {
+  const watcher = fsWatchers.get(event.sender.id);
+  if (watcher) {
+    watcher.close();
+    fsWatchers.delete(event.sender.id);
   }
 });
 
 // === Window IPC ===
 
-ipcMain.handle("is-fullscreen", () => {
-  return mainWindow ? mainWindow.isFullScreen() : false;
+ipcMain.handle("is-fullscreen", (event) => {
+  const win = windowOf(event);
+  return win ? win.isFullScreen() : false;
 });
 
-ipcMain.handle("set-fullscreen", (_event, value) => {
-  if (mainWindow) {
-    mainWindow.setFullScreen(Boolean(value));
+ipcMain.handle("set-fullscreen", (event, value) => {
+  const win = windowOf(event);
+  if (win) {
+    win.setFullScreen(Boolean(value));
   }
 });
 
@@ -482,13 +656,71 @@ function setX11WindowOpacity(win, opacity) {
   );
 }
 
-ipcMain.handle("set-window-opacity", (_event, value) => {
-  if (!mainWindow) return;
+ipcMain.handle("set-window-opacity", (event, value) => {
+  const win = windowOf(event);
+  if (!win) return;
   const n = Number(value);
   const opacity = Number.isFinite(n) ? Math.min(1, Math.max(0.3, n)) : 1;
-  mainWindow.setOpacity(opacity); // Windows/macOS
+  win.setOpacity(opacity); // Windows/macOS
   if (process.platform === "linux") {
-    setX11WindowOpacity(mainWindow, opacity);
+    setX11WindowOpacity(win, opacity);
+  }
+});
+
+// === Multi-window IPC ===
+
+// Whatever this window was created with: a tab handed over by a tear-off, and
+// whether it owns the process's one automatic update check. Read once, on mount.
+ipcMain.handle("take-window-init", (event) => {
+  const id = event.sender.id;
+  const init = windowInit.get(id) ?? { tab: null, autoCheckUpdates: false };
+  windowInit.delete(id);
+  return init;
+});
+
+ipcMain.handle("new-window", () => {
+  createWindow().focus();
+});
+
+// The landing half of a tear-off. The renderer has already released the tab's
+// PTYs; here we decide where it goes, using the OS cursor position rather than
+// anything the renderer measured — a drag that leaves the window may stop
+// delivering pointer events to it, but the real cursor is always knowable.
+//
+// Drop over another Specterm window and the tab moves into it; drop anywhere
+// else and it becomes a window of its own, centered on where it landed.
+ipcMain.handle("drop-transfer", (event, tab) => {
+  if (!tab) return;
+  const point = screen.getCursorScreenPoint();
+  const source = windowOf(event);
+
+  for (const win of openWindows()) {
+    if (win === source) continue;
+    const b = win.getBounds();
+    if (
+      point.x >= b.x &&
+      point.x < b.x + b.width &&
+      point.y >= b.y &&
+      point.y < b.y + b.height
+    ) {
+      win.webContents.send("adopt-tab", tab);
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      return;
+    }
+  }
+
+  createWindow({ tab, bounds: windowBoundsAt(point) }).focus();
+});
+
+// Relay for state every window keeps its own copy of (settings, theme,
+// favorites). The writer persists to localStorage and fires this; everyone else
+// re-reads. Without it, changing the theme in one window would leave the others
+// on the old one until the next launch.
+ipcMain.on("broadcast", (event, channel, payload) => {
+  for (const win of openWindows()) {
+    if (win.webContents === event.sender) continue;
+    win.webContents.send("broadcast", channel, payload);
   }
 });
 
@@ -517,7 +749,20 @@ function buildAppMenu() {
       : []),
     {
       label: "Window",
-      submenu: [{ role: "minimize" }, { role: "zoom" }],
+      submenu: [
+        // The renderer's keymap owns ⌘N like it owns ⌘T/⌘W/⌘D, so this shows
+        // the shortcut without claiming it — registerAccelerator: false renders
+        // the hint but leaves the key to reach the page.
+        {
+          label: "New Window",
+          accelerator: isMac ? "Cmd+N" : "Ctrl+Shift+N",
+          registerAccelerator: false,
+          click: () => createWindow().focus(),
+        },
+        { type: "separator" },
+        { role: "minimize" },
+        { role: "zoom" },
+      ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -552,9 +797,11 @@ let macUpdateFile = null;
 let macStagedAppPath = null;
 let macStagedWorkDir = null;
 
+// The update flow belongs to the app, not to one window: any window's Settings
+// panel can drive it, so every window hears every step.
 function sendUpdaterEvent(payload) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("updater:event", payload);
+  for (const win of openWindows()) {
+    win.webContents.send("updater:event", payload);
   }
 }
 
@@ -981,6 +1228,9 @@ app.whenReady().then(() => {
   createWindow();
 });
 
+// Safety net. Each window already kills its own PTYs and closes its own watcher
+// on `closed`; what can still be here is a PTY caught mid-transfer between two
+// windows, which has no owner to clean it up.
 app.on("window-all-closed", () => {
   for (const [, instance] of ptyInstances) {
     if (!instance.disposed) {
@@ -989,9 +1239,10 @@ app.on("window-all-closed", () => {
   }
   ptyInstances.clear();
 
-  if (fsWatcher) {
-    fsWatcher.close();
+  for (const [, watcher] of fsWatchers) {
+    watcher.close();
   }
+  fsWatchers.clear();
 
   app.quit();
 });

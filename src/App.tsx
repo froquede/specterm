@@ -6,6 +6,7 @@ import { createKeymap } from "./stores/keymap";
 import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
+import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd } from "./lib/fspath";
@@ -16,6 +17,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import SidebarResizeHandle from "./components/SidebarResizeHandle";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
+import type { UnlistenFn } from "./backends";
 
 export default function App() {
   const store = useTabStore();
@@ -141,6 +143,19 @@ export default function App() {
     }
   }
 
+  // Move a tab (or a single pane, which becomes a tab) out of this window,
+  // because the drag was released outside it. The store snapshots it and hands
+  // its PTYs over; the host decides where it lands — another Specterm window if
+  // one is under the cursor, otherwise a new window there. Both steps refuse
+  // quietly when the move would leave this window with nothing.
+  async function tearOff(kind: "tab" | "pane", id: string) {
+    const transfer =
+      kind === "tab" ? await store.takeTab(id) : await store.takePane(id);
+    if (!transfer) return;
+    const backend = await getBackend();
+    await backend.dropTransfer(transfer);
+  }
+
   // Move keyboard focus back into the active tab's terminal (or, if that pane
   // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
   function focusActivePane() {
@@ -175,11 +190,38 @@ export default function App() {
     // Apply the persisted color theme (CSS variables + terminal palette).
     initTheme();
 
-    // Check GitHub for a newer release once, on this cold start. The single-
-    // instance lock means relaunching an already-running Specterm just focuses
-    // the window without re-running this — so it's "check on open", and any
-    // later check is the manual button in Settings.
-    void initUpdater();
+    // Start listening for settings/theme/favorites changes made in other
+    // windows. Each store registered its own reload in the init calls above.
+    void initStoreSync();
+
+    // Ask the host what this window is for before putting anything in it: a
+    // window opened by a tear-off is handed a tab, and it must adopt that one
+    // rather than spawn a shell of its own first. The store starts empty for
+    // exactly this reason, so nothing here races a terminal into existence.
+    let unlistenAdopt: UnlistenFn | undefined;
+    getBackend()
+      .then(async (backend) => {
+        const init = await backend.takeWindowInit();
+        store.initWindow(init.tab);
+
+        // Check GitHub for a newer release once per app launch — the first
+        // window owns that check, so opening more windows doesn't re-hit the
+        // feed. Any later check is the manual button in Settings.
+        if (init.autoCheckUpdates) void initUpdater();
+
+        // A tab torn off another window and dropped onto this one.
+        unlistenAdopt = await backend.onAdoptTab((tab) => {
+          store.adoptTab(tab);
+        });
+      })
+      .catch((err) => {
+        // Never leave the window empty because the host bridge hiccuped: fall
+        // back to the plain new-terminal boot. initWindow is a no-op if a tab
+        // already made it in.
+        console.warn("[window] init failed, opening a plain terminal:", err);
+        store.initWindow(null);
+      });
+    onCleanup(() => unlistenAdopt?.());
 
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);
@@ -254,6 +296,7 @@ export default function App() {
         onReorder={(source, target, before) =>
           store.moveTab(source, target, before)
         }
+        onTearOff={(id) => void tearOff("tab", id)}
         settingsOpen={settingsOpen()}
       />
       <div class="app-body">
@@ -302,6 +345,7 @@ export default function App() {
                   // keyboard focus with it once it lands in the newly shown tab.
                   requestAnimationFrame(() => focusPaneReliably(sourceId));
                 }}
+                onTearOffPane={(sourceId) => void tearOff("pane", sourceId)}
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenMarkdown={handleOpenMarkdown}

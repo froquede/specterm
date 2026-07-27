@@ -5,6 +5,8 @@ import type {
   DriveEntry,
   UnlistenFn,
   UpdaterEvent,
+  TransferTab,
+  WindowInit,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -13,6 +15,12 @@ interface SpectermAPI {
   writePty(id: number, data: string): Promise<void>;
   resizePty(id: number, cols: number, rows: number): Promise<void>;
   killPty(id: number): Promise<void>;
+  releasePty(ids: number[]): Promise<void>;
+  adoptPty(
+    id: number,
+    cols: number,
+    rows: number
+  ): Promise<{ buffered: number[]; exited: boolean }>;
   onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
@@ -30,6 +38,12 @@ interface SpectermAPI {
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
   setWindowOpacity(value: number): Promise<void>;
+  takeWindowInit(): Promise<WindowInit>;
+  newWindow(): Promise<void>;
+  dropTransfer(tab: TransferTab): Promise<void>;
+  onAdoptTab(cb: (tab: TransferTab) => void): () => void;
+  broadcast(channel: string, payload?: unknown): void;
+  onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   checkForUpdate(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   installUpdate(): Promise<void>;
@@ -62,6 +76,22 @@ export class ElectronBackend implements Backend {
 
   async killPty(id: number): Promise<void> {
     return this.api.killPty(id);
+  }
+
+  async releasePty(ids: number[]): Promise<void> {
+    return this.api.releasePty(ids);
+  }
+
+  async adoptPty(
+    id: number,
+    cols: number,
+    rows: number
+  ): Promise<{ buffered: Uint8Array; exited: boolean }> {
+    const result = await this.api.adoptPty(id, cols, rows);
+    return {
+      buffered: new Uint8Array(result.buffered),
+      exited: result.exited,
+    };
   }
 
   async onPtyOutput(
@@ -137,6 +167,32 @@ export class ElectronBackend implements Backend {
 
   async setWindowOpacity(value: number): Promise<void> {
     return this.api.setWindowOpacity(value);
+  }
+
+  async takeWindowInit(): Promise<WindowInit> {
+    return this.api.takeWindowInit();
+  }
+
+  async newWindow(): Promise<void> {
+    return this.api.newWindow();
+  }
+
+  async dropTransfer(tab: TransferTab): Promise<void> {
+    return this.api.dropTransfer(tab);
+  }
+
+  async onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
+    return this.api.onAdoptTab(cb);
+  }
+
+  broadcast(channel: string, payload?: unknown): void {
+    this.api.broadcast(channel, payload);
+  }
+
+  async onBroadcast(
+    cb: (channel: string, payload?: unknown) => void
+  ): Promise<UnlistenFn> {
+    return this.api.onBroadcast(cb);
   }
 
   async checkForUpdate(): Promise<void> {

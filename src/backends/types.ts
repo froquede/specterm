@@ -43,12 +43,54 @@ export interface UpdaterEvent {
   message?: string;
 }
 
+// A tab (or a single pane, as a one-leaf tab) in the form it travels between
+// windows: no pane ids — the destination mints its own — and every terminal
+// reduced to its live PTY plus a serialized copy of its screen and scrollback.
+export type TransferPane =
+  | { kind: "terminal"; ptyId: number; scrollback: string; title: string }
+  | { kind: "markdown"; filePath: string }
+  | { kind: "text"; filePath: string };
+
+export type TransferNode =
+  | { type: "leaf"; pane: TransferPane }
+  | {
+      type: "split";
+      direction: "h" | "v";
+      ratio: number;
+      first: TransferNode;
+      second: TransferNode;
+    };
+
+export interface TransferTab {
+  title: string;
+  manualTitle: boolean;
+  root: TransferNode;
+}
+
+// State a window collects once, on mount.
+export interface WindowInit {
+  // A tab torn off another window that this one was created to host.
+  tab: TransferTab | null;
+  // Whether this window owns the single launch-time update check.
+  autoCheckUpdates: boolean;
+}
+
 export interface Backend {
   // PTY
   spawnPty(opts: SpawnPtyOptions): Promise<number>;
   writePty(id: number, data: string): Promise<void>;
   resizePty(id: number, cols: number, rows: number): Promise<void>;
   killPty(id: number): Promise<void>;
+  // Give up ownership of these PTYs without killing them — the handover half of
+  // a tear-off. They keep running and buffer output until adoptPty claims them.
+  releasePty(ids: number[]): Promise<void>;
+  // Claim a released PTY for this window, resized to the adopting pane. Resolves
+  // with the output buffered while it had no owner.
+  adoptPty(
+    id: number,
+    cols: number,
+    rows: number
+  ): Promise<{ buffered: Uint8Array; exited: boolean }>;
   onPtyOutput(cb: (id: number, data: Uint8Array) => void): Promise<UnlistenFn>;
   onPtyExit(cb: (id: number) => void): Promise<UnlistenFn>;
 
@@ -80,6 +122,27 @@ export interface Backend {
   // Whole-window alpha (0–1); values below 1 let the desktop show through.
   // A no-op on backends/platforms that can't honor it.
   setWindowOpacity(value: number): Promise<void>;
+
+  // Multi-window. Backends that only ever have one window return an inert
+  // WindowInit, no-op the rest, and simply never fire onAdoptTab.
+  //
+  // What this window was created with — read once, on mount.
+  takeWindowInit(): Promise<WindowInit>;
+  // Open another window on the same app.
+  newWindow(): Promise<void>;
+  // Land a torn-off tab wherever the cursor released it: into another Specterm
+  // window if one is under it, otherwise into a new window of its own. The host
+  // decides, since only it can see the real cursor and every window's bounds.
+  dropTransfer(tab: TransferTab): Promise<void>;
+  // A tab another window tore off and dropped onto this one.
+  onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn>;
+
+  // Cross-window sync for state each window keeps its own copy of (settings,
+  // theme, favorites): the writer persists, then tells everyone else to re-read.
+  broadcast(channel: string, payload?: unknown): void;
+  onBroadcast(
+    cb: (channel: string, payload?: unknown) => void
+  ): Promise<UnlistenFn>;
 
   // Auto-update. checkForUpdate/downloadUpdate kick off async work whose
   // progress arrives via onUpdaterEvent; installUpdate quits and swaps in the

@@ -13,6 +13,8 @@ import type {
   DriveEntry,
   UnlistenFn,
   UpdaterEvent,
+  TransferTab,
+  WindowInit,
 } from "./types";
 
 interface PtyOutput {
@@ -37,6 +39,18 @@ export class TauriBackend implements Backend {
 
   async killPty(id: number): Promise<void> {
     return invoke("kill_pty", { id });
+  }
+
+  // PTY handover between windows is part of the multi-window support below,
+  // which this backend doesn't have — nothing ever releases or adopts here.
+  async releasePty(_ids: number[]): Promise<void> {}
+
+  async adoptPty(
+    _id: number,
+    _cols: number,
+    _rows: number
+  ): Promise<{ buffered: Uint8Array; exited: boolean }> {
+    return { buffered: new Uint8Array(), exited: false };
   }
 
   async onPtyOutput(
@@ -141,6 +155,32 @@ export class TauriBackend implements Backend {
     // native `set_window_opacity` command. Electron is the shipping target, so
     // this is a no-op stub (matching listDrives/clipboardHasImage) — the window
     // stays opaque under Tauri.
+  }
+
+  // Multi-window (extra windows, tearing a tab off into its own) is Electron-only
+  // for now: it needs host-side window bookkeeping and PTY re-ownership that this
+  // backend has no counterpart for. These stubs keep the single window it does
+  // have working exactly as before — it just never gets a second one.
+  async takeWindowInit(): Promise<WindowInit> {
+    return { tab: null, autoCheckUpdates: true };
+  }
+
+  async newWindow(): Promise<void> {}
+
+  async dropTransfer(_tab: TransferTab): Promise<void> {}
+
+  async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
+  // With one window there is nobody to sync with, so a broadcast has no
+  // listeners and no receiver ever fires.
+  broadcast(_channel: string, _payload?: unknown): void {}
+
+  async onBroadcast(
+    _cb: (channel: string, payload?: unknown) => void
+  ): Promise<UnlistenFn> {
+    return () => {};
   }
 
   // Self-update isn't wired on the experimental Tauri backend; Electron is the

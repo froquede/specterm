@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld("specterm", {
 
   killPty: (id) => ipcRenderer.invoke("kill-pty", id),
 
+  // Tear-off handover: the source window releases its PTYs (they keep running,
+  // buffering output, with no owner), the destination window adopts them and
+  // gets whatever was buffered in between as the return value.
+  releasePty: (ids) => ipcRenderer.invoke("release-pty", ids),
+
+  adoptPty: (id, cols, rows) => ipcRenderer.invoke("adopt-pty", id, cols, rows),
+
   onPtyOutput: (cb) => {
     const handler = (_event, id, data) => cb(id, data);
     ipcRenderer.on("pty-output", handler);
@@ -73,6 +80,31 @@ contextBridge.exposeInMainWorld("specterm", {
   },
 
   setWindowOpacity: (value) => ipcRenderer.invoke("set-window-opacity", value),
+
+  // Multi-window
+  takeWindowInit: () => ipcRenderer.invoke("take-window-init"),
+
+  newWindow: () => ipcRenderer.invoke("new-window"),
+
+  // Hand a serialized tab to wherever the cursor let go: another Specterm
+  // window if one is under it, otherwise a new window of its own.
+  dropTransfer: (tab) => ipcRenderer.invoke("drop-transfer", tab),
+
+  onAdoptTab: (cb) => {
+    const handler = (_event, tab) => cb(tab);
+    ipcRenderer.on("adopt-tab", handler);
+    return () => ipcRenderer.removeListener("adopt-tab", handler);
+  },
+
+  // Cross-window state sync (settings, theme, favorites).
+  broadcast: (channel, payload) =>
+    ipcRenderer.send("broadcast", channel, payload),
+
+  onBroadcast: (cb) => {
+    const handler = (_event, channel, payload) => cb(channel, payload);
+    ipcRenderer.on("broadcast", handler);
+    return () => ipcRenderer.removeListener("broadcast", handler);
+  },
 
   // Auto-update
   checkForUpdate: () => ipcRenderer.invoke("updater:check"),

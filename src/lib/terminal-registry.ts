@@ -5,13 +5,23 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit } from "./pty";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import {
+  spawnPty,
+  writePty,
+  resizePty,
+  killPty,
+  adoptPty,
+  onPtyOutput,
+  onPtyExit,
+} from "./pty";
 import { startupPath } from "../stores/settings";
 import { os } from "./platform";
 import { registerOscHandler } from "./osc";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
+import { publishStoreChange, registerStoreSync } from "./store-sync";
 import type { UnlistenFn } from "../backends/types";
 
 // Active xterm palette, applied to new terminals at creation and pushed into
@@ -176,14 +186,12 @@ function persistFontFamily() {
   } catch {
     // localStorage unavailable — selection just won't persist this session
   }
+  publishStoreChange("terminal-font");
 }
 
-// Swap the font on every open terminal and refit (glyph metrics change the
-// column/row count), mirroring applyFontSize. `family` is a bare family name
-// (e.g. "Menlo") or "" to restore the default.
-export function setTerminalFontFamily(family: string) {
-  setTerminalFontFamilySignal(family);
-  persistFontFamily();
+// Swap the font on every open terminal and refit — glyph metrics change the
+// column/row count — mirroring applyFontSize.
+function applyFontFamily() {
   const next = xtermFontFamily();
   for (const instance of instances.values()) {
     if (instance.disposed) continue;
@@ -198,8 +206,72 @@ export function setTerminalFontFamily(family: string) {
   }
 }
 
+// `family` is a bare family name (e.g. "Menlo") or "" to restore the default.
+export function setTerminalFontFamily(family: string) {
+  setTerminalFontFamilySignal(family);
+  persistFontFamily();
+  applyFontFamily();
+}
+
+// The font family is a preference, so it follows the user across windows.
+// Font *zoom* (⌘=/⌘-/⌘0) deliberately does not: it's a per-view control, like a
+// browser's zoom, and yanking every window's size because one was zoomed in
+// would be surprising.
+registerStoreSync("terminal-font", () => {
+  setTerminalFontFamilySignal(loadFontFamily());
+  applyFontFamily();
+});
+
 export function getTerminalInstance(paneId: string): TerminalInstance | undefined {
   return instances.get(paneId);
+}
+
+// --- moving a terminal between windows ------------------------------------
+// A terminal can't cross a process boundary, but its PTY can change owner and
+// its screen can be replayed. So a tear-off ships two things per pane — the PTY
+// id and a serialized copy of the buffer — and the destination window rebuilds
+// a terminal around them instead of spawning a shell.
+
+export interface TerminalAdoption {
+  ptyId: number;
+  scrollback: string;
+  title: string;
+}
+
+// Panes that will adopt a PTY the moment they mount, keyed by their (new) pane
+// id. Filled by the store while it rebuilds a transferred tab, drained by
+// attachTerminal below.
+const pendingAdoptions = new Map<string, TerminalAdoption>();
+
+export function registerAdoption(paneId: string, adoption: TerminalAdoption) {
+  pendingAdoptions.set(paneId, adoption);
+}
+
+function takeAdoption(paneId: string): TerminalAdoption | undefined {
+  const adoption = pendingAdoptions.get(paneId);
+  pendingAdoptions.delete(paneId);
+  return adoption;
+}
+
+// Snapshot a terminal's screen + scrollback as the escape sequences that
+// reproduce it, so the window adopting this PTY doesn't start from a blank
+// screen. Colors and attributes survive; the internal state of a full-screen
+// program does not — vim or htop redraw themselves on the adopting window's
+// first resize, which is the same thing that happens on any terminal resize.
+export function serializeTerminal(paneId: string): string {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed) return "";
+  const addon = new SerializeAddon();
+  try {
+    instance.term.loadAddon(addon);
+    return addon.serialize();
+  } catch {
+    // Serialization failed — hand over a live PTY with no history rather than
+    // failing the whole move.
+    return "";
+  } finally {
+    addon.dispose();
+  }
 }
 
 // --- "cd fav-N" expansion -------------------------------------------------
@@ -481,20 +553,36 @@ export async function attachTerminal(
 
   fitAddon.fit();
 
-  // Spawn PTY. The configured startup directory (Settings) is passed through as
-  // cwd; blank → undefined, and the main process falls back to the OS home. A
-  // stale/deleted path is guarded main-side so spawning can't crash.
-  instance.ptyId = await spawnPty({
-    cols: term.cols,
-    rows: term.rows,
-    cwd: startupPath() || undefined,
-  });
+  // A pane created by a tear-off adopts a PTY that is already running rather
+  // than spawning a shell. Three things have to reach the screen in order — the
+  // serialized buffer, then whatever the process printed while it had no window,
+  // then live output — so `gate` parks live chunks until the replay is done.
+  // Without it, output arriving during the adopt round-trip would land ahead of
+  // the bytes it came after.
+  const adoption = takeAdoption(paneId);
+  let gate: Uint8Array[] | null = adoption ? [] : null;
+
+  if (adoption) {
+    instance.ptyId = adoption.ptyId;
+    instance.title = adoption.title;
+    instance.onTitle?.(adoption.title);
+    if (adoption.scrollback) term.write(adoption.scrollback);
+  } else {
+    // Spawn PTY. The configured startup directory (Settings) is passed through
+    // as cwd; blank → undefined, and the main process falls back to the OS home.
+    // A stale/deleted path is guarded main-side so spawning can't crash.
+    instance.ptyId = await spawnPty({
+      cols: term.cols,
+      rows: term.rows,
+      cwd: startupPath() || undefined,
+    });
+  }
 
   // Wire output
   instance.unlistenOutput = await onPtyOutput((id, data) => {
-    if (id === instance!.ptyId) {
-      term.write(data);
-    }
+    if (id !== instance!.ptyId) return;
+    if (gate) gate.push(data);
+    else term.write(data);
   });
 
   // Wire exit
@@ -504,6 +592,32 @@ export async function attachTerminal(
       opts?.onExit?.();
     }
   });
+
+  // Claim the adopted PTY now that this terminal can receive from it, then drain
+  // in order: buffered-while-orphaned, then anything held by the gate.
+  if (adoption) {
+    let exited = false;
+    try {
+      const result = await adoptPty(adoption.ptyId, term.cols, term.rows);
+      if (result.buffered.length) term.write(result.buffered);
+      exited = result.exited;
+    } catch (err) {
+      // The host couldn't hand the PTY over. Say so in the pane rather than
+      // leaving a terminal that silently swallows every keystroke.
+      console.warn("[terminal] adopting pty failed:", err);
+      exited = true;
+    } finally {
+      const held = gate ?? [];
+      gate = null;
+      for (const chunk of held) term.write(chunk);
+    }
+    // The process died mid-move: its exit event went to a window that had
+    // already let go, so nothing else will report it.
+    if (exited) {
+      term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
+      opts?.onExit?.();
+    }
+  }
 
   // Wire input. A mirrored line buffer lets us expand `cd fav-N` into a real
   // `cd <path>` at the moment Enter is pressed (see foldInput above).
@@ -581,6 +695,24 @@ export function detachTerminal(paneId: string) {
   instance.resizeObserver = null;
   instance.detachSelection?.();
   instance.detachSelection = null;
+}
+
+// Tear down this window's side of a terminal while leaving its PTY running —
+// the departure half of a tear-off. Everything destroyTerminal does except the
+// kill: the shell survives, and the window that adopts the PTY builds a fresh
+// terminal around it.
+export function releaseTerminal(paneId: string) {
+  const instance = instances.get(paneId);
+  if (!instance) return;
+
+  instance.disposed = true;
+  instance.resizeObserver?.disconnect();
+  instance.detachSelection?.();
+  instance.detachSelection = null;
+  instance.unlistenOutput?.();
+  instance.unlistenExit?.();
+  instance.term.dispose();
+  instances.delete(paneId);
 }
 
 export function destroyTerminal(paneId: string) {
