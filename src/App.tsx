@@ -1,5 +1,10 @@
 import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
-import { useTabStore } from "./stores/tabs";
+import { captureSessionNow, useTabStore } from "./stores/tabs";
+import { flushSession } from "./stores/history";
+import {
+  startSessionProviders,
+  stopSessionProviders,
+} from "./lib/session-providers";
 import { getBackend } from "./backends";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
@@ -175,6 +180,12 @@ export default function App() {
     // Apply the persisted color theme (CSS variables + terminal palette).
     initTheme();
 
+    // Watch for resumable programs (Claude Code) running in the panes, so a
+    // closed tab remembers not just where it was but what it was doing. Polls
+    // slowly; see lib/session-providers.
+    startSessionProviders();
+    onCleanup(stopSessionProviders);
+
     // Check GitHub for a newer release once, on this cold start. The single-
     // instance lock means relaunching an already-running Specterm just focuses
     // the window without re-running this — so it's "check on open", and any
@@ -183,6 +194,27 @@ export default function App() {
 
     // When the OS window regains focus, return the cursor to the active pane.
     window.addEventListener("focus", focusActiveTerminal);
+
+    // Last chance to write down what was open. Store writes already keep the
+    // snapshot current on a debounce, but the two things that matter most —
+    // where each shell ended up, and what it was running — live on the terminal
+    // registry and change without any store write. Re-capture, then force the
+    // debounced write out before the window goes.
+    const saveOnExit = () => {
+      captureSessionNow();
+      flushSession();
+    };
+    window.addEventListener("beforeunload", saveOnExit);
+    // beforeunload isn't guaranteed on every platform's quit path; "hidden" is
+    // the event that reliably precedes teardown. Both are idempotent.
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") saveOnExit();
+    };
+    document.addEventListener("visibilitychange", onHidden);
+    onCleanup(() => {
+      window.removeEventListener("beforeunload", saveOnExit);
+      document.removeEventListener("visibilitychange", onHidden);
+    });
 
     // Open markdown files handed to us by the OS (Finder "Open With",
     // double-click, or a path arg) in a new tab. The main process queues files

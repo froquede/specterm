@@ -381,10 +381,286 @@ ipcMain.handle("pty-cwd", async (_event, id) => {
   return null;
 });
 
+// === Process inspection IPC ===
+//
+// What's running inside a pane, so the renderer's session providers (see
+// src/lib/session-providers/) can recognize a resumable program and write down
+// how to pick it back up. Deliberately generic: this side knows about parents,
+// children and named environment variables, and nothing about any particular
+// tool.
+//
+// Both handlers are best-effort by construction. A process can exit between the
+// scan and the read, /proc can be unreadable, and Windows offers no equivalent
+// without a native call into each target — every one of those returns empty
+// rather than throwing, because the only consequence is that a restored pane
+// comes back as a plain shell.
+
+// Direct children of a pid, from the kernel's own list.
+//
+// This is the whole reason the Linux path doesn't enumerate /proc. Walking down
+// from the shells we care about touches a handful of files; scanning every
+// process on the machine touches hundreds, and doing that with Promise.all
+// floods libuv's threadpool — which is only four threads wide by default and is
+// the *same* pool node-pty uses for terminal I/O. A background poll that stalls
+// every terminal in the app is far worse than no session detection at all.
+async function linuxChildren(pid) {
+  const out = [];
+  try {
+    // Children are listed per-thread, and a shell can have more than one.
+    const tids = await fs.promises.readdir(`/proc/${pid}/task`);
+    for (const tid of tids) {
+      const raw = await fs.promises.readFile(
+        `/proc/${pid}/task/${tid}/children`,
+        "utf8"
+      );
+      for (const c of raw.trim().split(/\s+/)) {
+        const n = Number(c);
+        if (Number.isInteger(n)) out.push(n);
+      }
+    }
+  } catch (_) {
+    // Process gone, or a kernel built without CONFIG_PROC_CHILDREN. Either way
+    // this pane reports nothing rather than falling back to a full scan.
+  }
+  return out;
+}
+
+// A process's own working directory. This is what makes a provider's answer
+// correct while a full-screen program is running: the *shell's* cached cwd goes
+// stale the moment something takes over the screen (no new prompt is drawn, so
+// no OSC 7 arrives and the probe is off), but the program itself always knows
+// where it is.
+async function processCwd(pid) {
+  if (process.platform !== "linux") return null;
+  try {
+    return await fs.promises.readlink(`/proc/${pid}/cwd`);
+  } catch (_) {
+    // Exited, or not ours to inspect.
+    return null;
+  }
+}
+
+async function linuxComm(pid) {
+  try {
+    return (await fs.promises.readFile(`/proc/${pid}/comm`, "utf8")).trim();
+  } catch (_) {
+    return null;
+  }
+}
+
+// macOS has no /proc, so its path does need a table — but it's one `ps` call for
+// the whole machine, not one syscall per process, so the threadpool concern
+// above doesn't apply. Returns pid -> { pid, ppid, comm }.
+async function scanProcessTable() {
+  const table = new Map();
+
+  if (process.platform === "darwin") {
+    try {
+      const out = await new Promise((resolve, reject) => {
+        execFile("ps", ["-Ao", "pid=,ppid=,comm="], (err, stdout) =>
+          err ? reject(err) : resolve(stdout)
+        );
+      });
+      for (const line of out.split("\n")) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+        if (!m) continue;
+        // `comm` here is the executable path; the basename is what a provider
+        // matches on, matching Linux's shorter form.
+        table.set(Number(m[1]), {
+          pid: Number(m[1]),
+          ppid: Number(m[2]),
+          comm: path.basename(m[3].trim()),
+        });
+      }
+    } catch (_) {
+      // ps missing or refused — no table, no session detection.
+    }
+    return table;
+  }
+
+  // Linux walks the kernel's child lists instead (see linuxChildren); Windows
+  // has no cheap equivalent at all, so panes there restore as plain shells.
+  return table;
+}
+
+// Descendants of one shell, breadth-first. `table` is the macOS process table;
+// on Linux it's unused and the kernel's per-pid child lists are walked directly.
+// Capped so a pathological tree (a fork bomb, a pid-reuse cycle) can't turn a
+// background poll into an unbounded walk.
+const MAX_DESCENDANTS = 64;
+
+async function descendantsOf(rootPid, table) {
+  const found = [];
+  const queue = [rootPid];
+  const seen = new Set(queue);
+
+  while (queue.length && found.length < MAX_DESCENDANTS) {
+    const pid = queue.shift();
+
+    if (process.platform === "linux") {
+      for (const childPid of await linuxChildren(pid)) {
+        if (seen.has(childPid)) continue;
+        seen.add(childPid);
+        const comm = await linuxComm(childPid);
+        // No comm means it exited between being listed and being read.
+        if (comm !== null) found.push({ pid: childPid, ppid: pid, comm });
+        queue.push(childPid);
+      }
+      continue;
+    }
+
+    for (const child of table.get(pid) ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      found.push(child);
+      queue.push(child.pid);
+    }
+  }
+
+  return found;
+}
+
+// The full command line of a process, for providers that need to tell two uses
+// of the same binary apart. Null whenever it can't be read.
+async function processArgs(pid) {
+  try {
+    if (process.platform === "linux") {
+      const raw = await fs.promises.readFile(`/proc/${pid}/cmdline`, "utf8");
+      return raw.split("\0").filter(Boolean).join(" ");
+    }
+    if (process.platform === "darwin") {
+      return await new Promise((resolve) => {
+        execFile("ps", ["-o", "args=", "-p", String(pid)], (err, stdout) =>
+          resolve(err ? null : stdout.trim())
+        );
+      });
+    }
+  } catch (_) {
+    // Gone or unreadable.
+  }
+  return null;
+}
+
+// Descendants of each pty's shell, breadth-first, as { [ptyId]: [proc, ...] }.
+// The shell itself is excluded — a provider is looking for what's *running in*
+// the pane, and the shell is the pane.
+ipcMain.handle("pty-descendants", async (_event, ids) => {
+  const result = {};
+  if (!Array.isArray(ids) || ids.length === 0) return result;
+
+  if (process.platform === "win32") return result;
+
+  // macOS builds its pid -> children index once for every pane; Linux doesn't
+  // need one (descendantsOf walks the kernel's lists directly).
+  let children = new Map();
+  if (process.platform === "darwin") {
+    const table = await scanProcessTable();
+    if (table.size === 0) return result;
+    for (const proc of table.values()) {
+      const siblings = children.get(proc.ppid);
+      if (siblings) siblings.push(proc);
+      else children.set(proc.ppid, [proc]);
+    }
+  }
+
+  for (const id of ids) {
+    const instance = ptyInstances.get(id);
+    if (!instance || instance.disposed || !instance.process.pid) continue;
+
+    const found = await descendantsOf(instance.process.pid, children);
+
+    // Command lines are read one at a time rather than with Promise.all, for
+    // the same threadpool reason as above — and `found` is a handful of
+    // processes, so the sequencing costs nothing measurable.
+    const procs = [];
+    for (const p of found) {
+      procs.push({
+        pid: p.pid,
+        ppid: p.ppid,
+        comm: p.comm,
+        args: await processArgs(p.pid),
+        cwd: await processCwd(p.pid),
+      });
+    }
+    result[id] = procs;
+  }
+
+  return result;
+});
+
+// Named environment variables of a process. Named, never bulk: a shell's
+// environment routinely holds API tokens and ssh material, and none of that has
+// any business crossing into the renderer just because something wanted to know
+// which session was running. Requests for anything that looks like a secret are
+// refused here rather than filtered at the call site.
+const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+const ENV_SECRET_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CREDENTIAL|AUTH)/;
+
+ipcMain.handle("read-process-env", async (_event, pid, names) => {
+  const out = {};
+  if (!Number.isInteger(pid) || !Array.isArray(names)) return out;
+
+  const wanted = names.filter(
+    (n) => typeof n === "string" && ENV_NAME_RE.test(n) && !ENV_SECRET_RE.test(n)
+  );
+  if (wanted.length === 0) return out;
+
+  let raw = null;
+  try {
+    if (process.platform === "linux") {
+      raw = await fs.promises.readFile(`/proc/${pid}/environ`, "utf8");
+    } else if (process.platform === "darwin") {
+      // `ps -E` prints the environment after the command, space-separated. Only
+      // works for processes this user owns, which is exactly our case; when the
+      // OS refuses, providers fall back to whatever else they have.
+      const out2 = await new Promise((resolve) => {
+        execFile("ps", ["-Eo", "command=", "-p", String(pid)], (err, stdout) =>
+          resolve(err ? null : stdout)
+        );
+      });
+      raw = out2 ? out2.replace(/ /g, "\0") : null;
+    }
+  } catch (_) {
+    // Process gone or environ unreadable (it's mode 0400, owner-only).
+  }
+  if (!raw) return out;
+
+  for (const pair of raw.split("\0")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const key = pair.slice(0, eq);
+    if (wanted.includes(key)) out[key] = pair.slice(eq + 1);
+  }
+  return out;
+});
+
 // === Filesystem IPC ===
 
 ipcMain.handle("get-home-path", () => {
   return os.homedir();
+});
+
+// A directory listing with modification times — the plain read-dir the file tree
+// uses doesn't stat, and providers need mtimes to tell which of several session
+// files is the live one. Missing directory = empty list, not an error: "this
+// tool has never run here" is the common answer.
+ipcMain.handle("read-dir-stats", async (_event, dirPath) => {
+  try {
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const stats = await Promise.all(
+      entries.map(async (e) => {
+        try {
+          const s = await fs.promises.stat(path.join(dirPath, e.name));
+          return { name: e.name, isDirectory: e.isDirectory(), mtimeMs: s.mtimeMs };
+        } catch (_) {
+          return null; // vanished between readdir and stat
+        }
+      })
+    );
+    return stats.filter(Boolean);
+  } catch (_) {
+    return [];
+  }
 });
 
 // This machine's name, used to tell a local OSC 7 report from one arriving over

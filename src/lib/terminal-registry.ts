@@ -12,7 +12,9 @@ import { registerOscHandler, registerCwdHandler } from "./osc";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
+import { cancelPendingRestore, takePendingRestore } from "./session-restore";
 import type { UnlistenFn } from "../backends/types";
+import type { SessionMeta } from "../types";
 
 // Active xterm palette, applied to new terminals at creation and pushed into
 // every live terminal by setTerminalTheme. Seeded with the default so terminals
@@ -76,6 +78,12 @@ export interface TerminalInstance {
   // it moves, knows about cases a process snapshot can blur (a subshell, a
   // pushd), and costs no IPC. Shells that never report keep being probed.
   cwdReportedByShell: boolean;
+  // The resumable session a provider last recognized in this pane, if any (see
+  // lib/session-providers). Sticky on purpose: it's captured opportunistically
+  // while the process runs, and the moment it matters — the pane is closing, or
+  // the app is quitting — that process may already be gone. Cleared only when a
+  // provider positively identifies a *different* session in the same pane.
+  sessionMeta: SessionMeta | undefined;
 }
 
 const instances = new Map<string, TerminalInstance>();
@@ -408,6 +416,40 @@ export function getTerminalCwd(paneId: string): string {
   return instances.get(paneId)?.cwd ?? "";
 }
 
+/**
+ * Is a full-screen program in control of this pane?
+ *
+ * The alternate screen buffer is the standard signal: htop, vim, less and mc all
+ * switch to it on entry (`?1049h`) and back on exit, which is exactly what makes
+ * them "the program that owns the keyboard right now". Bare-key shortcuts check
+ * this and stand down while it's true, so F2 opens the tab rename at a shell
+ * prompt and still reaches htop's Setup inside htop.
+ */
+export function paneRunsFullscreenApp(paneId: string): boolean {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed) return false;
+  return instance.term.buffer.active.type === "alternate";
+}
+
+/** Record (or clear) the resumable session a provider found in a pane. */
+export function setSessionMeta(paneId: string, meta: SessionMeta | undefined) {
+  const instance = instances.get(paneId);
+  if (instance) instance.sessionMeta = meta;
+}
+
+/** Every live terminal pane, for the pollers that inspect running processes. */
+export function livePaneIds(): string[] {
+  return [...instances.entries()]
+    .filter(([, i]) => !i.disposed && i.ptyId !== null)
+    .map(([id]) => id);
+}
+
+/** The pty backing a pane, or null when it hasn't spawned (or has exited). */
+export function getPanePtyId(paneId: string): number | null {
+  const instance = instances.get(paneId);
+  return instance && !instance.disposed ? instance.ptyId : null;
+}
+
 export async function createTerminalInstance(
   paneId: string,
   opts?: {
@@ -468,6 +510,7 @@ export async function createTerminalInstance(
     // startup path, then to home main-side.
     cwd: opts?.initialCwd || startupPath() || "",
     cwdReportedByShell: false,
+    sessionMeta: undefined,
   };
 
   instances.set(paneId, instance);
@@ -655,12 +698,23 @@ export async function attachTerminal(
   // startup is reflected too.
   refreshCwd(instance);
 
-  // Wire output
-  instance.unlistenOutput = await onPtyOutput((id, data) => {
-    if (id === instance!.ptyId) {
-      term.write(data);
-    }
-  });
+  // Wire output. A restored pane owes its shell a resume command that can only
+  // be sent once there's a prompt to send it to, so its first chunk of output
+  // doubles as the "shell is ready" signal — but only that pane pays for the
+  // check. Every other pane (which is nearly all of them) gets the bare handler.
+  const onShellReady = takePendingRestore(paneId, instance.ptyId);
+  instance.unlistenOutput = await onPtyOutput(
+    onShellReady
+      ? (id, data) => {
+          if (id === instance!.ptyId) {
+            term.write(data);
+            onShellReady();
+          }
+        }
+      : (id, data) => {
+          if (id === instance!.ptyId) term.write(data);
+        }
+  );
 
   // Wire exit
   instance.unlistenExit = await onPtyExit((id) => {
@@ -753,6 +807,10 @@ export function detachTerminal(paneId: string) {
 }
 
 export function destroyTerminal(paneId: string) {
+  // A pane closed before it ever mounted still has its resume command queued —
+  // drop it, or the map holds entries for panes that no longer exist.
+  cancelPendingRestore(paneId);
+
   const instance = instances.get(paneId);
   if (!instance) return;
 

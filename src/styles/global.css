@@ -100,6 +100,23 @@ body,
 .tab-bar[data-side="right"] .tab-list { order: 1; }
 .tab-bar[data-side="right"] .tab-actions { order: 2; }
 
+/* The optional clock sits at the far end from the tabs, so it stays put as tabs
+   are opened and closed. `tabular-nums` stops the digits changing width as they
+   tick, which would otherwise nudge the bar's contents every minute. */
+.tab-clock {
+  flex-shrink: 0;
+  padding: 0 10px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.tab-bar[data-side="left"] .tab-clock { order: 3; }
+.tab-bar[data-side="right"] .tab-clock { order: -1; }
+
 /* Auto-hide: lift the bar out of the flow (the panes take the whole window) and
    slide it off its edge, leaving --tab-bar-peek behind as the hover target.
    The element keeps its full height, so the moment the pointer touches the peek

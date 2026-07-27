@@ -22,6 +22,16 @@ import {
   WINDOW_OPACITY_DEFAULT,
   startupPath,
   setStartupPath,
+  clockEnabled,
+  setClockEnabled,
+  clockFormat,
+  setClockFormat,
+  CLOCK_FORMAT_MAX,
+  restoreLastSession,
+  setRestoreLastSession,
+  sessionRestoreMode,
+  setSessionRestoreMode,
+  type SessionRestoreMode,
   tabBarCorner,
   setTabBarCorner,
   TAB_BAR_CORNERS,
@@ -65,6 +75,7 @@ import {
   setTerminalFontFamily,
 } from "../lib/terminal-registry";
 import { detectMonospaceFonts } from "../lib/fonts";
+import { formatClock } from "../lib/clock-format";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -98,6 +109,13 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // Gallery browser (the 325 bundled base16 schemes), with a name filter.
   const [galleryOpen, setGalleryOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
+
+  // Clock format: a local draft while typing (same reason as the startup path
+  // below), plus a preview rendered from the draft so a half-typed format shows
+  // what it would produce before it's committed. The preview only re-renders on
+  // keystrokes — it's not on a timer.
+  const [clockDraft, setClockDraft] = createSignal(clockFormat());
+  const clockPreview = () => formatClock(clockDraft() || " ", new Date());
 
   // Startup-directory field: a local draft so the user can type freely; the
   // store (and terminal/sidebar behavior) only updates on commit (blur/Enter),
@@ -557,6 +575,90 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           <div class="settings-hint">
             Where new terminals open and the file sidebar starts. Blank uses
             your home directory.
+          </div>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="clock-enabled">
+              Clock in the tab bar
+            </label>
+            <input
+              id="clock-enabled"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={clockEnabled()}
+              onChange={(e) => setClockEnabled(e.currentTarget.checked)}
+            />
+          </div>
+          <Show when={clockEnabled()}>
+            <input
+              id="clock-format"
+              class="settings-select"
+              type="text"
+              maxLength={CLOCK_FORMAT_MAX}
+              value={clockDraft()}
+              onInput={(e) => setClockDraft(e.currentTarget.value)}
+              onBlur={() => setClockFormat(clockDraft())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+            />
+            <div class="settings-hint">
+              Now: <strong>{clockPreview()}</strong> — <code>HH</code>{" "}
+              <code>mm</code> <code>ss</code> <code>DD</code> <code>MM</code>{" "}
+              <code>YYYY</code> <code>ddd</code> <code>h</code> <code>a</code>.
+              Wrap literal text in brackets: <code>[at] HH:mm</code>. Seconds
+              make it tick every second instead of every minute.
+            </div>
+          </Show>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="restore-last-session">
+              Reopen tabs on start
+            </label>
+            <input
+              id="restore-last-session"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={restoreLastSession()}
+              onChange={(e) => setRestoreLastSession(e.currentTarget.checked)}
+            />
+          </div>
+          <div class="settings-hint">
+            Brings back the tabs, splits and directories you had open. The
+            shells are new — nothing you were running is restarted.
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="session-restore-mode">
+              Resumable sessions
+            </label>
+          </div>
+          <select
+            id="session-restore-mode"
+            class="settings-select"
+            value={sessionRestoreMode()}
+            onChange={(e) =>
+              setSessionRestoreMode(
+                e.currentTarget.value as SessionRestoreMode
+              )
+            }
+          >
+            <option value="off">Ignore them</option>
+            <option value="type">Type the resume command</option>
+            <option value="run">Run the resume command</option>
+          </select>
+          <div class="settings-hint">
+            When a restored pane was running Claude Code, its session is
+            remembered. "Type" leaves <code>claude --resume …</code> at the
+            prompt for you to confirm; "run" submits it.
           </div>
         </div>
 
