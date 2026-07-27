@@ -10,7 +10,9 @@ import type {
   Backend,
   SpawnPtyOptions,
   FileEntry,
+  FileEntryStats,
   DriveEntry,
+  ProcessInfo,
   UnlistenFn,
   UpdaterEvent,
 } from "./types";
@@ -45,6 +47,22 @@ export class TauriBackend implements Backend {
     return null;
   }
 
+  // Process inspection has no Tauri command yet. Empty answers are a supported
+  // outcome everywhere (Windows reports nothing either), so panes here restore
+  // as plain shells rather than resumed sessions.
+  async ptyDescendants(
+    _ids: number[]
+  ): Promise<Record<number, ProcessInfo[]>> {
+    return {};
+  }
+
+  async readProcessEnv(
+    _pid: number,
+    _names: string[]
+  ): Promise<Record<string, string>> {
+    return {};
+  }
+
   async onPtyOutput(
     cb: (id: number, data: Uint8Array) => void
   ): Promise<UnlistenFn> {
@@ -73,6 +91,12 @@ export class TauriBackend implements Backend {
       name: e.name,
       isDirectory: e.isDirectory,
     }));
+  }
+
+  // Tauri's readDir gives no mtimes, and the session providers are the only
+  // caller — see ptyDescendants above for why an empty answer is safe.
+  async readDirStats(_path: string): Promise<FileEntryStats[]> {
+    return [];
   }
 
   async listDrives(): Promise<DriveEntry[]> {

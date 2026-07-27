@@ -2,7 +2,9 @@ import type {
   Backend,
   SpawnPtyOptions,
   FileEntry,
+  FileEntryStats,
   DriveEntry,
+  ProcessInfo,
   UnlistenFn,
   UpdaterEvent,
 } from "./types";
@@ -14,11 +16,14 @@ interface SpectermAPI {
   resizePty(id: number, cols: number, rows: number): Promise<void>;
   killPty(id: number): Promise<void>;
   ptyCwd(id: number): Promise<string | null>;
+  ptyDescendants(ids: number[]): Promise<Record<number, ProcessInfo[]>>;
+  readProcessEnv(pid: number, names: string[]): Promise<Record<string, string>>;
   onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
+  readDirStats(path: string): Promise<FileEntryStats[]>;
   listDrives(): Promise<DriveEntry[]>;
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   clipboardHasImage(): Promise<boolean>;
@@ -70,6 +75,19 @@ export class ElectronBackend implements Backend {
     return this.api.ptyCwd(id);
   }
 
+  async ptyDescendants(
+    ids: number[]
+  ): Promise<Record<number, ProcessInfo[]>> {
+    return this.api.ptyDescendants(ids);
+  }
+
+  async readProcessEnv(
+    pid: number,
+    names: string[]
+  ): Promise<Record<string, string>> {
+    return this.api.readProcessEnv(pid, names);
+  }
+
   async onPtyOutput(
     cb: (id: number, data: Uint8Array) => void
   ): Promise<UnlistenFn> {
@@ -92,6 +110,10 @@ export class ElectronBackend implements Backend {
 
   async readDir(path: string): Promise<FileEntry[]> {
     return this.api.readDir(path);
+  }
+
+  async readDirStats(path: string): Promise<FileEntryStats[]> {
+    return this.api.readDirStats(path);
   }
 
   async listDrives(): Promise<DriveEntry[]> {

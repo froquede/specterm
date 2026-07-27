@@ -30,6 +30,21 @@ import {
   getTerminalInstance,
   getTerminalCwd,
 } from "../lib/terminal-registry";
+import {
+  hydrateNode,
+  hydrateTab,
+  snapshotNode,
+  snapshotTab,
+} from "../lib/session-snapshot";
+import { registerPendingRestore } from "../lib/session-restore";
+import {
+  loadSession,
+  popClosed,
+  recordClosedPane,
+  recordClosedTab,
+  saveSession,
+} from "./history";
+import { restoreLastSession } from "./settings";
 
 function createTerminalTab(cwd = ""): Tab {
   const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd });
@@ -41,6 +56,21 @@ function createTerminalTab(cwd = ""): Tab {
     activePaneId: leaf.id,
     paneHistory: [],
   };
+}
+
+// A label for a closed pane in the history: what the shell last called itself,
+// or the file a viewer pane was showing. Only ever shown in the UI — nothing
+// keys off it — so any of the fallbacks is fine.
+function paneEntryTitle(leaf: Extract<SplitNode, { type: "leaf" }>): string {
+  if (leaf.pane.kind === "terminal") {
+    const instance = getTerminalInstance(leaf.id);
+    return (
+      instance?.title ||
+      getTerminalCwd(leaf.id).split(/[\\/]/).filter(Boolean).pop() ||
+      "Terminal"
+    );
+  }
+  return leaf.pane.filePath.split(/[\\/]/).pop() || "File";
 }
 
 // --- Focus history (MRU) ---------------------------------------------------
@@ -95,19 +125,87 @@ function reseatFocus(tab: Tab, newRoot: SplitNode, closedId: PaneId): Tab {
   };
 }
 
-const initialTab = createTerminalTab();
+// --- Boot state ------------------------------------------------------------
+// The saved session is restored *here*, at module load, rather than from a
+// component's onMount. By the time onMount runs the first tab has already
+// rendered — which means its pane mounted and spawned a pty — and replacing the
+// state then would leave that shell running with nothing pointing at it. Built
+// before the first render, there is nothing to throw away.
+
+// A reload is not a restart, and restoring across one would be actively wrong:
+// the ptys live in the main process, which a renderer reload doesn't touch. The
+// old shells are still running — restoring the layout would spawn a second set
+// beside them and leak the first. A real cold start has no ptys to collide with,
+// which is the case this feature is for.
+function isRendererReload(): boolean {
+  try {
+    const [nav] = performance.getEntriesByType(
+      "navigation"
+    ) as PerformanceNavigationTiming[];
+    return nav?.type === "reload";
+  } catch (_) {
+    // No Navigation Timing (or a shape we don't recognize) — treat it as a cold
+    // start, which is the common case and the one the user asked for.
+    return false;
+  }
+}
+
+function initialState(): AppState {
+  const base = {
+    sidebarView: "files" as SidebarView,
+    renamingTabId: null,
+    tabHistory: [] as TabId[],
+  };
+  const saved =
+    restoreLastSession() && !isRendererReload() ? loadSession() : null;
+  if (saved) {
+    const tabs = saved.tabs.map((t) => hydrateTab(t, registerPendingRestore));
+    return {
+      ...base,
+      tabs,
+      activeTabId: (tabs[saved.activeTabIndex] ?? tabs[0]).id,
+    };
+  }
+  const tab = createTerminalTab();
+  return { ...base, tabs: [tab], activeTabId: tab.id };
+}
 
 // Use createSignal instead of createStore for full object replacement
-const [state, setStateRaw] = createSignal<AppState>({
-  tabs: [initialTab],
-  activeTabId: initialTab.id,
-  tabHistory: [],
-  sidebarView: "files",
-  renamingTabId: null,
-});
+const [state, setStateRaw] = createSignal<AppState>(initialState());
 
 function update(fn: (s: AppState) => AppState) {
   setStateRaw(fn(state()));
+  // Every mutation funnels through here, so this is the one place the "what was
+  // open" snapshot has to be kept current. It's handed over as a thunk and
+  // debounced (stores/history.ts): a divider drag writes the store on every
+  // mousemove, and snapshotting all tabs on each of those would be the only
+  // version of this the user could feel.
+  scheduleSessionSave();
+}
+
+function scheduleSessionSave() {
+  // Nothing reads the snapshot when restore is off, so don't build one. This is
+  // the whole feature's cost for anyone who doesn't want it: a boolean check per
+  // store write, and no timer, no serialization, no storage write ever.
+  if (!restoreLastSession()) return;
+
+  saveSession(() => {
+    const s = state();
+    const index = s.tabs.findIndex((t) => t.id === s.activeTabId);
+    return {
+      tabs: s.tabs.map(snapshotTab),
+      activeTabIndex: index === -1 ? 0 : index,
+    };
+  });
+}
+
+// The working directory and any running session are read from the terminal
+// registry at snapshot time, and neither goes through the store — a `cd`, or a
+// provider spotting a Claude session, changes what should be saved without any
+// state write to trigger a save. App calls this as the window goes away so the
+// last snapshot reflects where the shells actually ended up.
+export function captureSessionNow() {
+  scheduleSessionSave();
 }
 
 function getTabIndex(tabId: string): number {
@@ -278,6 +376,11 @@ export function useTabStore() {
       const idx = s.tabs.findIndex((t) => t.id === tabId);
       if (idx === -1) return;
 
+      // Snapshot before the terminals die: the live working directory, the OSC
+      // title and any recognized session all live on the registry instances that
+      // killPanesInTree is about to dispose.
+      recordClosedTab(snapshotTab(s.tabs[idx]), idx);
+
       killPanesInTree(s.tabs[idx].root);
 
       const newTabs = s.tabs.filter((t) => t.id !== tabId);
@@ -306,6 +409,80 @@ export function useTabStore() {
           tabHistory: closingActive && recent ? rest : history,
         }));
       }
+    },
+
+    // Reopen whatever was closed last — a tab or a single pane, whichever came
+    // off more recently. Repeated calls walk back through the close order (the
+    // browser's reopen-closed-tab, over one stack instead of two).
+    //
+    // Nothing here revives a process: the panes come back with the directory,
+    // layout and titles they had, and their shells are new. A pane that was
+    // running a recognized session comes back with the resume command queued —
+    // typed, or run, per the Settings choice.
+    reopenLastClosed() {
+      const entry = popClosed();
+      if (!entry) return;
+
+      if (entry.kind === "tab") {
+        const tab = hydrateTab(entry.snapshot, registerPendingRestore);
+        update((s) => {
+          const tabs = [...s.tabs];
+          // Back where it was, unless the strip has since shrunk past that slot.
+          tabs.splice(Math.min(entry.index, tabs.length), 0, tab);
+          return {
+            ...s,
+            tabs,
+            activeTabId: tab.id,
+            tabHistory: pushMru(s.tabHistory, s.activeTabId),
+          };
+        });
+        return tab.id;
+      }
+
+      const leaf = hydrateNode(entry.snapshot, registerPendingRestore);
+      const s = state();
+      const targetIdx = s.tabs.findIndex((t) => t.id === entry.tabId);
+
+      // The tab it came from is gone (closed after the pane was). Rather than
+      // drop the entry, the pane comes back as a tab of its own — the pane's
+      // content is what the user asked for, and its old container isn't there
+      // to hold it.
+      if (targetIdx === -1) {
+        const leaves = collectLeaves(leaf);
+        const tab: Tab = {
+          id: nanoid(8),
+          title: entry.title,
+          manualTitle: false,
+          root: leaf,
+          activePaneId: leaves[0]?.id ?? leaf.id,
+          paneHistory: [],
+        };
+        update((prev) => ({
+          ...prev,
+          tabs: [...prev.tabs, tab],
+          activeTabId: tab.id,
+          tabHistory: pushMru(prev.tabHistory, prev.activeTabId),
+        }));
+        return tab.id;
+      }
+
+      const target = s.tabs[targetIdx];
+      const newRoot = insertBeside(target.root, target.activePaneId, leaf, "right");
+      const focusId = collectLeaves(leaf)[0]?.id ?? target.activePaneId;
+      update((prev) => ({
+        ...prev,
+        tabs: prev.tabs.map((t, i) =>
+          i === targetIdx ? focusPaneInTab({ ...t, root: newRoot }, focusId) : t
+        ),
+        activeTabId: target.id,
+        tabHistory:
+          prev.activeTabId === target.id
+            ? prev.tabHistory
+            : pushMru(prev.tabHistory, prev.activeTabId).filter(
+                (id) => id !== target.id
+              ),
+      }));
+      return target.id;
     },
 
     setActiveTab(tabId: string) {
@@ -356,15 +533,24 @@ export function useTabStore() {
       if (idx === -1) return;
 
       const tab = s.tabs[idx];
-      const pane = collectLeaves(tab.root).find((l) => l.id === paneId);
-      if (pane?.pane.kind === "terminal") {
-        destroyTerminal(paneId);
-      }
-
+      const leaf = findLeafNode(tab.root, paneId);
       const newRoot = closePaneInTree(tab.root, paneId);
+
+      // Closing the last pane in a tab *is* closing the tab, and closeTab
+      // records the whole thing. Recording the pane here too would put two
+      // entries on the stack for one keystroke, so the tree is pruned before
+      // anything is captured or destroyed.
       if (newRoot === null) {
         this.closeTab(tab.id);
         return;
+      }
+
+      // Capture before destroying, for the same reason as closeTab.
+      if (leaf) {
+        recordClosedPane(snapshotNode(leaf), tab.id, paneEntryTitle(leaf));
+      }
+      if (leaf?.pane.kind === "terminal") {
+        destroyTerminal(paneId);
       }
 
       update(() => ({

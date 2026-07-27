@@ -16,6 +16,8 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **WebGL rendering** -- GPU-accelerated terminal via xterm.js WebGL addon, with automatic recovery from a lost context
 - **Splits inherit the directory** -- a new pane or tab opens where the pane you split from is, not back at the startup path. The shell's directory is read from its own process, so it works without configuring your shell; `OSC 7` (which zsh and fish send by default) is used as a faster signal when it's there
 - **OSC protocol** -- captures title sequences and working directory updates
+- **Session history** -- reopen the last closed tab or pane (`⌘⇧T` / `Ctrl+Shift+R`), repeatedly, walking back through what you closed; and pick your tabs, splits and directories back up where you left them after a restart. A pane that was running Claude Code remembers *which session*, so the restored terminal comes back with `claude --resume <id>` waiting at the prompt (or runs it, or ignores it -- your choice in Settings)
+- **Optional tab-bar clock** -- off by default; when on, its format is a token string (`HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`, `[at] HH:mm`) with a live preview in Settings. It wakes only when the displayed text would actually change -- once a minute unless the format shows seconds -- aligned to the boundary, and stops entirely while the window is hidden
 - **Per-OS keybindings** -- macOS uses `⌘`; Linux/Windows keep the Kitty-style `Ctrl+Shift+<key>` scheme
 
 ## Keybindings
@@ -27,6 +29,8 @@ free for terminal control codes).
 | Action | macOS | Linux / Windows |
 |---|---|---|
 | New tab | `⌘T` | `Ctrl+Shift+T` |
+| Reopen last closed tab / pane | `⌘⇧T` | `Ctrl+Shift+R` |
+| Rename tab | `⌘R` | `F2` |
 | Close tab | `⌘⇧W` | `Ctrl+Shift+Q` |
 | Close pane | `⌘W` | `Ctrl+Shift+W` |
 | Next / previous tab | `⌘⇧]` / `⌘⇧[` | `Ctrl+Shift+→` / `Ctrl+Shift+←` |

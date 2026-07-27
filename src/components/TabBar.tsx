@@ -1,7 +1,8 @@
 import { createSignal, For, Show, onMount, onCleanup } from "solid-js";
 import { getBackend, type UnlistenFn } from "../backends";
 import { shortcutLabel } from "../lib/platform";
-import { tabBarSide } from "../stores/settings";
+import { clockEnabled, tabBarSide } from "../stores/settings";
+import Clock from "./Clock";
 import {
   draggingTabId,
   setDraggingTabId,
@@ -312,6 +313,11 @@ export default function TabBar(props: TabBarProps) {
       {/* Flexible draggable strip: fills the empty space so the window can be
           moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
       <div class="tab-drag-region" />
+      {/* Optional clock, at the far end from the tabs. Mounted only when it's
+          switched on, so when it's off there is no timer running at all. */}
+      <Show when={clockEnabled()}>
+        <Clock />
+      </Show>
     </div>
   );
 }

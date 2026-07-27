@@ -1,5 +1,67 @@
 # Changelog
 
+## Unreleased (0.15.0)
+
+### Added
+- **Reopen what you closed.** **⌘⇧T** (`Ctrl+Shift+R` on Linux/Windows) brings
+  back the last closed tab — or the last closed pane, whichever went more
+  recently — and keeps walking back through the close order on repeated presses,
+  25 deep and across restarts. A tab returns to the position it held; a pane
+  returns to the tab it came from, or becomes a tab of its own if that tab is
+  gone too. Panes come back with their layout, titles and working directories;
+  the shells are new, since nothing that was running is restarted.
+- **Reopen tabs on start.** The tabs, splits and directories you had open come
+  back on the next launch (Settings → *Reopen tabs on start*, on by default). A
+  renderer reload deliberately doesn't restore: the previous shells are still
+  alive in that case, and restoring would spawn a second set beside them.
+- **Restored panes remember Claude Code sessions.** A pane running Claude Code
+  has its session identified while it runs, so the restored terminal comes back
+  with `claude --resume <id>` ready at the prompt. Settings → *Resumable
+  sessions* chooses between typing it (the default — a remembered session id may
+  since have been deleted, so the command is left for you to confirm), running
+  it, or ignoring it. The mechanism is generic: the history stores a provider,
+  an id and a resume command, and Claude Code is simply the first provider.
+  Detection is exact when Claude has a child process to read the session from,
+  and falls back to the most recently active transcript for the pane's
+  directory; Windows can't report a pane's processes at all, so panes there
+  restore as plain shells.
+- **An optional clock in the tab bar.** Off by default. The format is a token
+  string rather than a locale preset — `HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`,
+  with `[bracketed]` literals — and Settings previews it as you type. It sits at
+  the far end from the tabs, so it doesn't move as tabs open and close.
+
+  It wakes only when the text it shows would change: once a minute for a format
+  without seconds, aligned to the minute boundary rather than drifting off it,
+  and once a second only if seconds are actually displayed. While the window is
+  hidden it doesn't tick at all, resyncing when it comes back. Switched off,
+  the component isn't mounted, so there is no timer at all.
+
+### Changed
+- **Renaming a tab is now `F2` on Linux/Windows** (macOS keeps `⌘R`), freeing
+  `Ctrl+Shift+R` for reopen. `Ctrl+Shift+T` stays *new tab*, as in every other
+  terminal — and bare `Ctrl+T` stays out of reach on purpose, since it's
+  readline's transpose-chars. `F2` steps aside whenever a full-screen program
+  owns the pane (it's on the alternate screen buffer), so it still reaches
+  htop's Setup and mc's menu; it renames only at a shell prompt.
+
+### Performance
+The session history is built to cost nothing when it isn't doing anything:
+- A pane's pty output path is untouched unless that specific pane owes a resume
+  command. Output is the hottest path in the app — every echoed keystroke, every
+  line of a build log — and a restore can only ever happen once, so it has no
+  business being checked there for the life of the process.
+- The "what was open" snapshot is serialized behind a debounce (a divider drag
+  writes the store on every mousemove) and skipped entirely when the result is
+  byte-identical to what's already stored, since `localStorage.setItem` is
+  synchronous on the same thread that draws the terminal. With *Reopen tabs on
+  start* off, no snapshot is ever built.
+- Session detection walks the kernel's per-process child lists down from each
+  shell rather than enumerating every process on the machine. The scan runs in
+  the main process, which is also where the ptys live, and flooding libuv's
+  (four-thread) pool there stalls terminal I/O app-wide. It also skips ticks
+  while the window is hidden, and doesn't run at all with *Resumable sessions*
+  set to "Ignore them".
+
 ## 0.14.0 — 2026-07-24
 
 ### Added

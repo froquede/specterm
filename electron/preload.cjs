@@ -12,6 +12,13 @@ contextBridge.exposeInMainWorld("specterm", {
 
   ptyCwd: (id) => ipcRenderer.invoke("pty-cwd", id),
 
+  // What's running inside each pane, and named env vars off a process, for the
+  // session providers. See the handlers in main.cjs for why both are narrow.
+  ptyDescendants: (ids) => ipcRenderer.invoke("pty-descendants", ids),
+
+  readProcessEnv: (pid, names) =>
+    ipcRenderer.invoke("read-process-env", pid, names),
+
   onPtyOutput: (cb) => {
     const handler = (_event, id, data) => cb(id, data);
     ipcRenderer.on("pty-output", handler);
@@ -31,6 +38,8 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.invoke("write-text-file", path, content),
 
   readDir: (path) => ipcRenderer.invoke("read-dir", path),
+
+  readDirStats: (path) => ipcRenderer.invoke("read-dir-stats", path),
 
   listDrives: () => ipcRenderer.invoke("list-drives"),
 

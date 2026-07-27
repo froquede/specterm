@@ -11,6 +11,30 @@ export interface FileEntry {
   isDirectory: boolean;
 }
 
+// A directory entry with its modification time. Separate from FileEntry because
+// the file tree lists directories constantly and has no use for a stat per
+// entry; only the session providers need mtimes, to pick the live file out of a
+// directory of them.
+export interface FileEntryStats extends FileEntry {
+  mtimeMs: number;
+}
+
+// A process running inside a pane, as seen from the host. `args` is the full
+// command line where the platform can report one, null where it can't.
+export interface ProcessInfo {
+  pid: number;
+  // The parent, so a caller can tell a process running *under* something it
+  // found from one that merely shares the same shell. That distinction matters
+  // for anything reading inherited environment variables.
+  ppid: number;
+  comm: string;
+  args: string | null;
+  // The process's own working directory, where the host can read it (Linux).
+  // Worth having separately from the pane's: a shell's cached directory goes
+  // stale while a full-screen program runs, and the program's own is exact.
+  cwd: string | null;
+}
+
 // A mounted volume on Windows (e.g. { name: "C:", path: "C:\\" }). Empty on
 // other platforms, which have a single "/" root.
 export interface DriveEntry {
@@ -56,10 +80,30 @@ export interface Backend {
   onPtyOutput(cb: (id: number, data: Uint8Array) => void): Promise<UnlistenFn>;
   onPtyExit(cb: (id: number) => void): Promise<UnlistenFn>;
 
+  // Process inspection, for the session providers (src/lib/session-providers).
+  // Both answer emptily wherever the platform can't report — Windows, a hardened
+  // process, one that exited mid-question — so a caller never has to distinguish
+  // "nothing running" from "couldn't look".
+  //
+  // ptyDescendants takes every pane at once because the host answers them from a
+  // single scan of the process table; asking per pane would multiply that cost
+  // by the number of open terminals.
+  ptyDescendants(ids: number[]): Promise<Record<number, ProcessInfo[]>>;
+  // Only the named variables come back, and names that look like secrets are
+  // refused host-side — a shell's environment is full of credentials that have
+  // no reason to enter the renderer.
+  readProcessEnv(
+    pid: number,
+    names: string[]
+  ): Promise<Record<string, string>>;
+
   // Filesystem
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
+  // Same listing with modification times. Returns [] for a missing directory
+  // rather than throwing — callers use it to ask "has anything happened here?".
+  readDirStats(path: string): Promise<FileEntryStats[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;
   // Show a path in the OS file manager (Explorer/Finder/Nautilus). A directory

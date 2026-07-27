@@ -34,14 +34,16 @@ const eqPath = (a, b) =>
   a != null && b != null && (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
 const joinPath = (base, name) => base.replace(/[\\/]+$/, "") + SEP + name;
 
-// Whole-suite deadline. Raised from 180s when the cwd-inheritance checks landed:
-// the suite was finishing just under the old ceiling, so any further check —
-// and any slower machine — tipped it into a timeout that looks like a failure
-// but isn't one. Headroom here is cheap; a false red is not.
+// Whole-suite deadline. Raised from 180s when the cwd-inheritance checks landed,
+// and again for the session-history section, which ends by quitting the app and
+// launching it a second time — a whole extra Electron startup inside the same
+// budget. The suite was already finishing just under the old ceiling, so any
+// further check — and any slower machine — tipped it into a timeout that looks
+// like a failure but isn't one. Headroom here is cheap; a false red is not.
 const hard = setTimeout(() => {
   console.error("[e2e] HARD TIMEOUT");
   process.exit(2);
-}, 240000);
+}, 330000);
 hard.unref();
 
 // --- helpers ---------------------------------------------------------------
@@ -1676,7 +1678,9 @@ try {
   // title's double-click: a setPointerCapture on pointerdown once retargeted the
   // follow-up click/dblclick to the tab itself, so the × merely re-selected the
   // tab and double-click never entered rename. These checks lock that shut.
-  const RENAME_KEY = MAC ? "Meta+R" : "Control+Shift+R";
+  // ⌘R on macOS; F2 on Linux/Windows, where Ctrl+Shift+R now reopens a closed
+  // tab instead. See keymap.ts.
+  const RENAME_KEY = MAC ? "Meta+R" : "F2";
   const tabCount = () => win.locator(".tab").count();
   const tabTitleOf = (id) =>
     win.evaluate(
@@ -1791,7 +1795,292 @@ try {
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
   }
 
+  // 19) F2 stands aside for full-screen programs. It renames the tab at a shell
+  // prompt, but the moment something takes the alternate screen buffer (htop,
+  // vim, mc — all of which bind F2 themselves) the key stops being ours and
+  // reaches the program instead. macOS uses ⌘R, which no terminal program can
+  // receive, so it has nothing to stand aside for.
+  if (MAC) {
+    skip("F2 leaves the rename editor shut inside a full-screen program", "macOS uses ⌘R");
+    skip("F2 renames again once the program exits", "macOS uses ⌘R");
+  } else {
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(1800);
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    // Enter the alternate screen buffer the way a full-screen program does.
+    await win.keyboard.type("printf '\\033[?1049h'");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(900);
+
+    await win.keyboard.press("F2");
+    await win.waitForTimeout(500);
+    const editorInAlt = await win.locator(".tab-title-input").count();
+    check(
+      "F2 leaves the rename editor shut inside a full-screen program",
+      editorInAlt === 0,
+      `editors=${editorInAlt}`
+    );
+
+    // Back to the normal buffer — the key is ours again.
+    await win.keyboard.type("printf '\\033[?1049l'");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(900);
+    await win.keyboard.press("F2");
+    const editorAfterExit = await editorVisible();
+    check(
+      "F2 renames again once the program exits",
+      editorAfterExit,
+      `editorVisible=${editorAfterExit}`
+    );
+    if (editorAfterExit) {
+      await win.keyboard.press("Escape");
+      await win.waitForTimeout(300);
+    }
+  }
+
+  // Reopen-closed is ⌘⇧T on macOS. On Linux/Windows Ctrl+Shift+T is already
+  // "new tab" and Ctrl+Alt+T is GNOME's own "open a terminal", so it's
+  // Ctrl+Shift+R there — see keymap.ts.
+  const REOPEN_KEY = MAC ? "Meta+Shift+T" : "Control+Shift+R";
+  const CLOSE_TAB_KEY = MAC ? "Meta+Shift+W" : "Control+Shift+Q";
+  const CLOSE_PANE_KEY = MAC ? "Meta+W" : "Control+Shift+W";
+
+  // 19b) The optional tab-bar clock. What's worth locking down isn't that it can
+  // show the time — it's that it doesn't exist at all until asked for, that the
+  // format is really the user's, and that a minute-granularity format doesn't
+  // redraw every second. Driven through the Settings UI, which is how anyone
+  // actually turns it on.
+  const clockText = () =>
+    win.evaluate(() => document.querySelector(".tab-clock")?.textContent ?? null);
+
+  check("no clock until it's switched on", (await clockText()) === null, "");
+
+  await win.locator(".tab-settings").click();
+  await win.waitForSelector("#clock-enabled", { timeout: 5000 });
+  await win.locator("#clock-enabled").check();
+  await win.waitForTimeout(600);
+  const defaultText = await clockText();
+  check(
+    "switching the clock on shows it in the default format",
+    /^\d{2}:\d{2}$/.test(defaultText ?? ""),
+    `text=${defaultText}`
+  );
+
+  // A format with seconds must actually advance.
+  await win.locator("#clock-format").fill("HH:mm:ss");
+  await win.locator("#clock-format").blur();
+  await win.waitForTimeout(400);
+  const sec1 = await clockText();
+  await win.waitForTimeout(1600);
+  const sec2 = await clockText();
+  check(
+    "a seconds format ticks every second",
+    /^\d{2}:\d{2}:\d{2}$/.test(sec1 ?? "") && sec1 !== sec2,
+    `${sec1} → ${sec2}`
+  );
+
+  // …and one without seconds must not. Stay clear of a minute rollover first,
+  // which would change the text for a legitimate reason and read as a failure.
+  const secondsNow = () => win.evaluate(() => new Date().getSeconds());
+  while ((await secondsNow()) > 48) await win.waitForTimeout(1000);
+  await win.locator("#clock-format").fill("[at] HH:mm");
+  await win.locator("#clock-format").blur();
+  await win.waitForTimeout(400);
+  const min1 = await clockText();
+  await win.waitForTimeout(4000);
+  const min2 = await clockText();
+  check(
+    "a minute format holds steady between minutes (and literals pass through)",
+    /^at \d{2}:\d{2}$/.test(min1 ?? "") && min1 === min2,
+    `${min1} → ${min2}`
+  );
+
+  await win.locator("#clock-enabled").uncheck();
+  await win.waitForTimeout(500);
+  check("switching the clock off removes it", (await clockText()) === null, "");
+  await win.locator(".tab-settings").click();
+  await win.waitForTimeout(400);
+
+  // 20) A pane running Claude Code remembers which session it was, so closing
+  // the tab records how to pick it back up.
+  //
+  // The session is identified from the transcript Claude Code keeps per project
+  // directory, so the check plants one for a scratch directory rather than
+  // holding a real conversation — the id it must find is then known exactly.
+  // (The other route, reading the id from a child of the claude process, only
+  // answers while claude is running a tool call, which an idle session isn't.)
+  if (!HAS_CLAUDE) {
+    skip("a pane running Claude Code records its session", "claude CLI not installed");
+  } else {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-claude-"));
+    const sessionId = "11111111-2222-3333-4444-555555555555";
+    const projectDir = path.join(
+      os.homedir(),
+      ".claude",
+      "projects",
+      workDir.replace(/[/\\]/g, "-")
+    );
+    try {
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(projectDir, `${sessionId}.jsonl`),
+        JSON.stringify({ type: "mode", mode: "normal", sessionId }) + "\n"
+      );
+
+      await win.locator(".tab-new").click();
+      await win.waitForTimeout(1800);
+      await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+      await win.keyboard.type(`cd "${workDir}" && claude`);
+      await win.keyboard.press("Enter");
+      // Providers poll on a 20s cycle (see lib/session-providers), and claude
+      // itself takes a few seconds to come up.
+      await win.waitForTimeout(30000);
+
+      await win.keyboard.press(CLOSE_TAB_KEY);
+      await win.waitForTimeout(1200);
+
+      const recorded = await win.evaluate(() => {
+        const raw = localStorage.getItem("specterm.history.closed");
+        return raw ? JSON.parse(raw).entries?.[0]?.snapshot?.root?.pane ?? null : null;
+      });
+      check(
+        "a pane running Claude Code records its session",
+        recorded?.session?.id === sessionId &&
+          recorded?.session?.resumeCommand === `claude --resume ${sessionId}`,
+        JSON.stringify(recorded?.session ?? null)
+      );
+
+      // The entry stays on the stack; the checks below close their own tab
+      // first, so they always act on a fresher one.
+    } finally {
+      try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  // 21) Session history: reopening what was closed, and restoring what was open.
+  //
+  // The interesting assertion in all three checks is the *directory*, not the
+  // tab count: a restored pane that comes back at the startup path has restored
+  // nothing useful. Each pane is cd'd somewhere identifiable first, then the
+  // spawn cwd of whatever comes back is read (SPECTERM_CWD, recorded by the main
+  // process at spawn) and compared against it.
+  const historyTabCount = () =>
+    win.evaluate(() => document.querySelectorAll(".tab").length);
+  const paneCount = () => win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
+
+  // A directory that exists everywhere and isn't home, so "restored" can't be
+  // confused with "opened at the default".
+  const marker = STARTUP_TARGET;
+  const cdTo = async (dir) => {
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(WIN ? `Set-Location "${dir}"` : `cd "${dir}"`);
+    await win.keyboard.press("Enter");
+    // The cwd the snapshot reads is refreshed from the shell process after each
+    // command (refreshCwd, on a 150ms/1.5s probe pair) — outwait the slower one.
+    await win.waitForTimeout(2200);
+  };
+
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  await cdTo(marker);
+  const tabsBeforeClose = await historyTabCount();
+
+  await win.keyboard.press(CLOSE_TAB_KEY);
+  await win.waitForTimeout(800);
+  const tabsAfterClose = await historyTabCount();
+
+  await win.keyboard.press(REOPEN_KEY);
+  await win.waitForTimeout(2500);
+  const reopenedCwd = await spawnCwd(win, "reopen_tab");
+  check(
+    "reopen closed tab restores it at the directory it was in",
+    tabsAfterClose === tabsBeforeClose - 1 &&
+      (await historyTabCount()) === tabsBeforeClose &&
+      eqPath(reopenedCwd, marker),
+    `before=${tabsBeforeClose} closed=${tabsAfterClose} after=${await historyTabCount()} cwd=${reopenedCwd}`
+  );
+
+  // A closed *pane* goes back into the tab it came from, not into a new tab.
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2200);
+  const panesBeforePaneClose = await paneCount();
+  const tabsBeforePaneClose = await historyTabCount();
+  await cdTo(marker);
+
+  await win.keyboard.press(CLOSE_PANE_KEY);
+  await win.waitForTimeout(800);
+  const panesAfterPaneClose = await paneCount();
+
+  await win.keyboard.press(REOPEN_KEY);
+  await win.waitForTimeout(2500);
+  const reopenedPaneCwd = await spawnCwd(win, "reopen_pane");
+  check(
+    "reopen closed pane puts it back in the same tab",
+    panesAfterPaneClose === panesBeforePaneClose - 1 &&
+      (await paneCount()) === panesBeforePaneClose &&
+      (await historyTabCount()) === tabsBeforePaneClose &&
+      eqPath(reopenedPaneCwd, marker),
+    `panes ${panesBeforePaneClose}→${panesAfterPaneClose}→${await paneCount()} ` +
+      `tabs=${await historyTabCount()} cwd=${reopenedPaneCwd}`
+  );
+
+  // Leave a known layout behind for the restore-on-boot check below.
+  //
+  // The value to compare against is the active pane's *live* directory, which is
+  // the whole point of the feature: a restored shell should come back **in**
+  // where you were, not where that shell originally spawned. So this reads the
+  // live cwd now, and the check after the relaunch reads the restored pane's
+  // spawn cwd — they must be the same directory.
+  //
+  // The snapshot is written on a 1s debounce after the last state change (plus a
+  // flush as the window goes away), so the wait is what makes this realistic
+  // rather than a test of the flush path alone.
+  const tabsAtQuit = await historyTabCount();
+  const liveCwdAtQuit = await terminalCwd(win, "quit_live");
+  await win.waitForTimeout(2000);
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
+
+  // 22) Restore on boot. The only check that needs a second launch: quit the
+  // app and start it again against the *same* profile, since the snapshot lives
+  // in localStorage under the user-data dir. Enabled by default, so nothing is
+  // toggled first — this is what a normal restart does.
+  try {
+    await Promise.race([app.close(), new Promise((r) => setTimeout(r, 5000))]);
+  } catch (_) {
+    // Close is best-effort; the relaunch below is what actually matters.
+  }
+  try { app.process().kill("SIGKILL"); } catch {}
+
+  const app2 = await electron.launch({
+    args: [root, `--user-data-dir=${userDataDir}`],
+    cwd: root,
+  });
+  try {
+    const win2 = await app2.firstWindow();
+    win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
+    await win2.waitForSelector(".file-tree", { timeout: 20000 });
+    await win2.waitForTimeout(3000);
+
+    const restoredTabs = await win2.evaluate(
+      () => document.querySelectorAll(".tab").length
+    );
+    const restoredCwd = await spawnCwd(win2, "restore_boot");
+    check(
+      "restart restores the tabs that were open, in their directories",
+      restoredTabs === tabsAtQuit && eqPath(restoredCwd, liveCwdAtQuit),
+      `tabs ${tabsAtQuit}→${restoredTabs} cwd=${restoredCwd} (was at ${liveCwdAtQuit})`
+    );
+  } finally {
+    try {
+      await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
+    } catch (_) {
+      // Nothing left to assert; the kill below is the backstop.
+    }
+    try { app2.process().kill("SIGKILL"); } catch {}
+  }
 
   // --- summary ---
   const failed = results.filter((r) => !r.pass).length;
