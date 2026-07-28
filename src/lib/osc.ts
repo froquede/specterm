@@ -57,7 +57,14 @@ export function registerCwdHandler(
     if (!localHosts.has(host)) return true;
 
     try {
-      const decoded = decodeURIComponent(rest.slice(slash));
+      // A Windows file URI is file:///C:/path — empty host, and the path keeps a
+      // leading slash before the drive letter (/C:/...). Strip that slash so the
+      // value is a real Windows path node can spawn in; POSIX paths (/home/...)
+      // have no drive colon and are left untouched.
+      const decoded = decodeURIComponent(rest.slice(slash)).replace(
+        /^\/([A-Za-z]:)/,
+        "$1"
+      );
       if (decoded) onCwd(decoded);
     } catch (_) {
       // Malformed percent-encoding — ignore this report and keep the last
