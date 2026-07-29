@@ -5,7 +5,7 @@ import {
   startSessionProviders,
   stopSessionProviders,
 } from "./lib/session-providers";
-import { getBackend } from "./backends";
+import { getBackend, windowBoot } from "./backends";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
 import {
@@ -21,6 +21,7 @@ import {
 } from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
+import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd } from "./lib/fspath";
@@ -31,6 +32,7 @@ import SettingsPanel from "./components/SettingsPanel";
 import SidebarResizeHandle from "./components/SidebarResizeHandle";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
+import type { UnlistenFn } from "./backends";
 
 export default function App() {
   const store = useTabStore();
@@ -190,6 +192,19 @@ export default function App() {
     }
   }
 
+  // Move a tab (or a single pane, which becomes a tab) out of this window,
+  // because the drag was released outside it. The store snapshots it and hands
+  // its PTYs over; the host decides where it lands — another Specterm window if
+  // one is under the cursor, otherwise a new window there. Both steps refuse
+  // quietly when the move would leave this window with nothing.
+  async function tearOff(kind: "tab" | "pane", id: string) {
+    const transfer =
+      kind === "tab" ? await store.takeTab(id) : await store.takePane(id);
+    if (!transfer) return;
+    const backend = await getBackend();
+    await backend.dropTransfer(transfer);
+  }
+
   // Move keyboard focus back into the active tab's terminal (or, if that pane
   // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
   function focusActivePane() {
@@ -224,17 +239,50 @@ export default function App() {
     // Apply the persisted color theme (CSS variables + terminal palette).
     initTheme();
 
+    // Start listening for settings/theme/favorites changes made in other
+    // windows. Each store registered its own reload in the init calls above.
+    void initStoreSync();
+
+    // Fill the window. What goes in it depends on what kind of window this is,
+    // and that answer is already here — the host stamped it into our launch
+    // arguments, so there is no round trip in front of the first shell (see
+    // WindowBoot in backends/types.ts). Only a window created to host a
+    // torn-off tab has to go and fetch anything, and that one exists solely
+    // because a drag just ended.
+    const boot = windowBoot();
+    if (boot.hasTab) {
+      void getBackend()
+        .then((backend) => backend.takeWindowInit())
+        .then((init) => store.initWindow(init.tab, false))
+        .catch((err) => {
+          // Never leave a window empty because the handover failed: fall back
+          // to the plain new-terminal boot.
+          console.warn("[window] adopting the torn-off tab failed:", err);
+          store.initWindow(null, false);
+        });
+    } else {
+      store.initWindow(null, boot.ownsSession);
+    }
+
+    // A tab torn off another window and dropped onto this one.
+    let unlistenAdopt: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) => backend.onAdoptTab((tab) => store.adoptTab(tab)))
+      .then((un) => {
+        unlistenAdopt = un;
+      });
+    onCleanup(() => unlistenAdopt?.());
+
     // Watch for resumable programs (Claude Code) running in the panes, so a
     // closed tab remembers not just where it was but what it was doing. Polls
     // slowly; see lib/session-providers.
     startSessionProviders();
     onCleanup(stopSessionProviders);
 
-    // Check GitHub for a newer release once, on this cold start. The single-
-    // instance lock means relaunching an already-running Specterm just focuses
-    // the window without re-running this — so it's "check on open", and any
+    // Check GitHub for a newer release once per app launch — the first window
+    // owns that check, so opening more windows doesn't re-hit the feed. Any
     // later check is the manual button in Settings.
-    void initUpdater();
+    if (boot.autoCheckUpdates) void initUpdater();
 
     // When the OS window regains focus, return the cursor to the active pane —
     // and, since the user is now looking at it, put out any attention flag it
@@ -334,6 +382,7 @@ export default function App() {
         onReorder={(source, target, before) =>
           store.moveTab(source, target, before)
         }
+        onTearOff={(id) => void tearOff("tab", id)}
         settingsOpen={settingsOpen()}
       />
       <div class="app-body">
@@ -382,6 +431,7 @@ export default function App() {
                   // keyboard focus with it once it lands in the newly shown tab.
                   requestAnimationFrame(() => focusPaneReliably(sourceId));
                 }}
+                onTearOffPane={(sourceId) => void tearOff("pane", sourceId)}
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenMarkdown={handleOpenMarkdown}

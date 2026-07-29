@@ -10,6 +10,7 @@ import {
   setTabDropTarget,
 } from "../stores/tab-drag";
 import { draggingPaneId, dropTabId } from "../stores/pane-drag";
+import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
 import { paneAttention, type AttentionKind } from "../stores/attention";
 import { collectLeaves } from "../lib/split-tree";
 import type { Tab } from "../types";
@@ -28,6 +29,9 @@ interface TabBarProps {
   onCommitRename: (tabId: string, title: string) => void;
   onCancelRename: () => void;
   onReorder: (sourceId: string, targetId: string, before: boolean) => void;
+  // Released outside the window: hand this tab off to another window (or a new
+  // one). See src/stores/tear-off.ts.
+  onTearOff: (tabId: string) => void;
   settingsOpen: boolean;
 }
 
@@ -145,6 +149,13 @@ export default function TabBar(props: TabBarProps) {
         dragging = true;
         setDraggingTabId(tabId);
       }
+      // Dragged clear of the window: no reorder target can apply any more, and
+      // releasing here means "move this tab out".
+      setTearingOff(isOutsideWindow(ev));
+      if (tearingOff()) {
+        setTabDropTarget(null);
+        return;
+      }
       const target = document
         .elementFromPoint(ev.clientX, ev.clientY)
         ?.closest<HTMLElement>("[data-tab-id]");
@@ -170,9 +181,14 @@ export default function TabBar(props: TabBarProps) {
       teardown();
       if (dragging) {
         const dt = tabDropTarget();
+        const tearOff = tearingOff();
         setDraggingTabId(null);
         setTabDropTarget(null);
-        if (dt) {
+        setTearingOff(false);
+        if (tearOff) {
+          suppressClick = true;
+          props.onTearOff(tabId);
+        } else if (dt) {
           suppressClick = true;
           props.onReorder(tabId, dt.tabId, dt.before);
         }
@@ -183,6 +199,7 @@ export default function TabBar(props: TabBarProps) {
       teardown();
       setDraggingTabId(null);
       setTabDropTarget(null);
+      setTearingOff(false);
     }
 
     window.addEventListener("pointermove", onMove);
@@ -264,6 +281,8 @@ export default function TabBar(props: TabBarProps) {
               classList={{
                 active: tab.id === props.activeTabId,
                 dragging: draggingTabId() === tab.id,
+                // Cursor is outside the window — release moves this tab out.
+                "tearing-off": draggingTabId() === tab.id && tearingOff(),
                 // Highlighted while a dragged pane hovers this chip — release
                 // detaches the pane into this tab. Never the source tab (always
                 // the active one), where the drop would be a no-op.

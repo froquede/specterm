@@ -6,6 +6,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 
 - **Split panes** -- horizontal and vertical splits with draggable resize handles, drag-and-drop reordering via each pane's title-bar, and one-click/keyboard direction flipping. Aligned dividers move together; hold **Alt** to resize just one split
 - **Tabs** -- create, close, and cycle through terminal tabs; drag a pane's title-bar onto another tab to move it there (the live terminal rides along)
+- **Multiple windows** -- `⌘N` opens another independent window; drag a tab (or a pane, by its title-bar) past the window's edge to tear it off into a window of its own, or drop it on another Specterm window to move it there. The shell is handed over still running, scrollback and all (see [Moving tabs between windows](#moving-tabs-between-windows))
 - **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
 - **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
 - **Markdown preview & editor** -- render `.md` files inline with Mermaid diagram support, or toggle (`⌘E`) into a live-preview CodeMirror editor and save (`⌘S`) back to disk; installed builds also register as a `.md` handler, so you can *Open With → Specterm* (or double-click) a markdown file to open it in a new tab
@@ -29,6 +30,7 @@ free for terminal control codes).
 
 | Action | macOS | Linux / Windows |
 |---|---|---|
+| New window | `⌘N` | `Ctrl+Shift+N` |
 | New tab | `⌘T` | `Ctrl+Shift+T` |
 | Reopen last closed tab / pane | `⌘⇧T` | `Ctrl+Shift+R` |
 | Rename tab | `⌘R` | `F2` |
@@ -71,6 +73,46 @@ Specterm tells the two intents apart instead:
 
 Panes with no mouse tracking behave exactly as before. See
 `src/lib/mouse-selection.ts`.
+
+## Moving tabs between windows
+
+Drag a tab — or any pane, by its title-bar — **past the edge of the window** and
+release. The tab outlines itself in the accent colour once the cursor is outside,
+so you can tell the drop will move it out rather than reorder it.
+
+| where you release | what happens |
+|---|---|
+| **over another Specterm window** | the tab moves into that window, which comes to the front |
+| **anywhere else** | it becomes a new window, opening where you dropped it |
+| **still inside this window** | the usual reorder / pane-split drop |
+
+The terminal is not restarted. The shell process is handed from one window to
+the other still running, its scrollback is serialized and replayed on the far
+side, and anything it prints during the move is buffered and written back in
+order — so a build or a long `tail -f` doesn't drop a line. A full-screen
+program (vim, htop, Claude Code) repaints itself in the new window exactly as it
+does on any terminal resize.
+
+Two guards, both no-ops rather than errors: a window's **only** tab can't be torn
+off, and neither can the **last pane of that only tab** — the move would just
+rebuild the same window somewhere else and leave an empty one behind.
+
+Windows are otherwise independent: each has its own tabs, sidebar and terminals,
+and closing one kills only the shells that belong to it. Theme, terminal font
+and pinned favourites are shared and update live in every open window; font zoom
+(`⌘=` / `⌘-`) stays per-window, like a browser's.
+
+Two things from [session history](#features) split along the same line, and the
+split is deliberate:
+
+- **The restored session belongs to one window** — the first one of the launch.
+  It restores what was open and is the only one that writes the snapshot back, so
+  a second window can't overwrite it with its own tabs. A window opened with `⌘N`
+  therefore starts on a plain terminal rather than a copy of everything you
+  already have open.
+- **The closed-tab stack is shared.** `⌘⇧T` reopens the last thing closed in
+  *any* window, which is what "last closed" ought to mean, and both windows keep
+  their view of it in step.
 
 ## Settings
 

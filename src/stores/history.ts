@@ -18,6 +18,7 @@
 import { createSignal } from "solid-js";
 import type { SnapshotNode, TabSnapshot } from "../types";
 import { isSnapshotNode, isTabSnapshot } from "../lib/session-snapshot";
+import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
 
 // A closed tab, with where it sat so reopening puts it back in place rather
 // than at the end of the strip.
@@ -122,9 +123,28 @@ function persistClosed() {
   }
 }
 
-function push(entry: ClosedEntry) {
-  setClosedEntries((prev) => [entry, ...prev].slice(0, CLOSED_LIMIT));
+// The closed stack is one stack for the whole app, not one per window: "reopen
+// what I closed last" means the last thing closed anywhere. Every window holds
+// its own cached copy of it, though, so both ends of that have to be handled.
+//
+// Writes read storage back first. Two windows each holding a copy from when
+// they opened, each writing their own copy out whole, would silently drop the
+// other's entries — the one that saved last would win. Storage is the shared
+// truth; the signal is a cache in front of it, and it's re-read at the moment
+// of every write rather than trusted.
+//
+// Reads in *other* windows are caught up by the broadcast below, so a window
+// that hasn't closed anything itself still knows there is something to reopen.
+function commitClosed(next: ClosedEntry[]) {
+  setClosedEntries(next.slice(0, CLOSED_LIMIT));
   persistClosed();
+  publishStoreChange("closed-history");
+}
+
+registerStoreSync("closed-history", () => setClosedEntries(loadClosed()));
+
+function push(entry: ClosedEntry) {
+  commitClosed([entry, ...loadClosed()]);
 }
 
 export function recordClosedTab(snapshot: TabSnapshot, index: number) {
@@ -141,10 +161,12 @@ export function recordClosedPane(
 
 /** Take the most recently closed thing off the stack. Null when it's empty. */
 export function popClosed(): ClosedEntry | null {
-  const [head, ...rest] = closedEntries();
+  // Popped off storage, not off the cached signal: another window may have
+  // closed something since this one last looked, and that is what "last closed"
+  // has to mean.
+  const [head, ...rest] = loadClosed();
   if (!head) return null;
-  setClosedEntries(rest);
-  persistClosed();
+  commitClosed(rest);
   return head;
 }
 

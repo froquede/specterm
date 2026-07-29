@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { basename, normalize, equalPath } from "../lib/fspath";
+import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
 
 // Favorite directories the user pins from the file tree. Persisted to
 // localStorage so they survive restarts. Order is meaningful: the first entry
@@ -42,9 +43,14 @@ function persist(list: Favorite[]) {
   } catch (_) {
     // localStorage unavailable — favorites just won't survive this session.
   }
+  // Pinning a folder in one window should pin it everywhere — not least because
+  // "fav-N" is typed at the shell prompt, in whichever window happens to be up.
+  publishStoreChange("favorites");
 }
 
 const [favorites, setFavoritesSignal] = createSignal<Favorite[]>(load());
+
+registerStoreSync("favorites", () => setFavoritesSignal(load()));
 
 function commit(list: Favorite[]) {
   setFavoritesSignal(list);

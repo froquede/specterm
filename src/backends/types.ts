@@ -67,12 +67,75 @@ export interface UpdaterEvent {
   message?: string;
 }
 
+// A tab (or a single pane, as a one-leaf tab) in the form it travels between
+// windows: no pane ids — the destination mints its own — and every terminal
+// reduced to its live PTY plus a serialized copy of its screen and scrollback.
+export type TransferPane =
+  | { kind: "terminal"; ptyId: number; scrollback: string; title: string }
+  | { kind: "markdown"; filePath: string }
+  | { kind: "text"; filePath: string };
+
+export type TransferNode =
+  | { type: "leaf"; pane: TransferPane }
+  | {
+      type: "split";
+      direction: "h" | "v";
+      ratio: number;
+      first: TransferNode;
+      second: TransferNode;
+    };
+
+export interface TransferTab {
+  title: string;
+  manualTitle: boolean;
+  root: TransferNode;
+}
+
+// What a window is, known *synchronously* — before the first paint, with no IPC.
+//
+// This exists for one reason: opening has to be instant. Deciding what goes in a
+// window used to be free (there was only ever one, and it always got a plain
+// terminal), and multi-window turned it into a question for the host. Asking
+// over IPC would put a round trip in front of the first shell of every launch,
+// which is exactly the cost the app can't afford. So the host stamps the answer
+// into the window's own launch arguments, and the preload reads it back with no
+// round trip at all — see `additionalArguments` in electron/main.cjs.
+//
+// Only the flags travel this way. A torn-off tab carries a serialized screen and
+// has no business on a command line, so `hasTab` says one is waiting and the
+// (async) takeWindowInit fetches it — a round trip nobody can perceive, since
+// that window exists only because a drag just ended.
+export interface WindowBoot {
+  hasTab: boolean;
+  // Whether this window owns the single launch-time update check.
+  autoCheckUpdates: boolean;
+  // Whether this window owns the saved session: it restores it on open, and is
+  // the only one that writes it back. Every other window opens a plain terminal.
+  ownsSession: boolean;
+}
+
+// State a window collects once, on mount — the half that needs a round trip.
+export interface WindowInit {
+  // A tab torn off another window that this one was created to host.
+  tab: TransferTab | null;
+}
+
 export interface Backend {
   // PTY
   spawnPty(opts: SpawnPtyOptions): Promise<number>;
   writePty(id: number, data: string): Promise<void>;
   resizePty(id: number, cols: number, rows: number): Promise<void>;
   killPty(id: number): Promise<void>;
+  // Give up ownership of these PTYs without killing them — the handover half of
+  // a tear-off. They keep running and buffer output until adoptPty claims them.
+  releasePty(ids: number[]): Promise<void>;
+  // Claim a released PTY for this window, resized to the adopting pane. Resolves
+  // with the output buffered while it had no owner.
+  adoptPty(
+    id: number,
+    cols: number,
+    rows: number
+  ): Promise<{ buffered: Uint8Array; exited: boolean }>;
   // The shell's live working directory, read from the OS process. null when the
   // pty is gone or the platform can't report it (Windows) — callers fall back
   // to the configured startup path rather than treating this as an error.
@@ -136,6 +199,29 @@ export interface Backend {
   // app is behind a browser. 0 clears it. A no-op wherever the platform has
   // nothing to show.
   setAttentionBadge(count: number): Promise<void>;
+
+  // Multi-window. Backends that only ever have one window report a lone
+  // session-owning window, no-op the rest, and simply never fire onAdoptTab.
+  //
+  // The torn-off tab this window was created to host. Only ever called when
+  // windowBoot() (backends/index.ts — synchronous, so the first tab doesn't
+  // wait on it) said one is waiting.
+  takeWindowInit(): Promise<WindowInit>;
+  // Open another window on the same app.
+  newWindow(): Promise<void>;
+  // Land a torn-off tab wherever the cursor released it: into another Specterm
+  // window if one is under it, otherwise into a new window of its own. The host
+  // decides, since only it can see the real cursor and every window's bounds.
+  dropTransfer(tab: TransferTab): Promise<void>;
+  // A tab another window tore off and dropped onto this one.
+  onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn>;
+
+  // Cross-window sync for state each window keeps its own copy of (settings,
+  // theme, favorites): the writer persists, then tells everyone else to re-read.
+  broadcast(channel: string, payload?: unknown): void;
+  onBroadcast(
+    cb: (channel: string, payload?: unknown) => void
+  ): Promise<UnlistenFn>;
 
   // Auto-update. checkForUpdate/downloadUpdate kick off async work whose
   // progress arrives via onUpdaterEvent; installUpdate quits and swaps in the

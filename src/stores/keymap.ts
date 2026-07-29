@@ -24,6 +24,7 @@ import {
   clipboardWriteText,
 } from "../lib/pty";
 import { searchPaneId, openSearch, closeSearch } from "./terminal-search";
+import { getBackend } from "../backends";
 
 // Keystroke that makes Claude Code read an image straight from the OS clipboard
 // and drop it inline: Alt+V (ESC v) on Windows/Linux, Ctrl+V (0x16) on macOS —
@@ -96,6 +97,19 @@ export function createKeymap({
       allowInInput: true,
       label: "Toggle settings",
       run: () => toggleSettings(),
+    },
+    // Windows — ⌘N opens another independent window (its own tabs, its own
+    // terminals). The Window menu shows the same chord but doesn't register it,
+    // so the key reaches here like every other shortcut in this table.
+    {
+      id: "window.new",
+      key: "n",
+      ...cmd(),
+      byOS: kitty("n"),
+      label: "New window",
+      run: () => {
+        void getBackend().then((backend) => backend.newWindow());
+      },
     },
     // Tabs
     {

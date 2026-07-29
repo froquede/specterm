@@ -1,5 +1,6 @@
 import { createSignal } from "solid-js";
 import { getBackend } from "../backends";
+import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
 
 // User-tunable settings, persisted to localStorage so they survive restarts.
 // This is the first real "preferences" surface in specterm — the Settings panel
@@ -330,6 +331,8 @@ function persist() {
   } catch (_) {
     // localStorage unavailable — the change just won't survive this session.
   }
+  // Other windows hold their own copy of all this; tell them to re-read.
+  publishStoreChange("settings");
 }
 
 export function setUnfocusedOpacity(v: number) {
@@ -400,6 +403,31 @@ export function setLastBrowsedPath(v: string) {
   persist();
 }
 
+// Pull the stored values back into the signals after another window wrote them.
+// `lastBrowsedPath` is deliberately left alone: it's where *this* window's file
+// tree happens to be sitting, saved for the next launch — syncing it would yank
+// every other window's sidebar to wherever someone else just clicked.
+// Every persisted field belongs here except `lastBrowsedPath`. Missing one
+// doesn't fail loudly — it just makes that preference silently stop crossing
+// windows — so this reads the whole blob and assigns all of it.
+function reloadFromStorage() {
+  const p = load();
+  setUnfocusedOpacitySignal(p.unfocusedOpacity);
+  setWindowOpacitySignal(p.windowOpacity);
+  setStartupPathSignal(p.startupPath);
+  setTabBarCornerSignal(p.tabBarCorner);
+  setTabBarHeightSignal(p.tabBarHeight);
+  setTabBarAutoHideSignal(p.tabBarAutoHide);
+  setSidebarWidthSignal(p.sidebarWidth);
+  setRestoreLastSessionSignal(p.restoreLastSession);
+  setSessionRestoreModeSignal(p.sessionRestoreMode);
+  setClaudeAttentionModeSignal(p.claudeAttentionMode);
+  setClockEnabledSignal(p.clockEnabled);
+  setClockFormatSignal(p.clockFormat);
+  applyCssVars();
+  applyWindowOpacity();
+}
+
 // --- Session restore -------------------------------------------------------
 // Read at module load by stores/tabs.ts, which builds its initial state from the
 // saved session rather than restoring after the fact — a tab that appears and is
@@ -446,6 +474,7 @@ export function setSessionRestoreMode(v: SessionRestoreMode) {
 
 // Apply persisted values once at startup. Called from App's onMount.
 export function initSettings() {
+  registerStoreSync("settings", reloadFromStorage);
   applyCssVars();
   applyWindowOpacity();
 }
