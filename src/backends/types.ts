@@ -212,6 +212,9 @@ export interface Backend {
   takeWindowInit(): Promise<WindowInit>;
   // Open another window on the same app.
   newWindow(): Promise<void>;
+  // End the whole app, detached sessions and all. Distinct from closing a window,
+  // which with background sessions on parks it instead (see below).
+  quitApp(): Promise<void>;
   // Land a torn-off tab wherever the cursor released it: into another Specterm
   // window if one is under it, otherwise into a new window of its own. The host
   // decides, since only it can see the real cursor and every window's bounds.

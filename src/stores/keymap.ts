@@ -111,6 +111,31 @@ export function createKeymap({
         void getBackend().then((backend) => backend.newWindow());
       },
     },
+    // Quit the whole app — the one action that ends detached sessions (see the
+    // detached-session block in electron/main.cjs). It needs a keyboard route
+    // because on Linux and Windows there is otherwise none: the menu bar is
+    // hidden, Ctrl+Shift+Q is already Close Tab, and with detaching on, closing
+    // the window parks it and relaunching brings it back — so an app on a desktop
+    // that gives us no tray to put an icon in would have no way out at all.
+    //
+    // Alt+F4 because it is what the platform already means by "close this for
+    // good". Caveat worth knowing: most window managers grab Alt+F4 themselves and
+    // turn it into a close request, which this app answers by detaching. Where the
+    // WM does that, this binding never fires and the tray's Quit is the route.
+    // macOS is exempt — ⌘Q is native and already quits.
+    ...(isMac
+      ? []
+      : [
+          {
+            id: "app.quit",
+            key: "f4",
+            alt: true,
+            label: "Quit Specterm",
+            run: () => {
+              void getBackend().then((backend) => backend.quitApp());
+            },
+          } satisfies BindingSpec,
+        ]),
     // Tabs
     {
       id: "tab.new",

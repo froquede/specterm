@@ -37,6 +37,20 @@
   budget or crowd out settings and themes in the same storage.
 
 ### Fixed
+- **You can always get out.** Closing a window now detaches it, which left Linux
+  and Windows with no keyboard route to *quit*: the menu bar is hidden,
+  `Ctrl+Shift+Q` is already Close Tab, and on a desktop with no tray to put an
+  icon in, closing parked the session and relaunching brought it back — with no
+  way to end it. **Alt+F4** now quits. (Most window managers grab Alt+F4
+  themselves and turn it into a close request, which the app answers by
+  detaching; where that happens the tray's *Quit* is the route. macOS keeps native
+  `⌘Q`.)
+- **Shells could be left running with no way back.** A detaching window releases
+  its PTYs before serializing its screens — the right order, so nothing printed
+  in between is lost. But if the renderer never finished parking (it threw, or ran
+  past the host's timeout), those shells survived the window while no parked
+  session referenced them: alive, unreachable, and with nothing to reap them.
+  They are now tracked until parking claims them, and killed if it never does.
 - **Restored tabs and panes come back with their names.** A restored pane used to
   be handed the placeholder title, which the tab then adopted about 100ms after
   launch — so an automatically-titled tab reverted to "Terminal" and a pane

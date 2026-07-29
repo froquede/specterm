@@ -210,6 +210,9 @@ export class TauriBackend implements Backend {
 
   async newWindow(): Promise<void> {}
 
+  // Nothing outlives the window here, so closing it is already quitting.
+  async quitApp(): Promise<void> {}
+
   async dropTransfer(_tab: TransferTab): Promise<void> {}
 
   async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {

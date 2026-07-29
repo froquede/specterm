@@ -345,6 +345,133 @@ try {
     await kill(app2);
   }
 
+  // ======================================================================
+  // Part 3 — teardown safety: the two ways this can leak or trap you
+  // ======================================================================
+  // Its own profile and its own app, because both checks end the process and one
+  // of them deliberately wedges a renderer.
+  const safetyDir = path.join(os.tmpdir(), `specterm-safety-${Date.now()}`);
+  fs.mkdirSync(safetyDir, { recursive: true });
+  const safetyTicks = path.join(safetyDir, "ticks.txt");
+  const countSafetyTicks = () => {
+    try {
+      return fs
+        .readFileSync(safetyTicks, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
+
+  const app3 = await electron.launch({
+    args: [root, `--user-data-dir=${safetyDir}`],
+    cwd: root,
+  });
+  try {
+    const w = await app3.firstWindow();
+    await w.waitForSelector(".file-tree", { timeout: 20000 });
+    await w.waitForTimeout(3000);
+    await w.locator(".xterm-helper-textarea:visible").first().click({ force: true });
+    await w.keyboard.type(
+      `for i in $(seq 1 900); do echo tick >> ${safetyTicks}; sleep 1; done`
+    );
+    await w.keyboard.press("Enter");
+    await w.waitForTimeout(5000);
+    check(
+      "the safety probe is running",
+      countSafetyTicks() > 1,
+      `ticks=${countSafetyTicks()}`
+    );
+
+    // Wedge the renderer so it can never answer the host's detach request. The
+    // host detaches the PTYs before it serializes, so without the reaper these
+    // shells would survive the window and have nothing left that could reattach
+    // them — running forever with no route back.
+    await w.evaluate(() => {
+      setTimeout(() => {
+        const t = Date.now();
+        while (Date.now() - t < 25000) {
+          /* block the renderer past the host's detach timeout */
+        }
+      }, 0);
+    });
+    await sleep(500);
+    await app3.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.close();
+    });
+    // Past the 4s detach timeout, with room for the reap. Everything from here is
+    // asserted from the filesystem: with no window left and nothing parked the app
+    // quits, which drops Playwright's connection — so app.evaluate is not
+    // available to ask how many windows there are.
+    await sleep(12000);
+    const reaped = countSafetyTicks();
+    await sleep(5000);
+    check(
+      "shells detached but never parked are reaped, not orphaned",
+      countSafetyTicks() === reaped,
+      `ticks stayed at ${reaped}`
+    );
+  } finally {
+    await kill(app3);
+  }
+
+  // Alt+F4 must end the app rather than detach it — on Linux and Windows it is
+  // the only keyboard route out, since the menu bar is hidden and Ctrl+Shift+Q is
+  // Close Tab. (Under a real window manager the WM usually grabs Alt+F4 first and
+  // turns it into a close request; there is no WM under xvfb, so the binding is
+  // what gets exercised here.)
+  const quitTicks = path.join(safetyDir, "quit-ticks.txt");
+  const countQuitTicks = () => {
+    try {
+      return fs.readFileSync(quitTicks, "utf8").trim().split("\n").filter(Boolean).length;
+    } catch {
+      return 0;
+    }
+  };
+  const app4 = await electron.launch({
+    args: [root, `--user-data-dir=${safetyDir}`],
+    cwd: root,
+  });
+  try {
+    const w = await app4.firstWindow();
+    await w.waitForSelector(".file-tree", { timeout: 20000 });
+    await w.waitForTimeout(3000);
+    await w.locator(".xterm-helper-textarea:visible").first().click({ force: true });
+    await w.keyboard.type(
+      `for i in $(seq 1 900); do echo tick >> ${quitTicks}; sleep 1; done`
+    );
+    await w.keyboard.press("Enter");
+    await w.waitForTimeout(5000);
+    check("the quit probe is running", countQuitTicks() > 1, `ticks=${countQuitTicks()}`);
+
+    try {
+      await w.keyboard.press("Alt+F4");
+    } catch (_) {
+      // The press lands, the app quits, and Playwright can't acknowledge a target
+      // that has already gone — which is the outcome being tested for.
+    }
+    // Same as above: quitting drops the connection, so the assertion is that the
+    // shells stopped — which is the thing that distinguishes a quit from a detach,
+    // and the only one that matters here.
+    await sleep(9000);
+    const atQuit = countQuitTicks();
+    await sleep(5000);
+    check(
+      "Alt+F4 quits rather than detaching (the shells end)",
+      countQuitTicks() === atQuit,
+      `ticks stayed at ${atQuit}`
+    );
+  } finally {
+    await kill(app4);
+    try {
+      fs.rmSync(safetyDir, { recursive: true, force: true });
+    } catch (_) {
+      // temp dir
+    }
+  }
+
   const failed = results.filter((r) => !r.pass).length;
   const skipped = results.filter((r) => r.skipped).length;
   const passed = results.length - failed - skipped;

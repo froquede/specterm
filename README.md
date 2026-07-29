@@ -46,6 +46,7 @@ free for terminal control codes).
 | Paste an image inline into Claude Code | `⌃V` (Claude's own) | `Alt+V` |
 | Find in terminal | `⌘F` | `Ctrl+Shift+F` |
 | Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
+| Quit Specterm (ends detached sessions) | `⌘Q` | `Alt+F4` |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
 | Increase / decrease font size | `⌘=` / `⌘-` | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
 | Reset font size | `⌘0` | `Ctrl+Shift+0` |

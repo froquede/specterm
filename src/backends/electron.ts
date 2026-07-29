@@ -50,6 +50,7 @@ interface SpectermAPI {
   windowBoot: unknown;
   takeWindowInit(): Promise<WindowInit>;
   newWindow(): Promise<void>;
+  quitApp(): Promise<void>;
   dropTransfer(tab: TransferTab): Promise<void>;
   onAdoptTab(cb: (tab: TransferTab) => void): () => void;
   detachPtys(ids: number[]): Promise<void>;
@@ -217,6 +218,10 @@ export class ElectronBackend implements Backend {
 
   async newWindow(): Promise<void> {
     return this.api.newWindow();
+  }
+
+  async quitApp(): Promise<void> {
+    return this.api.quitApp();
   }
 
   async dropTransfer(tab: TransferTab): Promise<void> {

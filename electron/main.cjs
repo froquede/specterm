@@ -149,6 +149,37 @@ const windows = new Set();
 // detaching keeps the processes, the disk snapshot keeps the picture.
 const detachedSessions = [];
 
+// PTYs a window has detached but whose session has not been parked yet, keyed by
+// the window's webContents id.
+//
+// The gap is real and has to be cleaned up. detachWindow releases the PTYs
+// *before* it serializes the screens, which is the right order — from the release
+// on, output is buffered here instead of being sent to a window that is going away,
+// so nothing is lost and nothing arrives twice. But it means that if the renderer
+// never gets as far as parking (it threw, or it ran past the timeout below), the
+// shells are already detached: they survive `killPtysOwnedBy`, because they no
+// longer belong to that window, and no parked session references them. Live shells
+// with no route back and nothing to reap them — exactly the leak the pillars call
+// out. So the ids are held here until parking claims them, and reaped if it never
+// does.
+const detachedButUnparked = new Map();
+
+function reapUnparkedPtys(wcId) {
+  const ids = detachedButUnparked.get(wcId);
+  if (!ids) return;
+  detachedButUnparked.delete(wcId);
+  for (const id of ids) {
+    const instance = ptyInstances.get(id);
+    if (!instance) continue;
+    clearTransitTimer(instance);
+    if (!instance.disposed) {
+      instance.process.kill();
+      instance.disposed = true;
+    }
+    ptyInstances.delete(id);
+  }
+}
+
 // True from the first moment an explicit Quit is underway. Everything that would
 // otherwise keep the app alive — the close interception, window-all-closed —
 // checks it, because the whole point of Quit is that it wins.
@@ -583,6 +614,8 @@ function createWindow(opts = {}) {
   //
   // `parking` makes it a one-shot: the destroy below re-enters this handler, and
   // a second interception would deadlock the window shut.
+  const wcIdOf = (w) => (w.isDestroyed() ? -1 : w.webContents.id);
+
   let parking = false;
   win.on("close", (event) => {
     if (quitting || parking || !backgroundSessions) return;
@@ -594,7 +627,12 @@ function createWindow(opts = {}) {
     // steps — must not leave a window that can't be closed. Its shells die with
     // it in that case, which is exactly the old behavior.
     setTimeout(() => {
-      if (!win.isDestroyed()) win.destroy();
+      if (win.isDestroyed()) return;
+      // The renderer never answered. Anything it already detached is unreachable —
+      // no session will be parked to hold it — so it dies with the window rather
+      // than being left running with nothing pointing at it.
+      reapUnparkedPtys(wcIdOf(win));
+      win.destroy();
     }, DETACH_TIMEOUT_MS).unref?.();
   });
 
@@ -605,6 +643,10 @@ function createWindow(opts = {}) {
   win.on("closed", () => {
     windows.delete(win);
     windowInit.delete(wcId);
+    // Backstop for every path that reaches `closed` without parking — a crashed
+    // renderer, a destroy from somewhere else. A no-op once park-session has
+    // claimed the ids, which is the normal case.
+    reapUnparkedPtys(wcId);
 
     // Hand the snapshot on. Leaving it unclaimed would mean nothing writes it
     // until the next launch, which with detaching in play can be days.
@@ -1362,6 +1404,13 @@ ipcMain.handle("new-window", () => {
   createWindow().focus();
 });
 
+// The keyboard route out. `before-quit` does the rest: it sets `quitting`, which
+// stops the close handler from turning this into a detach, and kills the parked
+// shells.
+ipcMain.handle("quit-app", () => {
+  app.quit();
+});
+
 // Whether closing a window should detach it. The renderer owns the setting; this
 // is the push that keeps the close handler in step with it.
 ipcMain.on("set-background-sessions", (_event, enabled) => {
@@ -1390,7 +1439,8 @@ ipcMain.handle("detached-session-count", () => detachedSessions.length);
 // PTY has no deadline at all — it is waiting for the user to come back, which may
 // be tomorrow — so the timer must not be armed, and it's marked so an explicit
 // Quit can find it.
-ipcMain.handle("detach-ptys", (_event, ids) => {
+ipcMain.handle("detach-ptys", (event, ids) => {
+  const claimed = detachedButUnparked.get(event.sender.id) ?? new Set();
   for (const id of Array.isArray(ids) ? ids : [ids]) {
     const instance = ptyInstances.get(id);
     if (!instance) continue;
@@ -1399,7 +1449,9 @@ ipcMain.handle("detach-ptys", (_event, ids) => {
     instance.detached = true;
     instance.pending = [];
     instance.pendingBytes = 0;
+    claimed.add(id);
   }
+  detachedButUnparked.set(event.sender.id, claimed);
 });
 
 // A window reporting that it has handed everything over and can now be closed.
@@ -1411,6 +1463,9 @@ ipcMain.handle("detach-ptys", (_event, ids) => {
 ipcMain.handle("park-session", (event, payload) => {
   const win = windowOf(event);
   const tabs = payload?.tabs;
+  // Whatever this window detached is now owned by the session about to be parked,
+  // so it is no longer at risk of being reaped as an orphan.
+  detachedButUnparked.delete(event.sender.id);
   if (Array.isArray(tabs) && tabs.length) {
     detachedSessions.push({
       tabs,

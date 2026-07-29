@@ -140,6 +140,10 @@ contextBridge.exposeInMainWorld("specterm", {
 
   newWindow: () => ipcRenderer.invoke("new-window"),
 
+  // Ends the app and every detached session with it — see the Alt+F4 binding in
+  // stores/keymap.ts for why this needs a keyboard route.
+  quitApp: () => ipcRenderer.invoke("quit-app"),
+
   // Hand a serialized tab to wherever the cursor let go: another Specterm
   // window if one is under it, otherwise a new window of its own.
   dropTransfer: (tab) => ipcRenderer.invoke("drop-transfer", tab),
