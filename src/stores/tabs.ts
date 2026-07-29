@@ -7,6 +7,7 @@ import type {
   PaneType,
   PaneId,
   SplitNode,
+  SnapshotPane,
   SidebarView,
 } from "../types";
 import {
@@ -30,8 +31,9 @@ import {
   releaseTerminal,
   getTerminalInstance,
   getTerminalCwd,
+  registerRevival,
 } from "../lib/terminal-registry";
-import { releasePty } from "../lib/pty";
+import { detachPtys, releasePty } from "../lib/pty";
 import type { TransferTab } from "../backends/types";
 import {
   rebuildTab,
@@ -46,6 +48,14 @@ import {
 } from "../lib/session-snapshot";
 import { registerPendingRestore } from "../lib/session-restore";
 import {
+  captureScreens,
+  loadScreens,
+  saveScreens,
+  screenFor,
+  type ScreenStore,
+} from "../lib/session-screens";
+import {
+  flushSession,
   loadSession,
   popClosed,
   recordClosedPane,
@@ -158,6 +168,30 @@ function isRendererReload(): boolean {
   }
 }
 
+// Hand each hydrated pane the three things it inherits from its snapshot but
+// can't carry in the tree: the resumable session that was running in it, the
+// screen it had on it, and the name the shell had given it. Hydration has just
+// minted the pane id all three are keyed by, and the pane has not mounted yet, so
+// this is the one window in which they can be registered.
+//
+// `screens` is empty for the reopen-closed-tab path: the closed stack is 25 tabs
+// deep and keeping a screen for each would cost more storage than the whole rest
+// of the app. A reopened tab comes back named and in the right directory, with a
+// clean shell.
+function adoptSnapshotPanes(screens: ScreenStore) {
+  return (paneId: PaneId, pane: SnapshotPane) => {
+    if (pane.kind !== "terminal") return;
+    if (pane.session) registerPendingRestore(paneId, pane.session);
+    const screen = screenFor(pane, screens);
+    // Nothing to revive with — don't put an empty entry in the registry for the
+    // panes (markdown-only sessions, a snapshot from before this existed) that
+    // have neither.
+    if (screen || pane.title) {
+      registerRevival(paneId, { screen, title: pane.title });
+    }
+  };
+}
+
 // The saved "what was open" session, hydrated — or null when there is nothing to
 // restore, restore is switched off, or this is a renderer reload (the previous
 // shells are still alive in that case, and restoring would spawn a second set
@@ -166,7 +200,10 @@ function restoredTabs(): { tabs: Tab[]; activeTabId: TabId } | null {
   if (!restoreLastSession() || isRendererReload()) return null;
   const saved = loadSession();
   if (!saved) return null;
-  const tabs = saved.tabs.map((t) => hydrateTab(t, registerPendingRestore));
+  // Read once for the whole session rather than per pane: it's one JSON.parse of
+  // up to a couple of megabytes, and every pane about to be hydrated looks in it.
+  const adopt = adoptSnapshotPanes(loadScreens());
+  const tabs = saved.tabs.map((t) => hydrateTab(t, adopt));
   if (!tabs.length) return null;
   return { tabs, activeTabId: (tabs[saved.activeTabIndex] ?? tabs[0]).id };
 }
@@ -194,6 +231,21 @@ const [state, setStateRaw] = createSignal<AppState>({
 // whichever window happened to write last, not the session as a whole.
 let ownsSession = false;
 
+// Set once the snapshot written on the way out is final. Nothing may write after
+// that, and the reason is a race that quietly ruined the restore it was supposed
+// to protect:
+//
+// Tearing a window down kills its shells, and the renderer is still alive to see
+// each one exit. A pane whose process exits closes itself, and closing the last
+// pane of the last tab replaces it with a fresh empty terminal so the window is
+// never left blank. That new tab mounts, spawns, reports its directory — and the
+// *second* exit-time write (both `beforeunload` and `visibilitychange` fire on the
+// way out) saved that instead. The next launch then restored one blank tab, having
+// had the real session in storage moments earlier. Whether it happened at all came
+// down to how fast the shells died, which is why it looked like restore
+// "sometimes" worked.
+let sessionFrozen = false;
+
 function update(fn: (s: AppState) => AppState) {
   setStateRaw(fn(state()));
   // Every mutation funnels through here, so this is the one place the "what was
@@ -208,8 +260,9 @@ function scheduleSessionSave() {
   // Nothing reads the snapshot when restore is off, so don't build one. This is
   // the whole feature's cost for anyone who doesn't want it: a boolean check per
   // store write, and no timer, no serialization, no storage write ever. The same
-  // applies to a window that doesn't own the session — it never writes one.
-  if (!ownsSession || !restoreLastSession()) return;
+  // applies to a window that doesn't own the session — it never writes one, and to
+  // one that has already written its last (see sessionFrozen).
+  if (sessionFrozen || !ownsSession || !restoreLastSession()) return;
 
   saveSession(() => {
     const s = state();
@@ -221,13 +274,72 @@ function scheduleSessionSave() {
   });
 }
 
-// The working directory and any running session are read from the terminal
-// registry at snapshot time, and neither goes through the store — a `cd`, or a
-// provider spotting a Claude session, changes what should be saved without any
-// state write to trigger a save. App calls this as the window goes away so the
-// last snapshot reflects where the shells actually ended up.
+// Serializing every pane's screen is the one genuinely expensive part of a
+// snapshot, so it happens on the window's way out and nowhere else — which is
+// also the only moment it's worth anything, since a screen is only read back
+// after a restart. The throttle is for `visibilitychange`, which fires on a
+// minimize as well as on a quit: hiding the window twice in a second shouldn't
+// re-serialize everything twice.
+const SCREEN_CAPTURE_THROTTLE_MS = 2000;
+let lastScreenCapture = 0;
+
+function captureScreensNow() {
+  if (sessionFrozen || !ownsSession || !restoreLastSession()) return;
+  const now = Date.now();
+  if (now - lastScreenCapture < SCREEN_CAPTURE_THROTTLE_MS) return;
+  lastScreenCapture = now;
+
+  const s = state();
+  // Active tab first. The screen store has a byte budget, and when it runs out
+  // it drops from the end of this list — so what survives is what the user was
+  // actually looking at, not whichever tab happens to sit leftmost.
+  const tabs = [...s.tabs].sort(
+    (a, b) => Number(b.id === s.activeTabId) - Number(a.id === s.activeTabId)
+  );
+  const paneIds = tabs.flatMap((tab) =>
+    collectLeaves(tab.root)
+      .filter((leaf) => leaf.pane.kind === "terminal")
+      .map((leaf) => leaf.id)
+  );
+  saveScreens(captureScreens(paneIds));
+}
+
+// The working directory, any running session and the screen itself are read from
+// the terminal registry at snapshot time, and none of them go through the store —
+// a `cd`, a provider spotting a Claude session, or a build printing another line
+// all change what should be saved without any state write to trigger a save. App
+// calls this as the window goes away so the last snapshot reflects where the
+// shells actually ended up and what was on them.
+//
+// The layout goes out *first*, and synchronously, before the screens are touched.
+// Order matters because this runs while the process is being torn down and may not
+// get to finish: a layout with no screens restores every tab, split and directory
+// and just replays nothing, while screens with no layout restore nothing at all —
+// they're addressed by a layout that isn't there. So the cheap, indispensable half
+// is written before the expensive, optional one, and a kill in between costs the
+// scrollback rather than the session.
 export function captureSessionNow() {
   scheduleSessionSave();
+  flushSession();
+  captureScreensNow();
+}
+
+/**
+ * The last snapshot this window will ever write, then the door shuts.
+ *
+ * Separate from captureSessionNow because freezing is the whole point and must not
+ * happen on a checkpoint. `visibilitychange` fires on a *minimize* as well as on a
+ * quit, and freezing there would silently stop saving the session for a window
+ * that was only put out of the way. So the checkpoint path calls
+ * captureSessionNow and this one is reserved for genuine teardown: the window
+ * unloading, or detaching into the background.
+ */
+export function captureSessionOnExit() {
+  if (sessionFrozen) return;
+  scheduleSessionSave();
+  flushSession();
+  captureScreensNow();
+  sessionFrozen = true;
 }
 
 function getTabIndex(tabId: string): number {
@@ -401,16 +513,33 @@ export function useTabStore() {
     //     duplicate every tab and every shell in it.
     //
     // Idempotent: a renderer reload that finds tabs already there leaves them.
-    initWindow(transfer: TransferTab | null, sessionOwner = false) {
+    // `handover` is what the host had waiting for this window: one tab for a
+    // tear-off, or every tab of a background session being reattached. Either way
+    // it wins over the saved session — those panes hold PTYs that are still
+    // running, and restoring on top of them would spawn a second set.
+    initWindow(handover: TransferTab[] | TransferTab | null, sessionOwner = false) {
       if (state().tabs.length > 0) return;
 
-      if (transfer) {
-        const tab = rebuildTab(transfer);
-        update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
-        return tab;
+      // Set before the handover branch, not after it. Writing the snapshot and
+      // restoring from it are separate: a window handed its tabs must not restore
+      // on top of them, but it is still a perfectly good *writer* — and after a
+      // detach/reattach it is usually the only window there is.
+      ownsSession = sessionOwner;
+
+      const transfers = Array.isArray(handover)
+        ? handover
+        : handover
+          ? [handover]
+          : [];
+      if (transfers.length) {
+        const tabs = transfers.map(rebuildTab);
+        // A reattached window comes back on the tab it was left on. That isn't
+        // recorded separately: parkSession serializes the active tab first for
+        // exactly this reason, so it is always the one to land on.
+        update((s) => ({ ...s, tabs, activeTabId: tabs[0].id }));
+        return tabs[0];
       }
 
-      ownsSession = sessionOwner;
       const restored = sessionOwner ? restoredTabs() : null;
       if (restored) {
         update((s) => ({ ...s, ...restored }));
@@ -420,6 +549,54 @@ export function useTabStore() {
       const tab = createTerminalTab();
       update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
       return tab;
+    },
+
+    // Hand this whole window over to the host to hold while it's closed — the
+    // detach half of closing a window (see electron/main.cjs). The host is
+    // holding the close open until this resolves.
+    //
+    // Same release-then-serialize ordering as takeTab, and for the same reason:
+    // from the detach on, the host buffers each shell's output instead of sending
+    // it here, so everything printed up to that instant is in the serialized
+    // screen and everything after is in the buffer. Nothing is lost, nothing
+    // arrives twice — a build that keeps running while the window is closed picks
+    // up mid-line when it's reattached.
+    //
+    // The active tab goes first so the window comes back on the tab it was left
+    // on (see initWindow).
+    async detachWindow(): Promise<TransferTab[]> {
+      const s = state();
+      if (!s.tabs.length) return [];
+
+      const ordered = [...s.tabs].sort(
+        (a, b) => Number(b.id === s.activeTabId) - Number(a.id === s.activeTabId)
+      );
+
+      await detachPtys(ordered.flatMap((tab) => livePtyIds(tab.root)));
+
+      const transfers: TransferTab[] = [];
+      for (const tab of ordered) {
+        // Sequential: each flush waits on its own terminal's write queue, and the
+        // host is timing us.
+        const transfer = await serializeTab(tab);
+        if (transfer) transfers.push(transfer);
+      }
+
+      // Drop this window's terminals without killing the shells. Done after every
+      // screen is captured, so a serialize can't run against a disposed terminal.
+      for (const tab of ordered) releasePanesInTree(tab.root);
+
+      return transfers;
+    },
+
+    // The window that was writing the on-disk snapshot has closed and this one has
+    // inherited the job. Snapshot immediately: the outgoing owner's last write
+    // described *its* tabs, and until this window writes one the saved session is
+    // a picture of a window that no longer exists.
+    claimSession() {
+      if (ownsSession) return;
+      ownsSession = true;
+      captureSessionNow();
     },
 
     // A tab another window tore off and dropped onto this one.
@@ -630,13 +807,15 @@ export function useTabStore() {
     // Nothing here revives a process: the panes come back with the directory,
     // layout and titles they had, and their shells are new. A pane that was
     // running a recognized session comes back with the resume command queued —
-    // typed, or run, per the Settings choice.
+    // typed, or run, per the Settings choice. The screen doesn't come back (see
+    // adoptSnapshotPanes) — only a boot restore keeps screens.
     reopenLastClosed() {
       const entry = popClosed();
       if (!entry) return;
+      const adopt = adoptSnapshotPanes({});
 
       if (entry.kind === "tab") {
-        const tab = hydrateTab(entry.snapshot, registerPendingRestore);
+        const tab = hydrateTab(entry.snapshot, adopt);
         update((s) => {
           const tabs = [...s.tabs];
           // Back where it was, unless the strip has since shrunk past that slot.
@@ -651,7 +830,7 @@ export function useTabStore() {
         return tab.id;
       }
 
-      const leaf = hydrateNode(entry.snapshot, registerPendingRestore);
+      const leaf = hydrateNode(entry.snapshot, adopt);
       const s = state();
       const targetIdx = s.tabs.findIndex((t) => t.id === entry.tabId);
 

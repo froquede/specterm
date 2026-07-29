@@ -14,10 +14,17 @@
 //     so hydration mints new ones and rebuilds `activePaneId` from a positional
 //     index instead.
 //
-// What a snapshot *adds* over the live shape is the pane's true working
-// directory: the leaf's `cwd` is where the terminal was told to spawn, which
-// stops being true the moment the user cd's. The registry tracks the live
-// value, so we read it here, at capture time, while the terminal still exists.
+// What a snapshot *adds* over the live shape is everything about a pane that
+// lives on the terminal rather than in the tree, and can only be read while that
+// terminal still exists:
+//
+//   - its true working directory. The leaf's `cwd` is where the terminal was told
+//     to spawn, which stops being true the moment the user cd's.
+//   - the name the shell last gave it, so a restored pane and its tab come back
+//     called what they were called rather than "Terminal".
+//   - a key naming its screen in the screen store (lib/session-screens.ts). The
+//     screen itself deliberately isn't here: this snapshot is rewritten on every
+//     store change and a screen is three orders of magnitude bigger.
 
 import { nanoid } from "nanoid";
 import type {
@@ -48,6 +55,13 @@ function snapshotPane(paneId: string, pane: PaneType): SnapshotPane {
       // Filled in by the session providers (see stores/session-meta.ts). Absent
       // means "nothing resumable was running here", which is the common case.
       session: instance?.sessionMeta,
+      // The live pane id, which is what the screen store keys on. Recorded even
+      // when no screen has been captured yet — this snapshot is written on a
+      // debounce and the screens only when the window closes, and a pane id is
+      // stable for the pane's whole life, so the key written now is the key the
+      // screen will be filed under then. A key with nothing behind it simply
+      // restores an empty pane.
+      screenKey: paneId,
     };
   }
   return pane.kind === "markdown"
@@ -93,20 +107,22 @@ function hydratePane(pane: SnapshotPane): PaneType {
     : { kind: "text", filePath: pane.filePath };
 }
 
-// Hydration mints the pane ids, so it's also the only place that can say which
-// *new* pane inherits a snapshot's resumable session. Rather than reach into the
-// restore registry from here — which would make a pure transform depend on the
-// pty layer — it reports each one and lets the caller decide. Callers that don't
-// care (a preview, a test) simply pass nothing.
+// Everything a hydrated pane needs that the live tree can't hold — its resumable
+// session, its screen, its name — is addressed by pane id, and hydration is what
+// mints those ids. So it's the only place that can hand those things to the layers
+// that own them. Rather than reach into the restore registry and the terminal
+// registry from here — which would make a pure transform depend on the pty layer —
+// it reports each pane as it's built and lets the caller decide. Callers that
+// don't care (a preview, a test) simply pass nothing.
+export type PaneReporter = (paneId: PaneId, pane: SnapshotPane) => void;
+
 export function hydrateNode(
   node: SnapshotNode,
-  onSession?: (paneId: PaneId, session: SessionMeta) => void
+  onPane?: PaneReporter
 ): SplitNode {
   if (node.type === "leaf") {
     const id = nanoid(8);
-    if (node.pane.kind === "terminal" && node.pane.session) {
-      onSession?.(id, node.pane.session);
-    }
+    onPane?.(id, node.pane);
     return { type: "leaf", id, pane: hydratePane(node.pane) };
   }
   return {
@@ -114,16 +130,16 @@ export function hydrateNode(
     id: nanoid(8),
     direction: node.direction,
     ratio: node.ratio,
-    first: hydrateNode(node.first, onSession),
-    second: hydrateNode(node.second, onSession),
+    first: hydrateNode(node.first, onPane),
+    second: hydrateNode(node.second, onPane),
   };
 }
 
 export function hydrateTab(
   snapshot: TabSnapshot,
-  onSession?: (paneId: PaneId, session: SessionMeta) => void
+  onPane?: PaneReporter
 ): Tab {
-  const root = hydrateNode(snapshot.root, onSession);
+  const root = hydrateNode(snapshot.root, onPane);
   const leaves = collectLeaves(root);
   return {
     id: nanoid(8),
@@ -146,11 +162,34 @@ export function hydrateTab(
 // throw inside the render, and a boot that can't render is a boot that can't be
 // fixed from the UI.
 
+const isOptionalString = (v: unknown) => v === undefined || typeof v === "string";
+
+// `resumeCommand` is the one field in a snapshot that gets *typed into a shell*,
+// so it's the one that has to be checked rather than trusted. A whole session is
+// rejected on a bad field instead of being repaired: the alternative is guessing
+// what a corrupt resume command meant, at a prompt.
+function isSessionMeta(v: unknown): v is SessionMeta {
+  if (v === undefined) return true; // no session here — the common case
+  if (!v || typeof v !== "object") return false;
+  const m = v as Record<string, unknown>;
+  return (
+    typeof m.provider === "string" &&
+    typeof m.id === "string" &&
+    typeof m.resumeCommand === "string" &&
+    (m.exact === undefined || typeof m.exact === "boolean")
+  );
+}
+
 function isSnapshotPane(v: unknown): v is SnapshotPane {
   if (!v || typeof v !== "object") return false;
   const p = v as Record<string, unknown>;
   if (p.kind === "terminal") {
-    return typeof p.cwd === "string";
+    return (
+      typeof p.cwd === "string" &&
+      isOptionalString(p.title) &&
+      isOptionalString(p.screenKey) &&
+      isSessionMeta(p.session)
+    );
   }
   if (p.kind === "markdown" || p.kind === "text") {
     return typeof p.filePath === "string";

@@ -53,6 +53,11 @@ contextBridge.exposeInMainWorld("specterm", {
   releasePty: (ids) => ipcRenderer.invoke("release-pty", ids),
 
   adoptPty: (id, cols, rows) => ipcRenderer.invoke("adopt-pty", id, cols, rows),
+
+  // Detach handover: like releasePty, but with no reclaim deadline — a detached
+  // shell is waiting for the user to come back, not for a window that is already
+  // booting. See the "detach-ptys" handler in main.cjs.
+  detachPtys: (ids) => ipcRenderer.invoke("detach-ptys", ids),
   ptyCwd: (id) => ipcRenderer.invoke("pty-cwd", id),
 
   // What's running inside each pane, and named env vars off a process, for the
@@ -144,6 +149,33 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.on("adopt-tab", handler);
     return () => ipcRenderer.removeListener("adopt-tab", handler);
   },
+
+  // The host is closing this window and is holding the close until we hand our
+  // shells over. Answer with parkSession — always, even with nothing to park, or
+  // the window waits out the host's timeout before it disappears.
+  onDetachRequest: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("detach-window", handler);
+    return () => ipcRenderer.removeListener("detach-window", handler);
+  },
+
+  parkSession: (tabs) => ipcRenderer.invoke("park-session", { tabs }),
+
+  // Bring a parked session back into a window. False when nothing was parked.
+  reattachSession: () => ipcRenderer.invoke("reattach-session"),
+
+  detachedSessionCount: () => ipcRenderer.invoke("detached-session-count"),
+
+  // The window that was writing the on-disk session snapshot has gone away and
+  // this one has inherited the job. Only one window ever holds it.
+  onSessionOwnership: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("session-ownership", handler);
+    return () => ipcRenderer.removeListener("session-ownership", handler);
+  },
+
+  setBackgroundSessions: (enabled) =>
+    ipcRenderer.send("set-background-sessions", enabled),
 
   // Cross-window state sync (settings, theme, favorites).
   broadcast: (channel, payload) =>

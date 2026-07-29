@@ -116,8 +116,11 @@ export interface WindowBoot {
 
 // State a window collects once, on mount — the half that needs a round trip.
 export interface WindowInit {
-  // A tab torn off another window that this one was created to host.
-  tab: TransferTab | null;
+  // The tabs this window was created to host: one, for a tab torn off another
+  // window, or all of them for a background session being reattached. Empty when
+  // there is nothing waiting (which the boot flags already said, so this is only
+  // ever read by a window that expects something).
+  tabs: TransferTab[];
 }
 
 export interface Backend {
@@ -215,6 +218,36 @@ export interface Backend {
   dropTransfer(tab: TransferTab): Promise<void>;
   // A tab another window tore off and dropped onto this one.
   onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn>;
+
+  // --- Detaching (closing a window without stopping its shells) -------------
+  //
+  // The host holds a closing window open until the renderer has serialized its
+  // tabs and handed the PTYs over, then parks the payload until a window
+  // reattaches it. Backends with no such notion never fire onDetachRequest, and
+  // their windows close the way they always did.
+
+  // Give up ownership of these PTYs with no reclaim deadline — they are waiting
+  // for the user, not for a window that is already booting. (releasePty is the
+  // tear-off version, and is reaped if nothing claims it.)
+  detachPtys(ids: number[]): Promise<void>;
+  // The host is closing this window and is waiting on us. Must always be
+  // answered with parkSession, even with nothing to park.
+  onDetachRequest(cb: () => void): Promise<UnlistenFn>;
+  // Hand this window's tabs to the host to hold while it's closed, and let the
+  // close complete. An empty list just completes the close.
+  parkSession(tabs: TransferTab[]): Promise<void>;
+  // Whether closing a window should detach it at all. The setting lives in the
+  // renderer; the host has to decide in its close handler, so it's pushed.
+  setBackgroundSessions(enabled: boolean): void;
+  // Bring a parked session back into a window. False when nothing was parked.
+  reattachSession(): Promise<boolean>;
+  // How many sessions are currently parked, so the UI can offer the reattach only
+  // when there is one.
+  detachedSessionCount(): Promise<number>;
+  // The window that was writing the on-disk session snapshot has closed and this
+  // one has inherited the job. Fires at most once per handover, and only one
+  // window holds it at a time.
+  onSessionOwnership(cb: () => void): Promise<UnlistenFn>;
 
   // Cross-window sync for state each window keeps its own copy of (settings,
   // theme, favorites): the writer persists, then tells everyone else to re-read.

@@ -18,6 +18,7 @@
 import { createSignal } from "solid-js";
 import type { SnapshotNode, TabSnapshot } from "../types";
 import { isSnapshotNode, isTabSnapshot } from "../lib/session-snapshot";
+import { clearScreens } from "../lib/session-screens";
 import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
 
 // A closed tab, with where it sat so reopening puts it back in place rather
@@ -287,4 +288,8 @@ export function clearSession() {
   } catch (_) {
     // Nothing to do — a stale snapshot is harmless, it's only read on boot.
   }
+  // The screens are the other half of the same session (lib/session-screens.ts)
+  // and they're the expensive half to leave lying around — dropping the layout
+  // without them would strand a couple of megabytes nothing can ever read.
+  clearScreens();
 }

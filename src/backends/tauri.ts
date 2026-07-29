@@ -205,7 +205,7 @@ export class TauriBackend implements Backend {
   // backend has no counterpart for. These stubs keep the single window it does
   // have working exactly as before — it just never gets a second one.
   async takeWindowInit(): Promise<WindowInit> {
-    return { tab: null };
+    return { tabs: [] };
   }
 
   async newWindow(): Promise<void> {}
@@ -213,6 +213,31 @@ export class TauriBackend implements Backend {
   async dropTransfer(_tab: TransferTab): Promise<void> {}
 
   async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
+  // Nothing here can outlive the window, so a close is a close: the detach
+  // request never fires and the rest are inert.
+  async detachPtys(_ids: number[]): Promise<void> {}
+
+  async onDetachRequest(_cb: () => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
+  async parkSession(_tabs: TransferTab[]): Promise<void> {}
+
+  setBackgroundSessions(_enabled: boolean): void {}
+
+  async reattachSession(): Promise<boolean> {
+    return false;
+  }
+
+  async detachedSessionCount(): Promise<number> {
+    return 0;
+  }
+
+  // One window, which owns the session from the start and never hands it on.
+  async onSessionOwnership(_cb: () => void): Promise<UnlistenFn> {
     return () => {};
   }
 

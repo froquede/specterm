@@ -35,6 +35,18 @@ export async function releasePty(ids: number[]): Promise<void> {
   return backend.releasePty(ids);
 }
 
+/**
+ * Hand these PTYs over with no reclaim deadline — the detach half of closing a
+ * window. Unlike releasePty (a tear-off, where an unclaimed PTY means the
+ * handover broke and is reaped in seconds), a detached shell is waiting for the
+ * user to come back, which may be tomorrow.
+ */
+export async function detachPtys(ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  const backend = await getBackend();
+  return backend.detachPtys(ids);
+}
+
 // Take ownership of a released PTY, resized to this pane. Returns whatever the
 // process printed while it had no window, so the adopting terminal can replay it
 // after the scrollback and before live output resumes.

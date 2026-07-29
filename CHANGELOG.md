@@ -1,5 +1,68 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Closing a window no longer stops your shells.** Close one and it *detaches*:
+  the shells keep running, and a tray icon (or *Window → Reattach Detached
+  Session*) brings the window back with every pane on the same live process —
+  nothing restarted, nothing replayed, a build that kept going picks up
+  mid-line. The app stays running with no windows open for exactly as long as
+  something is parked, and relaunching it reattaches too, which is the way back
+  on desktops that give us no tray to put an icon in. **Quit** — from the tray
+  menu or the app menu — is the one thing that ends them, and it says so.
+
+  This is the tmux-server half of the analogy, and it is worth being precise
+  about which half: tmux keeps sessions across days because its shells are
+  children of a daemon that never died, not because anything is restored. Same
+  here, with the same limit — an explicit Quit, a crash or a reboot takes the
+  processes with it, and what survives that is the snapshot below.
+
+  Settings → *Keep shells running when a window closes* turns it off, and then
+  closing a window closes it for good.
+- **Restore brings the screen back, not just the layout.** Each pane's screen and
+  scrollback is serialized when the window closes and replayed on the next
+  launch, under a dim `──── restored ────` rule with the new shell's prompt
+  below it. The rule is there because the shell underneath genuinely is new —
+  the one that printed everything above died with the app — and without a line
+  saying so a restored pane reads as a live session you could Ctrl-C.
+
+  This is what tmux-resurrect does with `@resurrect-capture-pane-contents`, and
+  it composes with the resumable-session support already here: a pane that was
+  running Claude Code comes back showing the transcript *and* with
+  `claude --resume <id>` typed at the prompt under it.
+
+  Bounded on purpose — a quarter of a megabyte per pane, two megabytes in total,
+  active tab first — so a pane that ran a huge build log can't spend the whole
+  budget or crowd out settings and themes in the same storage.
+
+### Fixed
+- **Restored tabs and panes come back with their names.** A restored pane used to
+  be handed the placeholder title, which the tab then adopted about 100ms after
+  launch — so an automatically-titled tab reverted to "Terminal" and a pane
+  renamed by `/rename` lost its name entirely. The name is now part of the
+  snapshot, and the first title the new shell reports (`user@host: ~/dir`,
+  emitted a beat after boot and derived from nothing you did) is swallowed rather
+  than applied. Every title after that is a real event and still goes through.
+- **Quitting could overwrite the saved session with a single blank tab.** Tearing
+  a window down kills its shells while the renderer is still alive to see each
+  one exit; a pane whose process exits closes itself, and closing the last one
+  replaces it with a fresh empty terminal. The second of the two exit-time saves
+  then wrote *that* as the session. The snapshot written on the way out is now
+  final — nothing can write after it — while a minimize still checkpoints
+  normally. Whether this bit you came down to how fast your shells died, which is
+  why restore only "sometimes" worked.
+- **The saved session stopped being written once the first window closed.**
+  Ownership of the snapshot was claimed once per launch and never released, so
+  after the owning window went away nothing wrote it again for the rest of the
+  process's life. It is now handed to a window that is still open, and a window
+  that was handed its tabs (a tear-off, or a reattached session) can own it too —
+  writing the snapshot and restoring from it are separate questions, and
+  conflating them was the bug.
+- **A corrupt snapshot can no longer put an unchecked command at your prompt.**
+  The resumable-session block in a saved snapshot was typed into a shell without
+  ever being validated. Every field is now checked before it is read back.
+
 ## 0.16.0 — 2026-07-29
 
 ### Added

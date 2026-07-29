@@ -116,6 +116,10 @@ export interface TerminalInstance {
   // pane's callback, re-wired on every attach.
   title: string;
   onTitle: ((title: string) => void) | null;
+  // Set on a pane revived from a saved session, and cleared by the first title
+  // the new shell reports. See the onTitleChange handler for why that first
+  // report is swallowed rather than applied.
+  titleRestored: boolean;
   // The shell's working directory, kept current so a new pane can open where
   // this one is. Seeded with the spawn cwd, then updated from OSC 7 when the
   // shell reports it and re-read from the shell process after each command
@@ -309,6 +313,48 @@ function takeAdoption(paneId: string): TerminalAdoption | undefined {
   return adoption;
 }
 
+// --- reviving a terminal across a restart ----------------------------------
+// The restore twin of an adoption, and the difference between them is the whole
+// point: an adopted pane inherits a PTY that is still running, so its screen is
+// replayed only to avoid a blank window. A *revived* pane inherits a screen whose
+// process is gone — the app quit and took every shell with it — so the replay is
+// all there is, and a brand new shell starts underneath it.
+//
+// Both halves of what the tree can't carry travel here: the screen, and the name
+// the shell had given the pane. Registered by the store as it hydrates the saved
+// session (stores/tabs.ts), claimed on the pane's first attach.
+
+export interface TerminalRevival {
+  /** Serialized screen + scrollback, or "" for a pane whose screen wasn't kept. */
+  screen: string;
+  /** The shell's last OSC title, if the snapshot had one. */
+  title?: string;
+}
+
+const pendingRevivals = new Map<string, TerminalRevival>();
+
+export function registerRevival(paneId: string, revival: TerminalRevival) {
+  pendingRevivals.set(paneId, revival);
+}
+
+function takeRevival(paneId: string): TerminalRevival | undefined {
+  const revival = pendingRevivals.get(paneId);
+  pendingRevivals.delete(paneId);
+  return revival;
+}
+
+/** Drop a pane's pending revival without using it (the pane went away). */
+export function cancelRevival(paneId: string) {
+  pendingRevivals.delete(paneId);
+}
+
+// Drawn between a replayed screen and the shell that starts under it. Without a
+// line saying so, a revived pane reads as a live session: it ends in a prompt
+// with your last command above it, and nothing on screen distinguishes the shell
+// that printed all of that (dead, since the app quit) from the one now waiting
+// for input. Dim, one line, and it scrolls away like any other output.
+const REVIVED_MARKER = "\r\n\x1b[90m──── restored ────\x1b[0m\r\n";
+
 // Snapshot a terminal's screen + scrollback as the escape sequences that
 // reproduce it, so the window adopting this PTY doesn't start from a blank
 // screen. Colors and attributes survive; the internal state of a full-screen
@@ -337,6 +383,52 @@ export async function serializeTerminal(paneId: string): Promise<string> {
   } catch {
     // Serialization failed — hand over a live PTY with no history rather than
     // failing the whole move.
+    return "";
+  } finally {
+    addon.dispose();
+  }
+}
+
+/**
+ * The same snapshot, taken synchronously and bounded — what session restore saves
+ * when the window is closing.
+ *
+ * Three things differ from serializeTerminal above, and each is a consequence of
+ * this copy outliving the process that produced it:
+ *
+ *   - **No flush.** The one caller runs inside `beforeunload`, where nothing
+ *     asynchronous is guaranteed to finish. Bytes still queued in xterm's write
+ *     buffer are lost; they're the last few of an idle pane, and the alternative
+ *     is losing the whole screen.
+ *   - **No alternate buffer.** If the pane is sitting in vim or htop, that program
+ *     will not be running after the restart. Replaying its frozen screen would
+ *     paint a full-screen app that answers no keys; the normal buffer underneath
+ *     — the shell scrollback — is the honest thing to bring back.
+ *   - **No modes.** The mode block re-asserts things like mouse tracking and
+ *     bracketed paste on behalf of the program that set them. Replaying
+ *     `?1002h` from a dead htop would leave the *new* shell reporting every mouse
+ *     move as input. The new shell sets its own modes.
+ *
+ * `scrollback` bounds how many rows above the viewport are included, so the
+ * caller can trade history for bytes (see lib/session-screens.ts).
+ */
+export function serializeTerminalSync(
+  paneId: string,
+  scrollback: number
+): string {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed) return "";
+  const addon = new SerializeAddon();
+  try {
+    instance.term.loadAddon(addon);
+    return addon.serialize({
+      scrollback,
+      excludeAltBuffer: true,
+      excludeModes: true,
+    });
+  } catch {
+    // Serialization failed — this pane restores empty rather than taking the
+    // rest of the session's screens down with it.
     return "";
   } finally {
     addon.dispose();
@@ -639,6 +731,7 @@ export async function createTerminalInstance(
     // startup path, then to home main-side.
     cwd: opts?.initialCwd || startupPath() || "",
     cwdReportedByShell: false,
+    titleRestored: false,
     sessionMeta: undefined,
   };
 
@@ -673,6 +766,19 @@ export async function createTerminalInstance(
   // whichever pane is currently mounted. Wiring it on the instance (not in a
   // pane closure) keeps `/rename` titles flowing after splits/drag remounts.
   term.onTitleChange((title) => {
+    // A revived pane opens with the name it had when the app closed, and then the
+    // shell that just started under it announces its own title within a beat —
+    // `user@host: ~/proj`, derived from nothing the user did. Applying that would
+    // wipe the restored name before it had been on screen long enough to read,
+    // which is what made restored tabs look like they came back unnamed.
+    //
+    // So exactly one title is swallowed: the boot shell's first. Every one after
+    // it is a real event — a `cd`, a `/rename`, a program setting its own name —
+    // and goes through normally.
+    if (instance.titleRestored) {
+      instance.titleRestored = false;
+      return;
+    }
     instance.title = title;
     instance.onTitle?.(title);
   });
@@ -697,6 +803,17 @@ export async function attachTerminal(
   }
 
   const { term, fitAddon } = instance;
+
+  // A pane restored from a saved session claims its screen and its name here,
+  // before anything is drawn or pushed to the title bar. Only a first attach can
+  // have one — the early-return paths below both require a container this
+  // instance has already been opened in, and a revival is registered once, at
+  // hydration, for a pane that has never mounted.
+  const revival = takeRevival(paneId);
+  if (revival?.title) {
+    instance.title = revival.title;
+    instance.titleRestored = true;
+  }
 
   // Re-point the title callback at the pane mounting now, and immediately push
   // the cached title so a remounted (split/drag) title-bar shows the current
@@ -846,6 +963,16 @@ export async function attachTerminal(
     instance.onTitle?.(adoption.title);
     if (adoption.scrollback) term.write(adoption.scrollback);
   } else {
+    // Replay the screen this pane had when the app closed, before the new shell
+    // has printed anything, so it opens looking as it was left. No gate is needed
+    // the way the adoption path above needs one: `spawnPty` is awaited and the
+    // output listener is wired after it, so there is no live output yet to race
+    // the replay. The write is queued ahead of every chunk that follows.
+    if (revival?.screen) {
+      term.write(revival.screen);
+      term.write(REVIVED_MARKER);
+    }
+
     // Spawn PTY. instance.cwd is the directory inherited from the pane this one
     // was split from, or the configured startup directory (Settings) for the
     // boot terminal; blank → undefined, and the main process falls back to the
@@ -1026,6 +1153,7 @@ export function releaseTerminal(paneId: string) {
   // once it has. Only the kill is different: the shell is being handed on, and
   // the pty id is what the destination window adopts.
   cancelPendingRestore(paneId);
+  cancelRevival(paneId);
   clearAttention(paneId);
   forgetPane(paneId);
 
@@ -1043,9 +1171,11 @@ export function releaseTerminal(paneId: string) {
 }
 
 export function destroyTerminal(paneId: string) {
-  // A pane closed before it ever mounted still has its resume command queued —
-  // drop it, or the map holds entries for panes that no longer exist.
+  // A pane closed before it ever mounted still has its resume command and its
+  // restored screen queued — drop both, or the maps hold entries (and, for the
+  // screen, a few hundred kilobytes) for a pane that no longer exists.
   cancelPendingRestore(paneId);
+  cancelRevival(paneId);
 
   // A pane that was waiting on the user has just stopped existing — the flag
   // and the timer behind it go with it.

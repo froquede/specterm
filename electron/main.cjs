@@ -8,6 +8,8 @@ const {
   session,
   net,
   screen,
+  Tray,
+  nativeImage,
 } = require("electron");
 const path = require("path");
 const os = require("os");
@@ -127,6 +129,41 @@ let nextPtyId = 1;
 // window resolved from a request's sender, or fans out across these.
 const windows = new Set();
 
+// === Detached sessions (closing a window doesn't stop your shells) ===========
+//
+// The tmux model, as far as it can be taken without a separate daemon: closing a
+// window *detaches* it instead of killing it. Its shells keep running in this
+// process with no window attached, and the tray is how you get back to them.
+//
+// This is deliberately built on the tear-off protocol rather than beside it. A
+// tear-off already reduces a window's tabs to `{ptyId, scrollback, title}` per
+// pane, hands the PTYs over with no owner, buffers their output, and rebuilds
+// real panes around them somewhere else. A detach is that same handover with
+// nobody on the receiving end yet — so the payload is parked here and delivered
+// to whichever window reattaches it.
+//
+// What it does *not* survive is this process dying: an explicit Quit, a crash, a
+// reboot. Those fall back to the on-disk restore (lib/session-screens.ts +
+// stores/history.ts), which replays the screens and reopens the layout with fresh
+// shells. So there are two mechanisms, and they cover different failures:
+// detaching keeps the processes, the disk snapshot keeps the picture.
+const detachedSessions = [];
+
+// True from the first moment an explicit Quit is underway. Everything that would
+// otherwise keep the app alive — the close interception, window-all-closed —
+// checks it, because the whole point of Quit is that it wins.
+let quitting = false;
+
+// Whether closing a window detaches it. Owned by the renderer (it's a Settings
+// toggle, persisted in localStorage) and pushed here on boot and on change,
+// because this process is the one that has to decide, in the close handler,
+// before any renderer is asked anything. Defaults to on: it's what the feature
+// is for, and the toggle exists so an app that refuses to go away is never a
+// surprise you can't undo.
+let backgroundSessions = true;
+
+let tray = null;
+
 // Per-window filesystem watcher, keyed by webContents id: each window watches
 // for its own sidebar, and its watcher dies with it.
 const fsWatchers = new Map();
@@ -145,7 +182,20 @@ const windowInit = new Map();
 // restore the saved session a second time (which would duplicate every tab and
 // every shell in it).
 let updateCheckClaimed = false;
-let sessionClaimed = false;
+
+// Which window writes the on-disk session snapshot. Exactly one may — every
+// window shares one localStorage, so without an owner the last one to touch a tab
+// would overwrite the snapshot with only its own.
+//
+// A wc id rather than a boolean, because ownership has to be *released*: the
+// owner is a window, and windows close. It used to be a one-shot flag, which meant
+// that once the first window was gone nothing wrote the snapshot again for the
+// rest of the process's life — invisible until detaching made a window closing and
+// the app surviving an ordinary thing, at which point a reattached session stopped
+// being saved at all. Null means unclaimed and the next window takes it; when the
+// owner goes away it's handed to a window that is still open (see the `closed`
+// handler in createWindow).
+let sessionOwnerWcId = null;
 
 // The flags stamped into a window's launch arguments, read back by preload.cjs.
 //
@@ -154,21 +204,29 @@ let sessionClaimed = false;
 // mangling embedded quotes. There are no quotes here to mangle, and the result
 // is still legible in a process list.
 function windowBootArg(opts) {
-  const hasTab = Boolean(opts.tab);
+  // One torn-off tab, or every tab of a reattached session — either way the
+  // renderer must take the handover path and *not* restore the saved session on
+  // top of it.
+  const hasTab = Boolean(opts.tab) || Boolean(opts.tabs?.length);
   const autoCheckUpdates = !updateCheckClaimed;
-  // A window created to host a torn-off tab is never the session owner: it has
-  // its tab already, and restoring on top of it would be nonsense.
-  const ownsSession = !sessionClaimed && !hasTab;
+  // Owning the snapshot and restoring from it are two different questions, and
+  // conflating them was a bug. `hasTab` answers the second: a window handed its
+  // tabs must not restore on top of them. It says nothing about the first — a
+  // reattached session is the continuation of the window that owned the snapshot,
+  // and after a detach it may be the only window there is, so it had better keep
+  // writing one.
+  const ownsSession = sessionOwnerWcId === null;
 
   updateCheckClaimed = true;
-  if (ownsSession) sessionClaimed = true;
 
   const bit = (b) => (b ? "1" : "0");
-  return (
-    `--specterm-boot=hasTab=${bit(hasTab)},` +
-    `autoCheckUpdates=${bit(autoCheckUpdates)},` +
-    `ownsSession=${bit(ownsSession)}`
-  );
+  return {
+    ownsSession,
+    arg:
+      `--specterm-boot=hasTab=${bit(hasTab)},` +
+      `autoCheckUpdates=${bit(autoCheckUpdates)},` +
+      `ownsSession=${bit(ownsSession)}`,
+  };
 }
 
 // Windows whose renderer has finished loading and is listening for "open-path".
@@ -259,12 +317,26 @@ if (!singleInstanceOk) {
     if (win) {
       if (win.isMinimized()) win.restore();
       win.focus();
+      return;
     }
+    // Running in the background with every window closed: launching Specterm
+    // again is the most obvious way to ask for it back, and it's the way that
+    // still works when the desktop gave us no tray to put an icon in. Without
+    // this, the second launch would hand off to us and then exit, leaving the
+    // user with no window and no route to their shells.
+    reattachSession();
   });
 }
 
 const WINDOW_WIDTH = 1200;
 const WINDOW_HEIGHT = 800;
+
+// How long a closing window is given to serialize its tabs and hand its PTYs
+// over. Generous: it is the time to walk a handful of split trees and flush each
+// terminal's write queue, and the cost of being too impatient is killing shells
+// the user expected to find again. The cost of being too patient is a window that
+// takes a moment to vanish, once, when a renderer has already broken.
+const DETACH_TIMEOUT_MS = 4000;
 
 // Where a torn-off tab's new window should sit: centered on the drop point, but
 // nudged back inside the display it landed on so no window opens with its title
@@ -296,6 +368,100 @@ function killPtysOwnedBy(wc) {
   }
 }
 
+// Kill the PTYs of every parked session. Called on an explicit Quit: a detached
+// shell is only alive because this process is, and Quit means it isn't any more.
+// Deliberately narrower than "kill everything" — a PTY mid-tear-off between two
+// windows is also unowned, and this is not the thing that reaps those.
+function killDetachedPtys() {
+  for (const [id, instance] of ptyInstances) {
+    if (!instance.detached) continue;
+    clearTransitTimer(instance);
+    if (!instance.disposed) {
+      instance.process.kill();
+      instance.disposed = true;
+    }
+    ptyInstances.delete(id);
+  }
+  detachedSessions.length = 0;
+}
+
+// The tray exists for exactly as long as it's the only way back to something:
+// while at least one session is parked. No parked sessions, no tray icon — this
+// is a terminal, not a background service, and an icon that never does anything
+// is just clutter in someone's status bar.
+function updateTray() {
+  if (quitting || detachedSessions.length === 0) {
+    tray?.destroy();
+    tray = null;
+    return;
+  }
+
+  if (!tray) {
+    const icon = nativeImage.createFromPath(path.join(__dirname, "tray.png"));
+    try {
+      // macOS wants a small monochrome image it can tint for the light/dark menu
+      // bar; everywhere else the colour icon at its native size is right.
+      tray = new Tray(
+        process.platform === "darwin"
+          ? (() => {
+              const small = icon.resize({ width: 16, height: 16 });
+              small.setTemplateImage(true);
+              return small;
+            })()
+          : icon
+      );
+    } catch (err) {
+      // No status bar / no tray host (a bare X session, some Wayland setups).
+      // The sessions stay parked and reachable by relaunching the app, which
+      // hits the single-instance path below and reattaches them.
+      console.warn("[tray] unavailable:", err?.message ?? err);
+      return;
+    }
+    tray.on("click", () => reattachSession());
+    tray.on("double-click", () => reattachSession());
+  }
+
+  const n = detachedSessions.length;
+  const label = `Specterm — ${n} detached session${n === 1 ? "" : "s"}`;
+  tray.setToolTip(label);
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label, enabled: false },
+      { type: "separator" },
+      {
+        label: n === 1 ? "Reattach session" : "Reattach a session",
+        click: () => reattachSession(),
+      },
+      { label: "New window", click: () => createWindow().focus() },
+      { type: "separator" },
+      {
+        // The one path that actually stops the shells, so it says so.
+        label: "Quit Specterm (ends detached shells)",
+        click: () => {
+          quitting = true;
+          killDetachedPtys();
+          updateTray();
+          app.quit();
+        },
+      },
+    ])
+  );
+}
+
+// Give a parked session a window again. Its panes adopt the PTYs that have been
+// running all along, so nothing restarted and nothing was replayed — this is a
+// reattach, not a restore. Falls back to a plain window when nothing is parked,
+// so it's safe to wire to a bare "open a window" gesture (the tray, the dock).
+function reattachSession() {
+  const parked = detachedSessions.shift();
+  const win = parked
+    ? createWindow({ tabs: parked.tabs, bounds: parked.bounds })
+    : createWindow();
+  updateTray();
+  win.focus();
+  return win;
+}
+
 function createWindow(opts = {}) {
   const isMac = process.platform === "darwin";
 
@@ -313,7 +479,7 @@ function createWindow(opts = {}) {
 
   // Flags first: they go into the renderer's own launch arguments, so they have
   // to be decided before the BrowserWindow exists.
-  const bootArg = windowBootArg(opts);
+  const boot = windowBootArg(opts);
 
   const win = new BrowserWindow({
     width: WINDOW_WIDTH,
@@ -329,15 +495,22 @@ function createWindow(opts = {}) {
       // Read synchronously by the preload (see preload.cjs). This is the whole
       // point: the renderer knows what kind of window it is at module load, so
       // the first terminal spawns without waiting on a round trip to us.
-      additionalArguments: [bootArg],
+      additionalArguments: [boot.arg],
     },
   });
 
   windows.add(win);
 
-  // The torn-off tab, if any — fetched separately because it carries a
-  // serialized screen and has no business on a command line.
-  if (opts.tab) windowInit.set(win.webContents.id, { tab: opts.tab });
+  // Recorded now that there is a webContents to name: the flag was decided above,
+  // before this window existed, and releasing ownership later needs to know which
+  // window held it.
+  if (boot.ownsSession) sessionOwnerWcId = win.webContents.id;
+
+  // The tabs this window was created to host, if any — fetched separately because
+  // they carry serialized screens and have no business on a command line. One tab
+  // for a tear-off, all of them for a session being reattached.
+  const initTabs = opts.tabs?.length ? opts.tabs : opts.tab ? [opts.tab] : null;
+  if (initTabs) windowInit.set(win.webContents.id, { tabs: initTabs });
 
   // Remove menu bar entirely
   win.setMenuBarVisibility(false);
@@ -399,6 +572,32 @@ function createWindow(opts = {}) {
     if (!win.isDestroyed()) win.flashFrame(false);
   });
 
+  // --- detach-on-close ----------------------------------------------------
+  //
+  // A close is intercepted once, to give the renderer a chance to hand its shells
+  // over before its terminals are destroyed. It can't be done from the renderer's
+  // own `beforeunload`: serializing a screen has to wait on xterm's write queue,
+  // and nothing asynchronous is guaranteed to finish there. So the close is
+  // cancelled, the renderer is asked to park itself, and the real close happens
+  // when it reports back (see the "park-session" handler).
+  //
+  // `parking` makes it a one-shot: the destroy below re-enters this handler, and
+  // a second interception would deadlock the window shut.
+  let parking = false;
+  win.on("close", (event) => {
+    if (quitting || parking || !backgroundSessions) return;
+    if (win.webContents.isDestroyed() || win.webContents.isCrashed()) return;
+    event.preventDefault();
+    parking = true;
+    win.webContents.send("detach-window");
+    // A renderer that never answers — hung script, a throw between the two
+    // steps — must not leave a window that can't be closed. Its shells die with
+    // it in that case, which is exactly the old behavior.
+    setTimeout(() => {
+      if (!win.isDestroyed()) win.destroy();
+    }, DETACH_TIMEOUT_MS).unref?.();
+  });
+
   // Tear down everything this window owned. `closed` fires after the webContents
   // is gone, so capture its id up front.
   const wc = win.webContents;
@@ -406,6 +605,18 @@ function createWindow(opts = {}) {
   win.on("closed", () => {
     windows.delete(win);
     windowInit.delete(wcId);
+
+    // Hand the snapshot on. Leaving it unclaimed would mean nothing writes it
+    // until the next launch, which with detaching in play can be days.
+    if (sessionOwnerWcId === wcId) {
+      sessionOwnerWcId = null;
+      const heir = openWindows().find((w) => w !== win);
+      if (heir) {
+        sessionOwnerWcId = heir.webContents.id;
+        heir.webContents.send("session-ownership");
+      }
+    }
+
     killPtysOwnedBy(wc);
     const watcher = fsWatchers.get(wcId);
     if (watcher) {
@@ -1142,13 +1353,74 @@ ipcMain.handle("set-window-opacity", (event, value) => {
 // know came in through its launch arguments.
 ipcMain.handle("take-window-init", (event) => {
   const id = event.sender.id;
-  const init = windowInit.get(id) ?? { tab: null };
+  const init = windowInit.get(id) ?? { tabs: [] };
   windowInit.delete(id);
   return init;
 });
 
 ipcMain.handle("new-window", () => {
   createWindow().focus();
+});
+
+// Whether closing a window should detach it. The renderer owns the setting; this
+// is the push that keeps the close handler in step with it.
+ipcMain.on("set-background-sessions", (_event, enabled) => {
+  backgroundSessions = enabled !== false;
+});
+
+// Reattach a parked session into a window. The tray is the obvious route, but it
+// can't be the only one: a desktop may give us no status bar to put an icon in
+// (some Wayland compositors), and with another window already open the tray is
+// otherwise the single way back to a session detached behind it. Also on the
+// Window menu, so it's discoverable and keyboard-reachable.
+ipcMain.handle("reattach-session", () => {
+  if (detachedSessions.length === 0) return false;
+  reattachSession();
+  return true;
+});
+
+// How many sessions are parked — so the UI can offer the reattach only when there
+// is something to reattach.
+ipcMain.handle("detached-session-count", () => detachedSessions.length);
+
+// The detach half of a close: like release-pty, but with no reclaim deadline.
+//
+// That difference is the whole reason this exists. A released PTY is reaped after
+// TRANSIT_RECLAIM_MS because an unclaimed one means a tear-off broke. A *detached*
+// PTY has no deadline at all — it is waiting for the user to come back, which may
+// be tomorrow — so the timer must not be armed, and it's marked so an explicit
+// Quit can find it.
+ipcMain.handle("detach-ptys", (_event, ids) => {
+  for (const id of Array.isArray(ids) ? ids : [ids]) {
+    const instance = ptyInstances.get(id);
+    if (!instance) continue;
+    clearTransitTimer(instance);
+    instance.wc = null;
+    instance.detached = true;
+    instance.pending = [];
+    instance.pendingBytes = 0;
+  }
+});
+
+// A window reporting that it has handed everything over and can now be closed.
+//
+// This is the second half of the intercepted close above, and it is also the only
+// place a window is really destroyed on that path — including when the payload is
+// empty (nothing worth keeping, or the renderer failed to build one), because a
+// close that was cancelled has to complete either way.
+ipcMain.handle("park-session", (event, payload) => {
+  const win = windowOf(event);
+  const tabs = payload?.tabs;
+  if (Array.isArray(tabs) && tabs.length) {
+    detachedSessions.push({
+      tabs,
+      // Reattach where it was. A session that comes back in a different corner of
+      // the screen than it left reads as a new window, not the one you closed.
+      bounds: win && !win.isDestroyed() ? win.getBounds() : undefined,
+    });
+    updateTray();
+  }
+  if (win && !win.isDestroyed()) win.destroy();
 });
 
 // The landing half of a tear-off. The renderer has already released the tab's
@@ -1250,6 +1522,15 @@ function buildAppMenu() {
           accelerator: isMac ? "Cmd+N" : "Ctrl+Shift+N",
           registerAccelerator: false,
           click: () => createWindow().focus(),
+        },
+        {
+          // Enabled state is fixed at build time, and the menu is only rebuilt at
+          // startup — so this stays clickable and simply does nothing when there
+          // is no parked session, rather than being greyed out at the moment the
+          // user needs it. reattachSession() falls back to a plain window, which
+          // is a defensible answer to "reattach" with nothing to reattach.
+          label: "Reattach Detached Session",
+          click: () => reattachSession(),
         },
         { type: "separator" },
         { role: "minimize" },
@@ -1720,10 +2001,26 @@ app.whenReady().then(() => {
   createWindow();
 });
 
+// An explicit Quit is the one thing that ends a detached session, so it is also
+// the one place their shells are killed. Setting `quitting` first is what stops
+// the close handler intercepting the windows on their way out — a Quit that got
+// itself deferred into a detach would never finish.
+app.on("before-quit", () => {
+  quitting = true;
+  killDetachedPtys();
+  updateTray();
+});
+
 // Safety net. Each window already kills its own PTYs and closes its own watcher
 // on `closed`; what can still be here is a PTY caught mid-transfer between two
 // windows, which has no owner to clean it up.
 app.on("window-all-closed", () => {
+  // Detached sessions are the reason to stay alive with no windows open: their
+  // shells are still running and the tray is how you get back to them. Nothing
+  // else is torn down here either — the PTYs are the point, and the watchers
+  // belong to windows that already closed their own.
+  if (!quitting && detachedSessions.length > 0) return;
+
   for (const [, instance] of ptyInstances) {
     clearTransitTimer(instance);
     if (!instance.disposed) {
@@ -1742,6 +2039,9 @@ app.on("window-all-closed", () => {
 
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow();
+    // Clicking the dock icon with a session parked means "give me my shells
+    // back", not "give me a blank terminal". Falls through to a plain window when
+    // there is nothing parked.
+    reattachSession();
   }
 });

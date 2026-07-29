@@ -144,6 +144,7 @@ interface Persisted {
   sidebarWidth: number;
   restoreLastSession: boolean;
   sessionRestoreMode: SessionRestoreMode;
+  backgroundSessions: boolean;
   claudeAttentionMode: ClaudeAttentionMode;
   clockEnabled: boolean;
   clockFormat: string;
@@ -159,6 +160,7 @@ const DEFAULTS: Persisted = {
   tabBarAutoHide: false,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   restoreLastSession: true,
+  backgroundSessions: true,
   sessionRestoreMode: SESSION_RESTORE_MODE_DEFAULT,
   claudeAttentionMode: CLAUDE_ATTENTION_MODE_DEFAULT,
   clockEnabled: false,
@@ -212,6 +214,10 @@ function load(): Persisted {
         typeof p.restoreLastSession === "boolean"
           ? p.restoreLastSession
           : DEFAULTS.restoreLastSession,
+      backgroundSessions:
+        typeof p.backgroundSessions === "boolean"
+          ? p.backgroundSessions
+          : DEFAULTS.backgroundSessions,
       sessionRestoreMode: SESSION_RESTORE_MODES.includes(p.sessionRestoreMode)
         ? p.sessionRestoreMode
         : DEFAULTS.sessionRestoreMode,
@@ -256,6 +262,9 @@ const [sidebarWidth, setSidebarWidthSignal] = createSignal(initial.sidebarWidth)
 const [restoreLastSession, setRestoreLastSessionSignal] = createSignal(
   initial.restoreLastSession
 );
+const [backgroundSessions, setBackgroundSessionsSignal] = createSignal(
+  initial.backgroundSessions
+);
 const [sessionRestoreMode, setSessionRestoreModeSignal] =
   createSignal<SessionRestoreMode>(initial.sessionRestoreMode);
 const [claudeAttentionMode, setClaudeAttentionModeSignal] =
@@ -273,6 +282,7 @@ export {
   tabBarAutoHide,
   sidebarWidth,
   restoreLastSession,
+  backgroundSessions,
   sessionRestoreMode,
   claudeAttentionMode,
   clockEnabled,
@@ -322,6 +332,7 @@ function persist() {
         tabBarAutoHide: tabBarAutoHide(),
         sidebarWidth: sidebarWidth(),
         restoreLastSession: restoreLastSession(),
+        backgroundSessions: backgroundSessions(),
         sessionRestoreMode: sessionRestoreMode(),
         claudeAttentionMode: claudeAttentionMode(),
         clockEnabled: clockEnabled(),
@@ -420,6 +431,8 @@ function reloadFromStorage() {
   setTabBarAutoHideSignal(p.tabBarAutoHide);
   setSidebarWidthSignal(p.sidebarWidth);
   setRestoreLastSessionSignal(p.restoreLastSession);
+  setBackgroundSessionsSignal(p.backgroundSessions);
+  pushBackgroundSessions();
   setSessionRestoreModeSignal(p.sessionRestoreMode);
   setClaudeAttentionModeSignal(p.claudeAttentionMode);
   setClockEnabledSignal(p.clockEnabled);
@@ -436,6 +449,32 @@ function reloadFromStorage() {
 export function setRestoreLastSession(v: boolean) {
   setRestoreLastSessionSignal(v);
   persist();
+}
+
+// --- Background sessions ---------------------------------------------------
+//
+// Whether closing a window detaches it — its shells keep running with no window
+// attached, and a tray icon is how you get back to them (see the detached-session
+// block in electron/main.cjs). This is the only setting the *host* has to know
+// about rather than read: the decision is made in its window-close handler,
+// before any renderer could be asked anything. So every change is pushed, and so
+// is the current value at startup.
+//
+// Fire-and-forget on purpose: a backend with no such notion (Tauri, a single
+// window that can't outlive itself) no-ops it, and a failure here must never
+// stop a settings write.
+function pushBackgroundSessions() {
+  void getBackend()
+    .then((backend) => backend.setBackgroundSessions(backgroundSessions()))
+    .catch(() => {
+      /* Host doesn't do detaching — closing a window just closes it. */
+    });
+}
+
+export function setBackgroundSessions(v: boolean) {
+  setBackgroundSessionsSignal(v);
+  persist();
+  pushBackgroundSessions();
 }
 
 // --- Clock -----------------------------------------------------------------
@@ -477,4 +516,7 @@ export function initSettings() {
   registerStoreSync("settings", reloadFromStorage);
   applyCssVars();
   applyWindowOpacity();
+  // The host defaults to detaching; tell it the persisted answer before the first
+  // window can be closed.
+  pushBackgroundSessions();
 }

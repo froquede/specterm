@@ -29,6 +29,8 @@ import {
   CLOCK_FORMAT_MAX,
   restoreLastSession,
   setRestoreLastSession,
+  backgroundSessions,
+  setBackgroundSessions,
   sessionRestoreMode,
   setSessionRestoreMode,
   type SessionRestoreMode,
@@ -675,8 +677,29 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             />
           </div>
           <div class="settings-hint">
-            Brings back the tabs, splits and directories you had open. The
-            shells are new — nothing you were running is restarted.
+            Brings back the tabs, splits, directories and screens you had open,
+            with the names they had. The shells are new — nothing you were
+            running is restarted.
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="background-sessions">
+              Keep shells running when a window closes
+            </label>
+            <input
+              id="background-sessions"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={backgroundSessions()}
+              onChange={(e) => setBackgroundSessions(e.currentTarget.checked)}
+            />
+          </div>
+          <div class="settings-hint">
+            Closing a window detaches it instead of ending it: your shells keep
+            running and a tray icon brings them back, exactly where they were.
+            Quit — from the tray menu or the app menu — is what actually ends
+            them. Off means closing a window closes it for good, and a restart
+            falls back to reopening the tabs above.
           </div>
 
           <div class="settings-row">

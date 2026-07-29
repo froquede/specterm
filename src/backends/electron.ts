@@ -52,6 +52,13 @@ interface SpectermAPI {
   newWindow(): Promise<void>;
   dropTransfer(tab: TransferTab): Promise<void>;
   onAdoptTab(cb: (tab: TransferTab) => void): () => void;
+  detachPtys(ids: number[]): Promise<void>;
+  onDetachRequest(cb: () => void): () => void;
+  parkSession(tabs: TransferTab[]): Promise<void>;
+  setBackgroundSessions(enabled: boolean): void;
+  reattachSession(): Promise<boolean>;
+  detachedSessionCount(): Promise<number>;
+  onSessionOwnership(cb: () => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
@@ -218,6 +225,34 @@ export class ElectronBackend implements Backend {
 
   async onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
     return this.api.onAdoptTab(cb);
+  }
+
+  async detachPtys(ids: number[]): Promise<void> {
+    return this.api.detachPtys(ids);
+  }
+
+  async onDetachRequest(cb: () => void): Promise<UnlistenFn> {
+    return this.api.onDetachRequest(cb);
+  }
+
+  async parkSession(tabs: TransferTab[]): Promise<void> {
+    return this.api.parkSession(tabs);
+  }
+
+  setBackgroundSessions(enabled: boolean): void {
+    this.api.setBackgroundSessions(enabled);
+  }
+
+  async reattachSession(): Promise<boolean> {
+    return this.api.reattachSession();
+  }
+
+  async detachedSessionCount(): Promise<number> {
+    return this.api.detachedSessionCount();
+  }
+
+  async onSessionOwnership(cb: () => void): Promise<UnlistenFn> {
+    return this.api.onSessionOwnership(cb);
   }
 
   broadcast(channel: string, payload?: unknown): void {
