@@ -265,6 +265,14 @@ function createWindow() {
     mainWindow?.webContents.send("fullscreen-change", false);
   });
 
+  // The user is here now, so stop asking for them. The badge count itself is
+  // left alone — the renderer owns it and clears it as panes are visited; this
+  // only stops the taskbar flash, which on Windows would otherwise keep going
+  // after the window is already in front.
+  mainWindow.on("focus", () => {
+    mainWindow?.flashFrame(false);
+  });
+
   mainWindow.on("closed", () => {
     mainWindow = null;
   });
@@ -860,6 +868,29 @@ ipcMain.handle("set-window-opacity", (_event, value) => {
   if (process.platform === "linux") {
     setX11WindowOpacity(mainWindow, opacity);
   }
+});
+
+// How many panes are waiting on the user, shown outside the window — the point
+// of the badge is the case where the window isn't the one you're looking at.
+//
+// Two mechanisms, because no single one covers the three platforms:
+//   - setBadgeCount: the number on the macOS dock icon, and the Unity launcher
+//     count on the Linux desktops that implement it. Silently false elsewhere,
+//     which is why it isn't the only thing here.
+//   - flashFrame: the taskbar-entry highlight on Windows and most Linux WMs
+//     (macOS bounces the dock icon). Only ever raised while the window is
+//     unfocused — flashing the window someone is already typing in is noise —
+//     and always lowered when it isn't needed, since on Windows it otherwise
+//     keeps flashing until the window is activated.
+ipcMain.handle("set-attention-badge", (_event, count) => {
+  const n = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
+  try {
+    app.setBadgeCount(n);
+  } catch (_) {
+    /* No badge support on this desktop — the flash below still applies. */
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.flashFrame(n > 0 && !mainWindow.isFocused());
 });
 
 // === Application menu ===

@@ -130,6 +130,12 @@ export interface Backend {
   // Whole-window alpha (0–1); values below 1 let the desktop show through.
   // A no-op on backends/platforms that can't honor it.
   setWindowOpacity(value: number): Promise<void>;
+  // How many panes are waiting on the user (see stores/attention). Surfaced on
+  // whatever the OS gives us to say so from outside the window — a dock badge,
+  // a flashing taskbar entry — because a pane can be waiting while the whole
+  // app is behind a browser. 0 clears it. A no-op wherever the platform has
+  // nothing to show.
+  setAttentionBadge(count: number): Promise<void>;
 
   // Auto-update. checkForUpdate/downloadUpdate kick off async work whose
   // progress arrives via onUpdaterEvent; installUpdate quits and swaps in the

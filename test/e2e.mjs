@@ -1901,6 +1901,77 @@ try {
   await win.locator(".tab-settings").click();
   await win.waitForTimeout(400);
 
+  // 19c) A pane that has stopped and is waiting flags its tab.
+  //
+  // Driven through the exact route (the OSC the Claude Code hooks write), not
+  // the heuristic: the sequence is the contract, so a shell can stand in for
+  // claude and the assertion is about the wiring — parse, flag, draw, clear —
+  // rather than about timing. The heuristic's own transition needs a real
+  // session working for seconds and would test the constants, not the feature.
+  //
+  // The sequence is emitted from a background job a few seconds out, and the
+  // test walks away to another tab first: a pane the user is looking at is
+  // deliberately never flagged, so firing it in the foreground would prove
+  // nothing.
+  if (WIN) {
+    skip("a waiting pane flags its tab", "no printf / /dev/tty on Windows");
+  } else {
+    const tabIdOf = (sel) =>
+      win.evaluate((s) => document.querySelector(s)?.getAttribute("data-tab-id") ?? null, sel);
+    const attentionKind = (id) =>
+      win.evaluate(
+        (t) =>
+          document
+            .querySelector(`.tab[data-tab-id="${t}"] .tab-attention`)
+            ?.getAttribute("data-kind") ?? null,
+        id
+      );
+
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(1800);
+    const waitingTab = await tabIdOf(".tab.active");
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(
+      `(sleep 3; printf '\\033]1337;Attention;kind=permission\\007') &`
+    );
+    await win.keyboard.press("Enter");
+
+    // Leave for a new tab, so the sequence lands in a pane nobody is watching.
+    await win.locator(".tab-new").click();
+    const bystanderTab = await tabIdOf(".tab.active");
+    await win.waitForTimeout(4500);
+
+    const kind = await attentionKind(waitingTab);
+    check(
+      "a pane that stops and waits flags its tab",
+      kind === "permission",
+      `kind=${kind}`
+    );
+    check(
+      "only the waiting tab is flagged",
+      (await attentionKind(bystanderTab)) === null,
+      `bystander=${await attentionKind(bystanderTab)}`
+    );
+
+    // Going to the pane is the acknowledgement — nothing else to dismiss.
+    await win.locator(`.tab[data-tab-id="${waitingTab}"]`).click();
+    await win.waitForTimeout(600);
+    check(
+      "focusing the pane clears the flag",
+      (await attentionKind(waitingTab)) === null,
+      `kind=${await attentionKind(waitingTab)}`
+    );
+
+    // Leave the tab count as it was found, so the history checks below count
+    // from the same baseline they always did.
+    await win.keyboard.press(CLOSE_TAB_KEY);
+    await win.waitForTimeout(600);
+    await win.locator(`.tab[data-tab-id="${bystanderTab}"]`).click();
+    await win.waitForTimeout(400);
+    await win.keyboard.press(CLOSE_TAB_KEY);
+    await win.waitForTimeout(600);
+  }
+
   // 20) A pane running Claude Code remembers which session it was, so closing
   // the tab records how to pick it back up.
   //

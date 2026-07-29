@@ -19,8 +19,9 @@ import {
   livePaneIds,
   setSessionMeta,
 } from "../terminal-registry";
-import { detect as detectClaude } from "./claude";
-import { sessionRestoreMode } from "../../stores/settings";
+import { detect as detectClaude, isRunning as claudeIsRunning } from "./claude";
+import { setPaneClaudeRunning, setProbeRequest } from "../claude-attention";
+import { sessionRestoreMode, claudeAttentionMode } from "../../stores/settings";
 
 // Slow on purpose. A session id doesn't change while a session runs, so this is
 // only ever racing the user closing a pane seconds after starting something —
@@ -37,17 +38,29 @@ async function pollOnce() {
   // (a big process table, a loaded machine) just skips a beat.
   if (running) return;
 
-  // Two cheap ways out before touching the host at all:
+  // One scan, two consumers, and each can be switched off independently:
   //
-  //  - The user turned resumable sessions off, so nothing consumes what this
-  //    would find. "Ignore them" means don't do the work, not do it and discard.
-  //  - The window isn't visible. Sessions are identified so they can be written
-  //    into a snapshot when a pane closes or the app quits, and neither happens
-  //    while nobody is looking — a hidden window has no reason to keep walking
-  //    process trees. Anything missed is picked up on the next visible tick, and
-  //    the quit path re-polls explicitly.
-  if (sessionRestoreMode() === "off") return;
-  if (typeof document !== "undefined" && document.hidden) return;
+  //  - Resumable sessions want the session *id*, to write into a snapshot.
+  //  - The attention heuristic (lib/claude-attention) wants only the live fact
+  //    of whether a `claude` process is in the pane at all, to tell a Claude
+  //    turn ending from any other command finishing.
+  //
+  // Either one alone is reason enough to walk the process table; neither means
+  // don't walk it. "Off" means don't do the work, not do it and discard.
+  const forRestore = sessionRestoreMode() !== "off";
+  const forAttention = claudeAttentionMode() === "heuristic";
+  if (!forRestore && !forAttention) return;
+
+  // A hidden window is a cheap way out for the restore side: ids are written
+  // into a snapshot when a pane closes or the app quits, and neither happens
+  // while nobody is looking — anything missed is picked up on the next visible
+  // tick, and the quit path re-polls explicitly. The attention side is the
+  // exact opposite case, so it doesn't take this exit: a window nobody is
+  // looking at is precisely where a waiting pane needs to be noticed, and the
+  // flag has to be up before the user comes back to it.
+  if (!forAttention && typeof document !== "undefined" && document.hidden) {
+    return;
+  }
 
   running = true;
   try {
@@ -68,6 +81,8 @@ async function pollOnce() {
     await Promise.all(
       [...byPty.entries()].map(async ([ptyId, paneId]) => {
         const procs = descendants[ptyId] ?? [];
+        if (forAttention) setPaneClaudeRunning(paneId, claudeIsRunning(procs));
+        if (!forRestore) return;
         const known = getTerminalInstance(paneId)?.sessionMeta;
         const found = await detectClaude(procs, getTerminalCwd(paneId), known);
         if (found !== known) setSessionMeta(paneId, found);
@@ -83,6 +98,9 @@ async function pollOnce() {
 
 export function startSessionProviders() {
   if (timer !== null) return;
+  // Let a pane that starts working like a Claude pane pull the next scan
+  // forward, instead of waiting out the interval (see lib/claude-attention).
+  setProbeRequest(() => void pollOnce());
   // A first pass shortly after boot catches the sessions that were already
   // running when the app opened, without competing with startup for the CPU.
   timer = window.setTimeout(function tick() {
@@ -92,6 +110,7 @@ export function startSessionProviders() {
 }
 
 export function stopSessionProviders() {
+  setProbeRequest(null);
   if (timer !== null) {
     clearTimeout(timer);
     timer = null;

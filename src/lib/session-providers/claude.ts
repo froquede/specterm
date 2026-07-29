@@ -72,6 +72,19 @@ function isClaude(proc: ProcessInfo): boolean {
 }
 
 /**
+ * Is a Claude Code session running in this pane *right now*?
+ *
+ * Distinct from `detect` below, whose answer is deliberately sticky (a session
+ * you just quit is still resumable). The attention heuristic needs the opposite
+ * — the live fact — so a `make` running in a pane where claude was closed an
+ * hour ago isn't mistaken for a turn ending. Free to ask: the caller already
+ * has the process list.
+ */
+export function isRunning(descendants: ProcessInfo[]): boolean {
+  return descendants.some(isClaude);
+}
+
+/**
  * How Claude Code names the directory holding a project's transcripts: the
  * absolute path with every separator turned into a dash, so /home/me/dev
  * becomes -home-me-dev.
