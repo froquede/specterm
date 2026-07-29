@@ -1,7 +1,8 @@
 import { createSignal, For, Show, onMount, onCleanup } from "solid-js";
 import { getBackend, type UnlistenFn } from "../backends";
 import { shortcutLabel } from "../lib/platform";
-import { tabBarSide } from "../stores/settings";
+import { clockEnabled, tabBarSide } from "../stores/settings";
+import Clock from "./Clock";
 import {
   draggingTabId,
   setDraggingTabId,
@@ -10,6 +11,8 @@ import {
 } from "../stores/tab-drag";
 import { draggingPaneId, dropTabId } from "../stores/pane-drag";
 import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
+import { paneAttention, type AttentionKind } from "../stores/attention";
+import { collectLeaves } from "../lib/split-tree";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -36,6 +39,27 @@ interface TabBarProps {
 // a click. Tabs have no dedicated drag handle (unlike panes' title-bar), so a
 // plain click must not trigger a reorder.
 const DRAG_THRESHOLD = 4;
+
+// Is anything in this tab waiting on the user, and if so what's the most urgent
+// of it? A tab is only ever a summary of its panes: the dot says "there is
+// something in here", the pane title-bars inside say which pane. A permission
+// prompt outranks a finished turn — one blocks until answered, the other waits
+// patiently — so with both open the chip shows the prompt.
+function tabAttention(tab: Tab): AttentionKind | undefined {
+  let found: AttentionKind | undefined;
+  for (const leaf of collectLeaves(tab.root)) {
+    const kind = paneAttention(leaf.id);
+    if (kind === "permission") return kind;
+    found ??= kind;
+  }
+  return found;
+}
+
+const ATTENTION_TITLE: Record<AttentionKind, string> = {
+  permission: "Waiting for your answer",
+  idle: "Finished — waiting for you",
+  bell: "Rang the terminal bell",
+};
 
 // Gear glyph as a single evenodd path (Material "settings"): the center circle
 // is a cut-out, so it reads as an outline when stroked (fill none) and as a
@@ -283,6 +307,15 @@ export default function TabBar(props: TabBarProps) {
               }}
               onPointerDown={(e) => onTabPointerDown(e, tab.id)}
             >
+              <Show when={tabAttention(tab)} keyed>
+                {(kind) => (
+                  <span
+                    class="tab-attention"
+                    data-kind={kind}
+                    title={ATTENTION_TITLE[kind]}
+                  />
+                )}
+              </Show>
               <Show
                 when={props.renamingTabId === tab.id}
                 fallback={
@@ -331,6 +364,11 @@ export default function TabBar(props: TabBarProps) {
       {/* Flexible draggable strip: fills the empty space so the window can be
           moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
       <div class="tab-drag-region" />
+      {/* Optional clock, at the far end from the tabs. Mounted only when it's
+          switched on, so when it's off there is no timer running at all. */}
+      <Show when={clockEnabled()}>
+        <Clock />
+      </Show>
     </div>
   );
 }

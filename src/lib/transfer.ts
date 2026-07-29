@@ -22,7 +22,7 @@ import {
 // Returns null when a node has nothing transferable left — a terminal pane whose
 // PTY never spawned or already died. A split with one surviving side collapses
 // into that side, mirroring how closePane prunes the tree.
-function serializeNode(node: SplitNode): TransferNode | null {
+async function serializeNode(node: SplitNode): Promise<TransferNode | null> {
   if (node.type === "leaf") {
     const pane = node.pane;
     if (pane.kind === "markdown") {
@@ -38,14 +38,16 @@ function serializeNode(node: SplitNode): TransferNode | null {
       pane: {
         kind: "terminal",
         ptyId: instance.ptyId,
-        scrollback: serializeTerminal(node.id),
+        scrollback: await serializeTerminal(node.id),
         title: instance.title,
       },
     };
   }
 
-  const first = serializeNode(node.first);
-  const second = serializeNode(node.second);
+  // Sequential, not Promise.all: each flush waits on its own terminal's write
+  // queue, and there are at most a handful of panes in a tab.
+  const first = await serializeNode(node.first);
+  const second = await serializeNode(node.second);
   if (first && second) {
     return {
       type: "split",
@@ -59,8 +61,8 @@ function serializeNode(node: SplitNode): TransferNode | null {
 }
 
 /** Snapshot a whole tab for transfer. Null when none of its panes can travel. */
-export function serializeTab(tab: Tab): TransferTab | null {
-  const root = serializeNode(tab.root);
+export async function serializeTab(tab: Tab): Promise<TransferTab | null> {
+  const root = await serializeNode(tab.root);
   if (!root) return null;
   return { title: tab.title, manualTitle: tab.manualTitle, root };
 }
@@ -69,21 +71,13 @@ export function serializeTab(tab: Tab): TransferTab | null {
  * Snapshot a single pane as a one-leaf tab. A torn-off pane becomes a tab in
  * whatever window it lands in — there is no smaller unit a window can hold.
  */
-export function serializeLeaf(
+export async function serializeLeaf(
   leaf: SplitNode,
   title: string
-): TransferTab | null {
-  const root = serializeNode(leaf);
+): Promise<TransferTab | null> {
+  const root = await serializeNode(leaf);
   if (!root) return null;
   return { title, manualTitle: false, root };
-}
-
-/** Every PTY carried by a transfer — what the source window has to release. */
-export function transferPtyIds(node: TransferNode): number[] {
-  if (node.type === "leaf") {
-    return node.pane.kind === "terminal" ? [node.pane.ptyId] : [];
-  }
-  return [...transferPtyIds(node.first), ...transferPtyIds(node.second)];
 }
 
 // Rebuild real panes, registering each terminal's adoption so that the moment
@@ -130,5 +124,10 @@ export function rebuildTab(transfer: TransferTab): Tab {
     manualTitle: transfer.manualTitle,
     root,
     activePaneId: firstLeafId(root),
+    // The focus history doesn't travel: its entries are the source window's pane
+    // ids, and this tab's panes were just minted with new ones. Empty is the
+    // honest state — closing a pane here falls back to the first leaf until the
+    // user has actually moved focus around in this window.
+    paneHistory: [],
   };
 }

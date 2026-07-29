@@ -1,9 +1,24 @@
 import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
-import { useTabStore } from "./stores/tabs";
-import { getBackend } from "./backends";
+import { captureSessionNow, useTabStore } from "./stores/tabs";
+import { flushSession } from "./stores/history";
+import {
+  startSessionProviders,
+  stopSessionProviders,
+} from "./lib/session-providers";
+import { getBackend, windowBoot } from "./backends";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
-import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
+import {
+  initSettings,
+  tabBarEdge,
+  tabBarAutoHide,
+  claudeAttentionMode,
+} from "./stores/settings";
+import {
+  attentionCount,
+  clearAllAttention,
+  setFocusedPane,
+} from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
 import { initStoreSync } from "./lib/store-sync";
@@ -52,6 +67,14 @@ export default function App() {
     getTerminalInstance(tab.activePaneId)?.term.focus();
   }
 
+  // The window came back to the front: put the cursor back in the active pane
+  // and re-assert it as the focused one, which clears whatever flag it picked
+  // up while you were away.
+  function onWindowFocus() {
+    focusActiveTerminal();
+    setFocusedPane(store.activeTab?.activePaneId ?? null);
+  }
+
   // Deterministically move keyboard focus into a pane after an *explicit* action
   // (a drag-drop). Unlike focusActiveTerminal this ignores the input guard —
   // dropping a pane is an unambiguous intent to focus it — and it verifies the
@@ -86,6 +109,32 @@ export default function App() {
     // rapid tab/pane switches don't queue up stale focus calls.
     const raf = requestAnimationFrame(focusActiveTerminal);
     onCleanup(() => cancelAnimationFrame(raf));
+  });
+
+  // Tell the attention store where the user is. Arriving at a pane that was
+  // flagged as waiting puts its flag out — you're looking at it, so the app has
+  // nothing left to tell you — and stops a detector from re-flagging it while
+  // you sit there.
+  createEffect(() => {
+    setFocusedPane(activePaneId() ?? null);
+  });
+
+  // Switching the feature off drops the flags that are already up — leaving
+  // them would strand indicators that nothing is left to clear.
+  createEffect(() => {
+    if (claudeAttentionMode() === "off") clearAllAttention();
+  });
+
+  // Mirror the count onto whatever the OS gives us outside the window (a dock
+  // badge, a flashing taskbar entry). Kept separate from the effect above so
+  // clearing the flags doesn't re-enter the effect that reads their count.
+  createEffect(() => {
+    const count = attentionCount();
+    getBackend()
+      .then((backend) => backend.setAttentionBadge(count))
+      .catch(() => {
+        /* No badge on this platform/backend — the in-window dots still show. */
+      });
   });
 
   // Close the find bar when focus leaves the pane it was opened on (pane
@@ -194,37 +243,74 @@ export default function App() {
     // windows. Each store registered its own reload in the init calls above.
     void initStoreSync();
 
-    // Ask the host what this window is for before putting anything in it: a
-    // window opened by a tear-off is handed a tab, and it must adopt that one
-    // rather than spawn a shell of its own first. The store starts empty for
-    // exactly this reason, so nothing here races a terminal into existence.
-    let unlistenAdopt: UnlistenFn | undefined;
-    getBackend()
-      .then(async (backend) => {
-        const init = await backend.takeWindowInit();
-        store.initWindow(init.tab);
-
-        // Check GitHub for a newer release once per app launch — the first
-        // window owns that check, so opening more windows doesn't re-hit the
-        // feed. Any later check is the manual button in Settings.
-        if (init.autoCheckUpdates) void initUpdater();
-
-        // A tab torn off another window and dropped onto this one.
-        unlistenAdopt = await backend.onAdoptTab((tab) => {
-          store.adoptTab(tab);
+    // Fill the window. What goes in it depends on what kind of window this is,
+    // and that answer is already here — the host stamped it into our launch
+    // arguments, so there is no round trip in front of the first shell (see
+    // WindowBoot in backends/types.ts). Only a window created to host a
+    // torn-off tab has to go and fetch anything, and that one exists solely
+    // because a drag just ended.
+    const boot = windowBoot();
+    if (boot.hasTab) {
+      void getBackend()
+        .then((backend) => backend.takeWindowInit())
+        .then((init) => store.initWindow(init.tab, false))
+        .catch((err) => {
+          // Never leave a window empty because the handover failed: fall back
+          // to the plain new-terminal boot.
+          console.warn("[window] adopting the torn-off tab failed:", err);
+          store.initWindow(null, false);
         });
-      })
-      .catch((err) => {
-        // Never leave the window empty because the host bridge hiccuped: fall
-        // back to the plain new-terminal boot. initWindow is a no-op if a tab
-        // already made it in.
-        console.warn("[window] init failed, opening a plain terminal:", err);
-        store.initWindow(null);
+    } else {
+      store.initWindow(null, boot.ownsSession);
+    }
+
+    // A tab torn off another window and dropped onto this one.
+    let unlistenAdopt: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) => backend.onAdoptTab((tab) => store.adoptTab(tab)))
+      .then((un) => {
+        unlistenAdopt = un;
       });
     onCleanup(() => unlistenAdopt?.());
 
-    // When the OS window regains focus, return the cursor to the active pane.
-    window.addEventListener("focus", focusActiveTerminal);
+    // Watch for resumable programs (Claude Code) running in the panes, so a
+    // closed tab remembers not just where it was but what it was doing. Polls
+    // slowly; see lib/session-providers.
+    startSessionProviders();
+    onCleanup(stopSessionProviders);
+
+    // Check GitHub for a newer release once per app launch — the first window
+    // owns that check, so opening more windows doesn't re-hit the feed. Any
+    // later check is the manual button in Settings.
+    if (boot.autoCheckUpdates) void initUpdater();
+
+    // When the OS window regains focus, return the cursor to the active pane —
+    // and, since the user is now looking at it, put out any attention flag it
+    // was carrying. The effect above can't do this on its own: coming back to
+    // the window doesn't change which pane is active, so nothing it watches
+    // moves.
+    window.addEventListener("focus", onWindowFocus);
+
+    // Last chance to write down what was open. Store writes already keep the
+    // snapshot current on a debounce, but the two things that matter most —
+    // where each shell ended up, and what it was running — live on the terminal
+    // registry and change without any store write. Re-capture, then force the
+    // debounced write out before the window goes.
+    const saveOnExit = () => {
+      captureSessionNow();
+      flushSession();
+    };
+    window.addEventListener("beforeunload", saveOnExit);
+    // beforeunload isn't guaranteed on every platform's quit path; "hidden" is
+    // the event that reliably precedes teardown. Both are idempotent.
+    const onHidden = () => {
+      if (document.visibilityState === "hidden") saveOnExit();
+    };
+    document.addEventListener("visibilitychange", onHidden);
+    onCleanup(() => {
+      window.removeEventListener("beforeunload", saveOnExit);
+      document.removeEventListener("visibilitychange", onHidden);
+    });
 
     // Open markdown files handed to us by the OS (Finder "Open With",
     // double-click, or a path arg) in a new tab. The main process queues files

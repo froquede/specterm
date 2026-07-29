@@ -55,6 +55,54 @@ export const TAB_BAR_HEIGHT_DEFAULT = 36;
 export const TAB_BAR_HEIGHT_MIN = 24;
 export const TAB_BAR_HEIGHT_MAX = 56;
 
+// --- Session restore -------------------------------------------------------
+// What happens to a restored terminal that had a resumable session in it (see
+// lib/session-providers). Defaults to "type" rather than "run": the restore path
+// is the one place the app would put a command into a shell without the user
+// having typed it, and a session id is a *remembered* fact — the session may
+// have been deleted, or the project moved, since it was written down. Typing it
+// leaves the decision (and the visible evidence of what's about to happen) with
+// the person at the keyboard.
+export const SESSION_RESTORE_MODES = ["off", "type", "run"] as const;
+export type SessionRestoreMode = (typeof SESSION_RESTORE_MODES)[number];
+export const SESSION_RESTORE_MODE_DEFAULT: SessionRestoreMode = "type";
+
+// --- Claude attention ------------------------------------------------------
+// Whether a pane that has stopped and is waiting on you gets flagged (see
+// stores/attention.ts), and how that's found out:
+//
+//   off       — nothing is watched and nothing is drawn.
+//   heuristic — no setup at all. A pane known to be running Claude Code goes
+//               from "producing output steadily" to silent, which is what the
+//               end of a turn and a permission prompt both look like from
+//               outside the process. Version-proof (it reads no UI text), at
+//               the cost of the occasional false positive from an unrelated
+//               long command finishing in the same pane.
+//   hooks     — exact. Claude Code's own Notification/Stop hooks write a
+//               private OSC into the pane (see lib/claude-hooks.ts), so the
+//               app is told rather than guessing, instantly, and can tell a
+//               permission prompt apart from a finished turn. Needs the hooks
+//               installed into ~/.claude/settings.json once, which the
+//               Settings panel offers to do.
+//
+// The terminal bell is honored in both non-off modes: it is what a program of
+// any kind uses to say "look at me", and Claude Code rings it when its
+// notification channel is set to terminal_bell.
+export const CLAUDE_ATTENTION_MODES = ["off", "heuristic", "hooks"] as const;
+export type ClaudeAttentionMode = (typeof CLAUDE_ATTENTION_MODES)[number];
+export const CLAUDE_ATTENTION_MODE_DEFAULT: ClaudeAttentionMode = "heuristic";
+
+// --- Clock -----------------------------------------------------------------
+// An optional clock in the tab bar. Off by default: it's the one piece of
+// chrome that would otherwise redraw on a timer forever, and a terminal that
+// nobody asked for a clock in should have no timer at all. The format is a token
+// string (see lib/clock-format) rather than a locale preset, so "HH:mm",
+// "ddd DD/MM HH:mm" and "h:mm a" are all one field apart.
+export const CLOCK_FORMAT_DEFAULT = "HH:mm";
+// Long enough for any sensible format, short enough that a paste accident can't
+// push a novel into the tab bar.
+export const CLOCK_FORMAT_MAX = 64;
+
 export const SIDEBAR_WIDTH_DEFAULT = 250;
 // The settings panel shares the slot, and its controls stop being usable below
 // this (see .settings-sidebar in global.css, which holds the same floor).
@@ -94,6 +142,11 @@ interface Persisted {
   tabBarHeight: number;
   tabBarAutoHide: boolean;
   sidebarWidth: number;
+  restoreLastSession: boolean;
+  sessionRestoreMode: SessionRestoreMode;
+  claudeAttentionMode: ClaudeAttentionMode;
+  clockEnabled: boolean;
+  clockFormat: string;
 }
 
 const DEFAULTS: Persisted = {
@@ -105,6 +158,11 @@ const DEFAULTS: Persisted = {
   tabBarHeight: TAB_BAR_HEIGHT_DEFAULT,
   tabBarAutoHide: false,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
+  restoreLastSession: true,
+  sessionRestoreMode: SESSION_RESTORE_MODE_DEFAULT,
+  claudeAttentionMode: CLAUDE_ATTENTION_MODE_DEFAULT,
+  clockEnabled: false,
+  clockFormat: CLOCK_FORMAT_DEFAULT,
 };
 
 // Every field is read defensively: a blob written by an older version simply
@@ -150,6 +208,26 @@ function load(): Persisted {
         clampSidebarWidth,
         DEFAULTS.sidebarWidth
       ),
+      restoreLastSession:
+        typeof p.restoreLastSession === "boolean"
+          ? p.restoreLastSession
+          : DEFAULTS.restoreLastSession,
+      sessionRestoreMode: SESSION_RESTORE_MODES.includes(p.sessionRestoreMode)
+        ? p.sessionRestoreMode
+        : DEFAULTS.sessionRestoreMode,
+      claudeAttentionMode: CLAUDE_ATTENTION_MODES.includes(
+        p.claudeAttentionMode
+      )
+        ? p.claudeAttentionMode
+        : DEFAULTS.claudeAttentionMode,
+      clockEnabled:
+        typeof p.clockEnabled === "boolean"
+          ? p.clockEnabled
+          : DEFAULTS.clockEnabled,
+      clockFormat:
+        typeof p.clockFormat === "string"
+          ? p.clockFormat.slice(0, CLOCK_FORMAT_MAX)
+          : DEFAULTS.clockFormat,
     };
   } catch (_) {
     // Corrupt or unavailable storage — fall back to defaults.
@@ -175,6 +253,15 @@ const [tabBarAutoHide, setTabBarAutoHideSignal] = createSignal(
   initial.tabBarAutoHide
 );
 const [sidebarWidth, setSidebarWidthSignal] = createSignal(initial.sidebarWidth);
+const [restoreLastSession, setRestoreLastSessionSignal] = createSignal(
+  initial.restoreLastSession
+);
+const [sessionRestoreMode, setSessionRestoreModeSignal] =
+  createSignal<SessionRestoreMode>(initial.sessionRestoreMode);
+const [claudeAttentionMode, setClaudeAttentionModeSignal] =
+  createSignal<ClaudeAttentionMode>(initial.claudeAttentionMode);
+const [clockEnabled, setClockEnabledSignal] = createSignal(initial.clockEnabled);
+const [clockFormat, setClockFormatSignal] = createSignal(initial.clockFormat);
 
 export {
   unfocusedOpacity,
@@ -185,6 +272,11 @@ export {
   tabBarHeight,
   tabBarAutoHide,
   sidebarWidth,
+  restoreLastSession,
+  sessionRestoreMode,
+  claudeAttentionMode,
+  clockEnabled,
+  clockFormat,
 };
 
 /** Which window edge the tab bar sits on. */
@@ -229,6 +321,11 @@ function persist() {
         tabBarHeight: tabBarHeight(),
         tabBarAutoHide: tabBarAutoHide(),
         sidebarWidth: sidebarWidth(),
+        restoreLastSession: restoreLastSession(),
+        sessionRestoreMode: sessionRestoreMode(),
+        claudeAttentionMode: claudeAttentionMode(),
+        clockEnabled: clockEnabled(),
+        clockFormat: clockFormat(),
       } satisfies Persisted)
     );
   } catch (_) {
@@ -310,6 +407,9 @@ export function setLastBrowsedPath(v: string) {
 // `lastBrowsedPath` is deliberately left alone: it's where *this* window's file
 // tree happens to be sitting, saved for the next launch — syncing it would yank
 // every other window's sidebar to wherever someone else just clicked.
+// Every persisted field belongs here except `lastBrowsedPath`. Missing one
+// doesn't fail loudly — it just makes that preference silently stop crossing
+// windows — so this reads the whole blob and assigns all of it.
 function reloadFromStorage() {
   const p = load();
   setUnfocusedOpacitySignal(p.unfocusedOpacity);
@@ -319,8 +419,57 @@ function reloadFromStorage() {
   setTabBarHeightSignal(p.tabBarHeight);
   setTabBarAutoHideSignal(p.tabBarAutoHide);
   setSidebarWidthSignal(p.sidebarWidth);
+  setRestoreLastSessionSignal(p.restoreLastSession);
+  setSessionRestoreModeSignal(p.sessionRestoreMode);
+  setClaudeAttentionModeSignal(p.claudeAttentionMode);
+  setClockEnabledSignal(p.clockEnabled);
+  setClockFormatSignal(p.clockFormat);
   applyCssVars();
   applyWindowOpacity();
+}
+
+// --- Session restore -------------------------------------------------------
+// Read at module load by stores/tabs.ts, which builds its initial state from the
+// saved session rather than restoring after the fact — a tab that appears and is
+// then replaced would have already spawned (and orphaned) a shell.
+
+export function setRestoreLastSession(v: boolean) {
+  setRestoreLastSessionSignal(v);
+  persist();
+}
+
+// --- Clock -----------------------------------------------------------------
+
+export function setClockEnabled(v: boolean) {
+  setClockEnabledSignal(v);
+  persist();
+}
+
+// An empty format would render an empty box in the bar, so it falls back to the
+// default rather than leaving the user with a clock they can't see to fix.
+export function setClockFormat(v: string) {
+  const trimmed = v.slice(0, CLOCK_FORMAT_MAX);
+  setClockFormatSignal(trimmed.trim() === "" ? CLOCK_FORMAT_DEFAULT : trimmed);
+  persist();
+}
+
+// --- Claude attention ------------------------------------------------------
+// Switching modes only changes what is *watched* from here on; the flags that
+// are already up are dropped by an effect in App, which is also what puts the
+// dock badge out.
+
+export function setClaudeAttentionMode(v: ClaudeAttentionMode) {
+  setClaudeAttentionModeSignal(
+    CLAUDE_ATTENTION_MODES.includes(v) ? v : CLAUDE_ATTENTION_MODE_DEFAULT
+  );
+  persist();
+}
+
+export function setSessionRestoreMode(v: SessionRestoreMode) {
+  setSessionRestoreModeSignal(
+    SESSION_RESTORE_MODES.includes(v) ? v : SESSION_RESTORE_MODE_DEFAULT
+  );
+  persist();
 }
 
 // Apply persisted values once at startup. Called from App's onMount.

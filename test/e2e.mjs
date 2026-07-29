@@ -15,7 +15,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const WIN = process.platform === "win32";
 const SEP = WIN ? "\\" : "/";
-const log = (...a) => console.log("[e2e]", ...a);
+// Every line carries how long the suite has been running, and each check also
+// carries how long it took. A run that gets slower is otherwise invisible until
+// it trips the deadline, at which point the log says only where it stopped —
+// never which step ate the budget.
+const started = Date.now();
+const elapsed = () => ((Date.now() - started) / 1000).toFixed(1).padStart(6);
+const log = (...a) => console.log(`[e2e ${elapsed()}s]`, ...a);
+let lastCheckAt = Date.now();
 
 // A directory that reliably exists to point the startup path at.
 const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
@@ -23,7 +30,11 @@ const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass, skipped: false });
-  log(`${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
+  const took = ((Date.now() - lastCheckAt) / 1000).toFixed(1);
+  lastCheckAt = Date.now();
+  log(
+    `${pass ? "PASS" : "FAIL"}  ${name}  (+${took}s)${detail ? "  — " + detail : ""}`
+  );
 };
 const skip = (name, why) => {
   results.push({ name, pass: true, skipped: true });
@@ -34,11 +45,27 @@ const eqPath = (a, b) =>
   a != null && b != null && (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
 const joinPath = (base, name) => base.replace(/[\\/]+$/, "") + SEP + name;
 
-const hard = setTimeout(() => {
+// Whole-suite deadline. Raised from 180s when the cwd-inheritance checks landed,
+// and again for the session-history section, which ends by quitting the app and
+// launching it a second time — a whole extra Electron startup inside the same
+// budget. The suite was already finishing just under the old ceiling, so any
+// further check — and any slower machine — tipped it into a timeout that looks
+// like a failure but isn't one. Headroom here is cheap; a false red is not.
+//
+// Measured at ~350s on the dev machine after the multi-window work landed, so
+// the old 330s left no headroom at all — a loaded machine tipped it into a
+// timeout that says nothing about the code. Overridable for the same reason
+// (E2E_TIMEOUT_MS=0 disables it entirely), and every line now carries its own
+// elapsed time so a slow run can be diagnosed instead of guessed at.
+const HARD_TIMEOUT_MS =
+  process.env.E2E_TIMEOUT_MS !== undefined
+    ? Number(process.env.E2E_TIMEOUT_MS)
+    : 480000;
+const hard = HARD_TIMEOUT_MS > 0 && setTimeout(() => {
   console.error("[e2e] HARD TIMEOUT");
   process.exit(2);
-}, 180000);
-hard.unref();
+}, HARD_TIMEOUT_MS);
+if (hard) hard.unref();
 
 // --- helpers ---------------------------------------------------------------
 const state = (win) =>
@@ -753,6 +780,164 @@ try {
     skip("⌥← moves focus to the pane on the left", "2×2 grid did not form");
     skip("⌥↑ moves focus to the pane above", "2×2 grid did not form");
     skip("⌥ into an outer edge keeps focus put", "2×2 grid did not form");
+  }
+
+  // 6i) Closing the active pane hands focus back to the pane it came from.
+  // Regression guard: closePane used to call firstLeafId(newRoot), so splitting
+  // off a pane and closing it dropped you on the tree's *first* leaf — with a
+  // 2×2 grid, the top-left pane rather than the one you were working in.
+  // Reuses the grid built above: focus the bottom-right pane, split off a new
+  // one, close it, and require focus to land back on bottom-right (not TL).
+  const CLOSE_PANE = process.platform === "darwin" ? "Meta+W" : "Control+Shift+W";
+  if (grid2x2) {
+    await focusPaneAt(BR.cx, BR.cy);
+    await win.waitForTimeout(250);
+    const mruBefore = await activePaneId();
+
+    await win.keyboard.press(SPLIT_SIDE);
+    await win.waitForTimeout(2000);
+    const mruSpawned = await activePaneId();
+
+    await win.keyboard.press(CLOSE_PANE);
+    await win.waitForTimeout(1000);
+    const mruAfter = await activePaneId();
+
+    check(
+      "closing a pane returns focus to the previously active one",
+      mruBefore === BR.id && mruSpawned !== mruBefore && mruAfter === mruBefore,
+      `before=${mruBefore} spawned=${mruSpawned} after=${mruAfter} (BR=${BR.id}, TL=${TL?.id})`
+    );
+  } else {
+    skip(
+      "closing a pane returns focus to the previously active one",
+      "2×2 grid did not form"
+    );
+  }
+
+  // 6j) The tab-level twin: closing the active tab returns to the tab you were
+  // last on, not to whichever tab slides into the closed one's index. Visit the
+  // first tab, then the last, then close the last — focus must go back to the
+  // first. The old index rule would have landed on the second-to-last instead.
+  const mruActiveTab = () =>
+    win.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+  const mruTabIds = () =>
+    win.evaluate(() =>
+      Array.from(document.querySelectorAll(".tab")).map((t) =>
+        t.getAttribute("data-tab-id")
+      )
+    );
+
+  const tabIdsBefore = await mruTabIds();
+  if (tabIdsBefore.length >= 3) {
+    const firstTab = tabIdsBefore[0];
+    const lastTab = tabIdsBefore[tabIdsBefore.length - 1];
+    const indexPick = tabIdsBefore[tabIdsBefore.length - 2];
+
+    await win.locator(`.tab[data-tab-id="${firstTab}"]`).click();
+    await win.waitForTimeout(400);
+    await win.locator(`.tab[data-tab-id="${lastTab}"]`).click();
+    await win.waitForTimeout(400);
+    const tabBeforeClose = await mruActiveTab();
+
+    await win.locator(`.tab[data-tab-id="${lastTab}"] .tab-close`).click();
+    await win.waitForTimeout(800);
+    const tabAfterClose = await mruActiveTab();
+
+    check(
+      "closing a tab returns to the previously active one",
+      tabBeforeClose === lastTab && tabAfterClose === firstTab,
+      `before=${tabBeforeClose} after=${tabAfterClose} expected=${firstTab} (index rule would give ${indexPick})`
+    );
+  } else {
+    skip(
+      "closing a tab returns to the previously active one",
+      `needs 3+ tabs, had ${tabIdsBefore.length}`
+    );
+  }
+
+  // 6k) A split opens where the pane it came from is, not at the startup path.
+  // The source pane is cd'd somewhere specific first, so the assertion can't
+  // pass by accident: the startup path is still unset at this point in the run
+  // (section 7 sets it), so a pane that failed to inherit lands in home, which
+  // is never the probe directory.
+  //
+  // The new pane's SPECTERM_CWD is the ground truth — it records the directory
+  // the main process actually spawned the shell in, so this proves inheritance
+  // reached the spawn rather than the shell having cd'd itself afterwards.
+  //
+  // Windows can't report a shell's live cwd (see the pty-cwd handler in
+  // electron/main.cjs), so inheritance there degrades to the startup path by
+  // design and the check is skipped rather than failed.
+  const INHERIT_CHECK = "a split inherits the directory of the pane it came from";
+  if (WIN) {
+    skip(INHERIT_CHECK, "no live-cwd source on Windows");
+  } else {
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(2000);
+
+    const INHERIT_DIR = "/usr";
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(`cd ${INHERIT_DIR}`);
+    await win.keyboard.press("Enter");
+    // The fallback path probes the shell process 150ms and 1500ms after Enter;
+    // wait past the second so the value is settled before splitting.
+    await win.waitForTimeout(1800);
+
+    const sourceCwd = await terminalCwd(win, "inherit_src");
+    await win.keyboard.press(SPLIT_SIDE);
+    await win.waitForTimeout(1500);
+    const splitSpawn = await spawnCwd(win, "inherit_split");
+
+    check(
+      INHERIT_CHECK,
+      sourceCwd === INHERIT_DIR && splitSpawn === INHERIT_DIR,
+      `source pane at ${sourceCwd}, split spawned in ${splitSpawn}, expected ${INHERIT_DIR}`
+    );
+  }
+
+  // 6l) The OSC 7 path, isolated from the process probe. The shell is left in
+  // one directory but reports a different one, so only a terminal that honors
+  // the report can spawn the split there — reading the shell's process would
+  // give the directory it's actually sitting in. That's not a realistic pairing
+  // (a real shell reports where it is), it's what makes the two sources
+  // distinguishable in a test.
+  const OSC7_CHECK = "an OSC 7 report from the shell sets the inherited directory";
+  if (WIN) {
+    skip(OSC7_CHECK, "no live-cwd source on Windows to distinguish it from");
+  } else {
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(2000);
+
+    const OSC7_DIR = "/etc";
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    // printf writes the raw sequence: ESC ] 7 ; file://<host><path> ESC \
+    await win.keyboard.type(
+      `printf '\\033]7;file://%s${OSC7_DIR}\\033\\\\' "$(hostname)"`
+    );
+    await win.keyboard.press("Enter");
+    // Where the shell actually is — must differ from what it reported, or the
+    // check would pass with the report ignored. Read first, because it is also
+    // the proof that the shell has *run* the printf above: the value only lands
+    // once the shell has worked through both lines.
+    const realCwd = await terminalCwd(win, "osc7_real");
+
+    // The shell having emitted the sequence isn't the same as the renderer
+    // having parsed it — xterm's write queue is asynchronous, and on a loaded
+    // machine the split can otherwise read the cwd from before the report. This
+    // settle is the difference between a check about OSC 7 and a check about
+    // how busy the machine was.
+    await win.waitForTimeout(1200);
+    await win.keyboard.press(SPLIT_SIDE);
+    await win.waitForTimeout(1500);
+    const oscSpawn = await spawnCwd(win, "osc7_split");
+
+    check(
+      OSC7_CHECK,
+      oscSpawn === OSC7_DIR && realCwd !== OSC7_DIR,
+      `reported ${OSC7_DIR}, shell really at ${realCwd}, split spawned in ${oscSpawn}`
+    );
   }
 
   // 7) Default terminal path: set via UI, confirm persistence, reload, verify
@@ -1519,7 +1704,9 @@ try {
   // title's double-click: a setPointerCapture on pointerdown once retargeted the
   // follow-up click/dblclick to the tab itself, so the × merely re-selected the
   // tab and double-click never entered rename. These checks lock that shut.
-  const RENAME_KEY = MAC ? "Meta+R" : "Control+Shift+R";
+  // ⌘R on macOS; F2 on Linux/Windows, where Ctrl+Shift+R now reopens a closed
+  // tab instead. See keymap.ts.
+  const RENAME_KEY = MAC ? "Meta+R" : "F2";
   const tabCount = () => win.locator(".tab").count();
   const tabTitleOf = (id) =>
     win.evaluate(
@@ -1634,7 +1821,363 @@ try {
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
   }
 
+  // 19) F2 stands aside for full-screen programs. It renames the tab at a shell
+  // prompt, but the moment something takes the alternate screen buffer (htop,
+  // vim, mc — all of which bind F2 themselves) the key stops being ours and
+  // reaches the program instead. macOS uses ⌘R, which no terminal program can
+  // receive, so it has nothing to stand aside for.
+  if (MAC) {
+    skip("F2 leaves the rename editor shut inside a full-screen program", "macOS uses ⌘R");
+    skip("F2 renames again once the program exits", "macOS uses ⌘R");
+  } else {
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(1800);
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    // Enter the alternate screen buffer the way a full-screen program does.
+    await win.keyboard.type("printf '\\033[?1049h'");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(900);
+
+    await win.keyboard.press("F2");
+    await win.waitForTimeout(500);
+    const editorInAlt = await win.locator(".tab-title-input").count();
+    check(
+      "F2 leaves the rename editor shut inside a full-screen program",
+      editorInAlt === 0,
+      `editors=${editorInAlt}`
+    );
+
+    // Back to the normal buffer — the key is ours again.
+    await win.keyboard.type("printf '\\033[?1049l'");
+    await win.keyboard.press("Enter");
+    await win.waitForTimeout(900);
+    await win.keyboard.press("F2");
+    const editorAfterExit = await editorVisible();
+    check(
+      "F2 renames again once the program exits",
+      editorAfterExit,
+      `editorVisible=${editorAfterExit}`
+    );
+    if (editorAfterExit) {
+      await win.keyboard.press("Escape");
+      await win.waitForTimeout(300);
+    }
+  }
+
+  // Reopen-closed is ⌘⇧T on macOS. On Linux/Windows Ctrl+Shift+T is already
+  // "new tab" and Ctrl+Alt+T is GNOME's own "open a terminal", so it's
+  // Ctrl+Shift+R there — see keymap.ts.
+  const REOPEN_KEY = MAC ? "Meta+Shift+T" : "Control+Shift+R";
+  const CLOSE_TAB_KEY = MAC ? "Meta+Shift+W" : "Control+Shift+Q";
+  const CLOSE_PANE_KEY = MAC ? "Meta+W" : "Control+Shift+W";
+
+  // 19b) The optional tab-bar clock. What's worth locking down isn't that it can
+  // show the time — it's that it doesn't exist at all until asked for, that the
+  // format is really the user's, and that a minute-granularity format doesn't
+  // redraw every second. Driven through the Settings UI, which is how anyone
+  // actually turns it on.
+  const clockText = () =>
+    win.evaluate(() => document.querySelector(".tab-clock")?.textContent ?? null);
+
+  check("no clock until it's switched on", (await clockText()) === null, "");
+
+  await win.locator(".tab-settings").click();
+  await win.waitForSelector("#clock-enabled", { timeout: 5000 });
+  await win.locator("#clock-enabled").check();
+  await win.waitForTimeout(600);
+  const defaultText = await clockText();
+  check(
+    "switching the clock on shows it in the default format",
+    /^\d{2}:\d{2}$/.test(defaultText ?? ""),
+    `text=${defaultText}`
+  );
+
+  // A format with seconds must actually advance.
+  await win.locator("#clock-format").fill("HH:mm:ss");
+  await win.locator("#clock-format").blur();
+  await win.waitForTimeout(400);
+  const sec1 = await clockText();
+  await win.waitForTimeout(1600);
+  const sec2 = await clockText();
+  check(
+    "a seconds format ticks every second",
+    /^\d{2}:\d{2}:\d{2}$/.test(sec1 ?? "") && sec1 !== sec2,
+    `${sec1} → ${sec2}`
+  );
+
+  // …and one without seconds must not. Stay clear of a minute rollover first,
+  // which would change the text for a legitimate reason and read as a failure.
+  const secondsNow = () => win.evaluate(() => new Date().getSeconds());
+  while ((await secondsNow()) > 48) await win.waitForTimeout(1000);
+  await win.locator("#clock-format").fill("[at] HH:mm");
+  await win.locator("#clock-format").blur();
+  await win.waitForTimeout(400);
+  const min1 = await clockText();
+  await win.waitForTimeout(4000);
+  const min2 = await clockText();
+  check(
+    "a minute format holds steady between minutes (and literals pass through)",
+    /^at \d{2}:\d{2}$/.test(min1 ?? "") && min1 === min2,
+    `${min1} → ${min2}`
+  );
+
+  await win.locator("#clock-enabled").uncheck();
+  await win.waitForTimeout(500);
+  check("switching the clock off removes it", (await clockText()) === null, "");
+  await win.locator(".tab-settings").click();
+  await win.waitForTimeout(400);
+
+  // 19c) A pane that has stopped and is waiting flags its tab.
+  //
+  // Driven through the exact route (the OSC the Claude Code hooks write), not
+  // the heuristic: the sequence is the contract, so a shell can stand in for
+  // claude and the assertion is about the wiring — parse, flag, draw, clear —
+  // rather than about timing. The heuristic's own transition needs a real
+  // session working for seconds and would test the constants, not the feature.
+  //
+  // The sequence is emitted from a background job a few seconds out, and the
+  // test walks away to another tab first: a pane the user is looking at is
+  // deliberately never flagged, so firing it in the foreground would prove
+  // nothing.
+  if (WIN) {
+    skip("a waiting pane flags its tab", "no printf / /dev/tty on Windows");
+  } else {
+    const tabIdOf = (sel) =>
+      win.evaluate((s) => document.querySelector(s)?.getAttribute("data-tab-id") ?? null, sel);
+    const attentionKind = (id) =>
+      win.evaluate(
+        (t) =>
+          document
+            .querySelector(`.tab[data-tab-id="${t}"] .tab-attention`)
+            ?.getAttribute("data-kind") ?? null,
+        id
+      );
+
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(1800);
+    const waitingTab = await tabIdOf(".tab.active");
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(
+      `(sleep 3; printf '\\033]1337;Attention;kind=permission\\007') &`
+    );
+    await win.keyboard.press("Enter");
+
+    // Leave for a new tab, so the sequence lands in a pane nobody is watching.
+    await win.locator(".tab-new").click();
+    const bystanderTab = await tabIdOf(".tab.active");
+    await win.waitForTimeout(4500);
+
+    const kind = await attentionKind(waitingTab);
+    check(
+      "a pane that stops and waits flags its tab",
+      kind === "permission",
+      `kind=${kind}`
+    );
+    check(
+      "only the waiting tab is flagged",
+      (await attentionKind(bystanderTab)) === null,
+      `bystander=${await attentionKind(bystanderTab)}`
+    );
+
+    // Going to the pane is the acknowledgement — nothing else to dismiss.
+    await win.locator(`.tab[data-tab-id="${waitingTab}"]`).click();
+    await win.waitForTimeout(600);
+    check(
+      "focusing the pane clears the flag",
+      (await attentionKind(waitingTab)) === null,
+      `kind=${await attentionKind(waitingTab)}`
+    );
+
+    // Leave the tab count as it was found, so the history checks below count
+    // from the same baseline they always did.
+    await win.keyboard.press(CLOSE_TAB_KEY);
+    await win.waitForTimeout(600);
+    await win.locator(`.tab[data-tab-id="${bystanderTab}"]`).click();
+    await win.waitForTimeout(400);
+    await win.keyboard.press(CLOSE_TAB_KEY);
+    await win.waitForTimeout(600);
+  }
+
+  // 20) A pane running Claude Code remembers which session it was, so closing
+  // the tab records how to pick it back up.
+  //
+  // The session is identified from the transcript Claude Code keeps per project
+  // directory, so the check plants one for a scratch directory rather than
+  // holding a real conversation — the id it must find is then known exactly.
+  // (The other route, reading the id from a child of the claude process, only
+  // answers while claude is running a tool call, which an idle session isn't.)
+  if (!HAS_CLAUDE) {
+    skip("a pane running Claude Code records its session", "claude CLI not installed");
+  } else {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-claude-"));
+    const sessionId = "11111111-2222-3333-4444-555555555555";
+    const projectDir = path.join(
+      os.homedir(),
+      ".claude",
+      "projects",
+      workDir.replace(/[/\\]/g, "-")
+    );
+    try {
+      fs.mkdirSync(projectDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(projectDir, `${sessionId}.jsonl`),
+        JSON.stringify({ type: "mode", mode: "normal", sessionId }) + "\n"
+      );
+
+      await win.locator(".tab-new").click();
+      await win.waitForTimeout(1800);
+      await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+      await win.keyboard.type(`cd "${workDir}" && claude`);
+      await win.keyboard.press("Enter");
+      // Providers poll on a 20s cycle (see lib/session-providers), and claude
+      // itself takes a few seconds to come up.
+      await win.waitForTimeout(30000);
+
+      await win.keyboard.press(CLOSE_TAB_KEY);
+      await win.waitForTimeout(1200);
+
+      const recorded = await win.evaluate(() => {
+        const raw = localStorage.getItem("specterm.history.closed");
+        return raw ? JSON.parse(raw).entries?.[0]?.snapshot?.root?.pane ?? null : null;
+      });
+      check(
+        "a pane running Claude Code records its session",
+        recorded?.session?.id === sessionId &&
+          recorded?.session?.resumeCommand === `claude --resume ${sessionId}`,
+        JSON.stringify(recorded?.session ?? null)
+      );
+
+      // The entry stays on the stack; the checks below close their own tab
+      // first, so they always act on a fresher one.
+    } finally {
+      try { fs.rmSync(projectDir, { recursive: true, force: true }); } catch {}
+      try { fs.rmSync(workDir, { recursive: true, force: true }); } catch {}
+    }
+  }
+
+  // 21) Session history: reopening what was closed, and restoring what was open.
+  //
+  // The interesting assertion in all three checks is the *directory*, not the
+  // tab count: a restored pane that comes back at the startup path has restored
+  // nothing useful. Each pane is cd'd somewhere identifiable first, then the
+  // spawn cwd of whatever comes back is read (SPECTERM_CWD, recorded by the main
+  // process at spawn) and compared against it.
+  const historyTabCount = () =>
+    win.evaluate(() => document.querySelectorAll(".tab").length);
+  const paneCount = () => win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
+
+  // A directory that exists everywhere and isn't home, so "restored" can't be
+  // confused with "opened at the default".
+  const marker = STARTUP_TARGET;
+  const cdTo = async (dir) => {
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(WIN ? `Set-Location "${dir}"` : `cd "${dir}"`);
+    await win.keyboard.press("Enter");
+    // The cwd the snapshot reads is refreshed from the shell process after each
+    // command (refreshCwd, on a 150ms/1.5s probe pair) — outwait the slower one.
+    await win.waitForTimeout(2200);
+  };
+
+  await win.locator(".tab-new").click();
+  await win.waitForTimeout(2000);
+  await cdTo(marker);
+  const tabsBeforeClose = await historyTabCount();
+
+  await win.keyboard.press(CLOSE_TAB_KEY);
+  await win.waitForTimeout(800);
+  const tabsAfterClose = await historyTabCount();
+
+  await win.keyboard.press(REOPEN_KEY);
+  await win.waitForTimeout(2500);
+  const reopenedCwd = await spawnCwd(win, "reopen_tab");
+  check(
+    "reopen closed tab restores it at the directory it was in",
+    tabsAfterClose === tabsBeforeClose - 1 &&
+      (await historyTabCount()) === tabsBeforeClose &&
+      eqPath(reopenedCwd, marker),
+    `before=${tabsBeforeClose} closed=${tabsAfterClose} after=${await historyTabCount()} cwd=${reopenedCwd}`
+  );
+
+  // A closed *pane* goes back into the tab it came from, not into a new tab.
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(SPLIT_SIDE);
+  await win.waitForTimeout(2200);
+  const panesBeforePaneClose = await paneCount();
+  const tabsBeforePaneClose = await historyTabCount();
+  await cdTo(marker);
+
+  await win.keyboard.press(CLOSE_PANE_KEY);
+  await win.waitForTimeout(800);
+  const panesAfterPaneClose = await paneCount();
+
+  await win.keyboard.press(REOPEN_KEY);
+  await win.waitForTimeout(2500);
+  const reopenedPaneCwd = await spawnCwd(win, "reopen_pane");
+  check(
+    "reopen closed pane puts it back in the same tab",
+    panesAfterPaneClose === panesBeforePaneClose - 1 &&
+      (await paneCount()) === panesBeforePaneClose &&
+      (await historyTabCount()) === tabsBeforePaneClose &&
+      eqPath(reopenedPaneCwd, marker),
+    `panes ${panesBeforePaneClose}→${panesAfterPaneClose}→${await paneCount()} ` +
+      `tabs=${await historyTabCount()} cwd=${reopenedPaneCwd}`
+  );
+
+  // Leave a known layout behind for the restore-on-boot check below.
+  //
+  // The value to compare against is the active pane's *live* directory, which is
+  // the whole point of the feature: a restored shell should come back **in**
+  // where you were, not where that shell originally spawned. So this reads the
+  // live cwd now, and the check after the relaunch reads the restored pane's
+  // spawn cwd — they must be the same directory.
+  //
+  // The snapshot is written on a 1s debounce after the last state change (plus a
+  // flush as the window goes away), so the wait is what makes this realistic
+  // rather than a test of the flush path alone.
+  const tabsAtQuit = await historyTabCount();
+  const liveCwdAtQuit = await terminalCwd(win, "quit_live");
+  await win.waitForTimeout(2000);
+
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
+
+  // 22) Restore on boot. The only check that needs a second launch: quit the
+  // app and start it again against the *same* profile, since the snapshot lives
+  // in localStorage under the user-data dir. Enabled by default, so nothing is
+  // toggled first — this is what a normal restart does.
+  try {
+    await Promise.race([app.close(), new Promise((r) => setTimeout(r, 5000))]);
+  } catch (_) {
+    // Close is best-effort; the relaunch below is what actually matters.
+  }
+  try { app.process().kill("SIGKILL"); } catch {}
+
+  const app2 = await electron.launch({
+    args: [root, `--user-data-dir=${userDataDir}`],
+    cwd: root,
+  });
+  try {
+    const win2 = await app2.firstWindow();
+    win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
+    await win2.waitForSelector(".file-tree", { timeout: 20000 });
+    await win2.waitForTimeout(3000);
+
+    const restoredTabs = await win2.evaluate(
+      () => document.querySelectorAll(".tab").length
+    );
+    const restoredCwd = await spawnCwd(win2, "restore_boot");
+    check(
+      "restart restores the tabs that were open, in their directories",
+      restoredTabs === tabsAtQuit && eqPath(restoredCwd, liveCwdAtQuit),
+      `tabs ${tabsAtQuit}→${restoredTabs} cwd=${restoredCwd} (was at ${liveCwdAtQuit})`
+    );
+  } finally {
+    try {
+      await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
+    } catch (_) {
+      // Nothing left to assert; the kill below is the backstop.
+    }
+    try { app2.process().kill("SIGKILL"); } catch {}
+  }
 
   // --- summary ---
   const failed = results.filter((r) => !r.pass).length;
@@ -1643,7 +2186,7 @@ try {
   log(`\n===== ${passed} passed, ${failed} failed, ${skipped} skipped (${process.platform}) =====`);
   fs.writeFileSync(path.join(root, "test", "e2e-result.json"), JSON.stringify({ platform: process.platform, results }, null, 2));
 
-  clearTimeout(hard);
+  if (hard) clearTimeout(hard);
   try { await Promise.race([app.close(), new Promise((r) => setTimeout(r, 3000))]); } catch {}
   try { app.process().kill("SIGKILL"); } catch {}
   try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch {}

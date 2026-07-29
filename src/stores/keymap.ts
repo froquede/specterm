@@ -11,6 +11,8 @@ import type { BindingSpec, Chord } from "./keybindings";
 import type { useTabStore } from "./tabs";
 import {
   getTerminalInstance,
+  paneRunsFullscreenApp,
+  selectComposerText,
   increaseFontSize,
   decreaseFontSize,
   resetFontSize,
@@ -117,6 +119,21 @@ export function createKeymap({
       label: "New tab",
       run: () => store.createTab(),
     },
+    // Reopen the last closed tab or pane. macOS gets the browser's own ⌘⇧T,
+    // which is free there. Linux/Windows can't: Ctrl+Shift+T is already "new
+    // tab" (every terminal binds it that way, and bare Ctrl+T belongs to
+    // readline's transpose-chars, so it isn't available to take instead), and
+    // Ctrl+Alt+T is the desktop's own "open a terminal" on GNOME — the WM
+    // swallows it before the app ever sees the key. Ctrl+Shift+R is what's left
+    // that's both free and memorable; rename moved to F2 to make room.
+    {
+      id: "tab.reopen",
+      key: "t",
+      ...cmd({ shift: true }),
+      byOS: kitty("r"),
+      label: "Reopen closed tab",
+      run: () => store.reopenLastClosed(),
+    },
     {
       id: "tab.close",
       key: "w",
@@ -153,12 +170,25 @@ export function createKeymap({
           store.setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
       },
     },
-    // Rename the active tab (tmux rename-window, ⌘R / Ctrl+Shift+R) — opens
-    // the inline editor in TabBar; see store.startRenameTab.
+    // Rename the active tab (tmux rename-window) — opens the inline editor in
+    // TabBar; see store.startRenameTab. macOS keeps ⌘R; Linux/Windows use F2,
+    // the rename key everywhere else in desktop software, freeing Ctrl+Shift+R
+    // for reopen above.
+    //
+    // F2 is a bare key, so it would otherwise stop reaching programs that bind
+    // it — htop's Setup, mc's menu. `enabled` steps aside whenever a full-screen
+    // program owns the pane (it's on the alternate screen buffer), so F2 renames
+    // at a shell prompt and belongs to the program inside one. macOS is exempt:
+    // ⌘R is not a key any terminal program can receive.
     {
       id: "tab.rename",
       key: "r",
       ...cmd(),
+      byOS: { linux: { key: "f2" }, windows: { key: "f2" } },
+      enabled: () =>
+        isMac || !paneRunsFullscreenApp(store.state.tabs.find(
+          (t) => t.id === store.state.activeTabId
+        )?.activePaneId ?? ""),
       label: "Rename tab",
       run: () => store.startRenameTab(),
     },
@@ -235,6 +265,29 @@ export function createKeymap({
         // Electron's native ⌘C never fires. So we write the selection here.
         const domSel = window.getSelection()?.toString();
         if (domSel) clipboardWriteText(domSel);
+      },
+    },
+    // Select + copy the input composer — ⌘⇧A on macOS, Ctrl+Shift+A on
+    // Win/Linux. A literal chord (meta+shift here, byOS Ctrl+Shift there) rather
+    // than the cmd() ⌘⇧→Ctrl+Alt mapping, so both platforms land on Shift+A.
+    // Scoped on purpose: it grabs just the Claude Code composer box the cursor
+    // is in (falling back to the cursor's logical line at a bare shell prompt)
+    // instead of the whole scrollback a plain select-all grabs, highlights it,
+    // and copies the typed text to the clipboard in one press. Bare Ctrl+A stays
+    // free for the shell's readline "beginning of line"; ⌘A/Ctrl+A also stay
+    // free for the markdown editor's native select-all.
+    {
+      id: "terminal.selectComposer",
+      key: "a",
+      meta: true,
+      shift: true,
+      byOS: kitty("a"),
+      label: "Select & copy input composer",
+      run: () => {
+        const paneId = store.activeTab?.activePaneId;
+        if (!paneId || !getTerminalInstance(paneId)) return;
+        const text = selectComposerText(paneId);
+        if (text) clipboardWriteText(text);
       },
     },
     // Find in the active terminal — ⌘F (Ctrl+Shift+F on Win/Linux). Toggles a

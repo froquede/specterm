@@ -77,6 +77,20 @@ jobs:
           echo "CC=gcc-10" >> "$GITHUB_ENV"
           echo "CXX=g++-10" >> "$GITHUB_ENV"
 
+          # The runner images ship `gh`, but this container doesn't — and the
+          # "Ensure built artifacts are attached" step below is a bash `gh`
+          # call, so without this the Linux leg fails at the very step that
+          # exists to stop the Linux artifacts going missing (v0.14.0 went red
+          # here after its artifacts had already uploaded). Installed from the
+          # release tarball rather than the apt repo: one pinned download, no
+          # keyring/sources dance, and it goes through the same retry.
+          GH_CLI_VERSION=2.63.2
+          retry curl -fsSL -o /tmp/gh.tar.gz \
+            "https://github.com/cli/cli/releases/download/v${GH_CLI_VERSION}/gh_${GH_CLI_VERSION}_linux_amd64.tar.gz"
+          tar -xzf /tmp/gh.tar.gz -C /tmp
+          install -m 0755 "/tmp/gh_${GH_CLI_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
+          gh --version
+
       - uses: actions/checkout@v4
 
       - name: Install Node.js
@@ -131,10 +145,19 @@ jobs:
       # moved and rebuilt. The files exist in build-output/ regardless, so push
       # them straight to the Release with the API, which has no such guard.
       # --clobber overwrites same-named assets so this is safe to re-run.
+      #
+      # GH_REPO is what keeps this working inside the Linux container. Without
+      # it `gh` finds the repository by shelling out to git, and git refuses to
+      # read a checkout owned by another uid — which is exactly the situation in
+      # the container, where the workspace belongs to the runner user:
+      #   fatal: detected dubious ownership in repository at '/__w/specterm/...'
+      # Naming the repo outright skips that lookup entirely, and is narrower
+      # than marking the tree safe globally just so one command can find it.
       - name: Ensure built artifacts are attached to the Release
         if: startsWith(github.ref, 'refs/tags/')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |

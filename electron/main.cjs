@@ -65,11 +65,39 @@ function findPwsh() {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
+// PowerShell shell integration: make the shell report its working directory via
+// OSC 7 so a new pane/tab opens where this one is. Windows has no /proc and no
+// lsof, and reading another process's current directory needs an undocumented
+// native call whose struct layout shifts by Windows version and arch — so the
+// pty-cwd handler returns null there and inheritance would otherwise fall back
+// to the startup path. Instead we let the shell tell us, the same OSC 7 that zsh
+// and fish emit by default (see registerCwdHandler in src/lib/osc.ts); the
+// renderer already parses it. This is how Windows Terminal / VS Code do it too.
+//
+// The hook wraps whatever `prompt` the user's profile left in place (it runs
+// after the profile via -Command), calls the original so their prompt is
+// untouched, and appends a zero-width OSC 7. The path is emitted as a proper
+// file URI (file:///C:/...) with an empty host, so it's accepted as local
+// without needing the machine's hostname. No backslashes in the source (char 92
+// = "\\", 47 = "/", 27 = ESC, 7 = BEL) to keep the -Command string clean.
+const PS_CWD_OSC7 =
+  "$__spt=$function:prompt; function global:prompt { " +
+  "$o = if ($__spt) { & $__spt } else { \"PS $((Get-Location).Path)> \" }; " +
+  "try { $d=(Get-Location).ProviderPath; if ($d) { " +
+  "$u=([uri]('file:///'+$d.Replace([char]92,[char]47))).AbsoluteUri; " +
+  "$Host.UI.Write(\"$([char]27)]7;$u$([char]7)\") } } catch {}; $o }";
+
+// Force the legacy powershell.exe console to UTF-8 (pwsh 7+ already defaults to
+// it), then install the OSC 7 hook above.
+const PS_UTF8 =
+  "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding";
+
 // Pick the shell to spawn for each platform and any args it needs. On Windows
 // `process.env.SHELL` is normally unset, so the old `|| "/bin/bash"` fallback
 // spawned a binary that doesn't exist and the terminal died instantly. Prefer
 // pwsh 7+ (UTF-8 by default); if only the legacy powershell.exe is available,
-// force its console encoding to UTF-8 so accents survive.
+// force its console encoding to UTF-8 so accents survive. Both get the OSC 7
+// working-directory hook so splits/new tabs inherit the live directory.
 function resolveShell() {
   if (process.platform === "win32") {
     if (process.env.SPECTERM_SHELL) {
@@ -77,15 +105,11 @@ function resolveShell() {
     }
     const pwsh = findPwsh();
     if (pwsh) {
-      return { shell: pwsh, args: [] };
+      return { shell: pwsh, args: ["-NoExit", "-Command", PS_CWD_OSC7] };
     }
     return {
       shell: "powershell.exe",
-      args: [
-        "-NoExit",
-        "-Command",
-        "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
-      ],
+      args: ["-NoExit", "-Command", `${PS_UTF8}; ${PS_CWD_OSC7}`],
     };
   }
   return { shell: process.env.SHELL || "/bin/bash", args: [] };
@@ -107,14 +131,45 @@ const windows = new Set();
 // for its own sidebar, and its watcher dies with it.
 const fsWatchers = new Map();
 
-// What a freshly created window picks up on mount, keyed by webContents id: the
-// tab a tear-off handed it, and whether it owns the one automatic update check
-// of this process. Consumed exactly once, via "take-window-init".
+// The torn-off tab a freshly created window was made to host, keyed by
+// webContents id. Consumed exactly once, via "take-window-init".
+//
+// Only the tab lives here. Everything else the window needs to know about
+// itself is a flag, and flags go in through `additionalArguments` (see
+// windowBootFlags below) so the renderer can read them with no round trip —
+// what it builds its first tab from must not wait on IPC.
 const windowInit = new Map();
 
-// Set once the automatic (launch-time) update check has been handed to a window,
-// so opening more windows doesn't re-check GitHub on every one.
+// Both are claimed by the first window of the process and never handed out
+// again: opening a second window must not re-hit the GitHub feed, and must not
+// restore the saved session a second time (which would duplicate every tab and
+// every shell in it).
 let updateCheckClaimed = false;
+let sessionClaimed = false;
+
+// The flags stamped into a window's launch arguments, read back by preload.cjs.
+//
+// Encoded as `key=0|1` pairs rather than as JSON: a switch value goes through
+// Chromium's command-line handling, and on Windows that has a long history of
+// mangling embedded quotes. There are no quotes here to mangle, and the result
+// is still legible in a process list.
+function windowBootArg(opts) {
+  const hasTab = Boolean(opts.tab);
+  const autoCheckUpdates = !updateCheckClaimed;
+  // A window created to host a torn-off tab is never the session owner: it has
+  // its tab already, and restoring on top of it would be nonsense.
+  const ownsSession = !sessionClaimed && !hasTab;
+
+  updateCheckClaimed = true;
+  if (ownsSession) sessionClaimed = true;
+
+  const bit = (b) => (b ? "1" : "0");
+  return (
+    `--specterm-boot=hasTab=${bit(hasTab)},` +
+    `autoCheckUpdates=${bit(autoCheckUpdates)},` +
+    `ownsSession=${bit(ownsSession)}`
+  );
+}
 
 // Windows whose renderer has finished loading and is listening for "open-path".
 const readyWindows = new WeakSet();
@@ -232,6 +287,7 @@ function windowBoundsAt(point) {
 function killPtysOwnedBy(wc) {
   for (const [id, instance] of ptyInstances) {
     if (instance.wc !== wc) continue;
+    clearTransitTimer(instance);
     if (!instance.disposed) {
       instance.process.kill();
       instance.disposed = true;
@@ -255,6 +311,10 @@ function createWindow(opts = {}) {
       }
     : { backgroundColor: "#1a1b26" };
 
+  // Flags first: they go into the renderer's own launch arguments, so they have
+  // to be decided before the BrowserWindow exists.
+  const bootArg = windowBootArg(opts);
+
   const win = new BrowserWindow({
     width: WINDOW_WIDTH,
     height: WINDOW_HEIGHT,
@@ -266,19 +326,18 @@ function createWindow(opts = {}) {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
+      // Read synchronously by the preload (see preload.cjs). This is the whole
+      // point: the renderer knows what kind of window it is at module load, so
+      // the first terminal spawns without waiting on a round trip to us.
+      additionalArguments: [bootArg],
     },
   });
 
   windows.add(win);
 
-  // What this window collects on mount. The automatic update check belongs to
-  // the first window only — every later one would otherwise re-hit the GitHub
-  // feed just for being opened.
-  windowInit.set(win.webContents.id, {
-    tab: opts.tab ?? null,
-    autoCheckUpdates: !updateCheckClaimed,
-  });
-  updateCheckClaimed = true;
+  // The torn-off tab, if any — fetched separately because it carries a
+  // serialized screen and has no business on a command line.
+  if (opts.tab) windowInit.set(win.webContents.id, { tab: opts.tab });
 
   // Remove menu bar entirely
   win.setMenuBarVisibility(false);
@@ -301,8 +360,23 @@ function createWindow(opts = {}) {
     return { action: "deny" };
   });
 
+  // Send genuinely external links to the default browser, but never hijack
+  // in-app navigations. Comparing full URLs treated every same-origin reload
+  // (the Vite dev server's, a trailing-slash difference, a hash change) as
+  // "external" and fired openExternal + preventDefault on it — in dev that
+  // preventing-then-reopening looped the browser and stalled the renderer.
+  // Gate on origin instead: same-origin (and non-http, e.g. file://) stays in
+  // the window; only a different http(s) origin goes out.
   win.webContents.on("will-navigate", (event, url) => {
-    if (url !== win.webContents.getURL()) {
+    let external = false;
+    try {
+      const target = new URL(url);
+      const current = new URL(win.webContents.getURL());
+      external = /^https?:$/.test(target.protocol) && target.origin !== current.origin;
+    } catch {
+      external = false;
+    }
+    if (external) {
       event.preventDefault();
       shell.openExternal(url);
     }
@@ -315,6 +389,14 @@ function createWindow(opts = {}) {
   });
   win.on("leave-full-screen", () => {
     if (!win.isDestroyed()) win.webContents.send("fullscreen-change", false);
+  });
+
+  // The user is here now, so stop asking for them. The badge count itself is
+  // left alone — the renderer owns it and clears it as panes are visited; this
+  // only stops the taskbar flash, which on Windows would otherwise keep going
+  // after the window is already in front.
+  win.on("focus", () => {
+    if (!win.isDestroyed()) win.flashFrame(false);
   });
 
   // Tear down everything this window owned. `closed` fires after the webContents
@@ -342,6 +424,30 @@ function createWindow(opts = {}) {
 // the oldest bytes go, exactly as scrollback does.
 const TRANSIT_BUFFER_LIMIT = 1024 * 1024;
 
+// How long a released PTY may sit with no owner before it is killed.
+//
+// A tear-off releases the PTYs first and only then asks where the tab landed, so
+// there is always a window where a shell is running that no window is holding.
+// Normally it lasts as long as it takes the destination to boot. If the handover
+// never completes — the renderer threw between the two steps, the new window
+// failed to load, the process was killed mid-drag — nothing would ever claim it,
+// and a live shell would keep running (and keep filling a megabyte of buffer)
+// until the app quit. Reclaiming it is what makes the release safe to do first.
+//
+// Generous on purpose: this is a backstop for a broken handover, not a deadline
+// for a working one, and killing a shell someone is about to get back would be
+// far worse than holding a dead one for a few seconds too long.
+const TRANSIT_RECLAIM_MS = 30_000;
+
+const EMPTY_BYTES = Buffer.alloc(0);
+
+function clearTransitTimer(instance) {
+  if (instance.transitTimer) {
+    clearTimeout(instance.transitTimer);
+    instance.transitTimer = null;
+  }
+}
+
 // Route PTY output to the window that owns it. A PTY handed over by a tear-off
 // has no owner for the moment it takes the destination window to boot, so its
 // output is parked instead of dropped — otherwise a build running in the torn-off
@@ -359,7 +465,13 @@ function deliverPtyOutput(instance, id, data) {
     return;
   }
   if (!instance.wc.isDestroyed()) {
-    instance.wc.send("pty-output", id, Array.from(data));
+    // The Buffer goes over as-is. Electron's structured clone carries a
+    // Uint8Array natively, so this is one length-prefixed copy of the bytes —
+    // whereas `Array.from(data)` (what this used to do) turned every single byte
+    // into a boxed JS number, then serialized that array element by element.
+    // This is the hottest path in the app: everything a shell prints comes
+    // through it, and a `cat` of anything sizeable made it the bottleneck.
+    instance.wc.send("pty-output", id, data);
   }
 }
 
@@ -407,6 +519,8 @@ ipcMain.handle("spawn-pty", (event, opts) => {
     wc: event.sender,
     pending: [],
     pendingBytes: 0,
+    // Set only while this PTY is in transit between windows — see release-pty.
+    transitTimer: null,
   };
   ptyInstances.set(id, instance);
 
@@ -434,6 +548,24 @@ ipcMain.handle("release-pty", (_event, ids) => {
     instance.wc = null;
     instance.pending = [];
     instance.pendingBytes = 0;
+    // Armed from here, disarmed by adopt-pty. If nobody claims this PTY the
+    // handover broke somewhere, and an unowned shell is not something to leave
+    // running for the rest of the session.
+    clearTransitTimer(instance);
+    instance.transitTimer = setTimeout(() => {
+      instance.transitTimer = null;
+      if (instance.wc !== null) return; // adopted after all
+      if (!instance.disposed) {
+        instance.process.kill();
+        instance.disposed = true;
+      }
+      instance.pending = [];
+      instance.pendingBytes = 0;
+      ptyInstances.delete(id);
+    }, TRANSIT_RECLAIM_MS);
+    // A reclaim that is the only thing left running must not hold the process
+    // open past its own window.
+    instance.transitTimer.unref?.();
   }
 });
 
@@ -443,12 +575,16 @@ ipcMain.handle("release-pty", (_event, ids) => {
 // then does live output start flowing to it.
 ipcMain.handle("adopt-pty", (event, id, cols, rows) => {
   const instance = ptyInstances.get(id);
-  if (!instance) return { buffered: [], exited: true };
+  if (!instance) return { buffered: EMPTY_BYTES, exited: true };
 
   instance.wc = event.sender;
+  clearTransitTimer(instance);
+  // Concatenated once and sent as bytes, not as an array of numbers — this can
+  // be a megabyte of a build's output, and boxing every byte of it would stall
+  // the adopting window at exactly the moment it is trying to appear.
   const buffered = instance.pending.length
-    ? Array.from(Buffer.concat(instance.pending))
-    : [];
+    ? Buffer.concat(instance.pending)
+    : EMPTY_BYTES;
   instance.pending = [];
   instance.pendingBytes = 0;
 
@@ -487,10 +623,342 @@ ipcMain.handle("kill-pty", (_event, id) => {
   ptyInstances.delete(id);
 });
 
+// Where a terminal's shell currently is, asked of the OS rather than of the
+// shell. A new pane should open in the directory you're looking at, and the
+// portable way to learn that — OSC 7 — only works if the shell is configured to
+// emit it: zsh and fish do out of the box, but a plain bash (no VTE hook, empty
+// PROMPT_COMMAND) reports nothing at all, which is the common case on Linux.
+// So the shell's own process is the source of truth and OSC 7 is treated as a
+// faster hint on top of it (see registerCwdHandler in src/lib/osc.ts).
+//
+//   Linux — /proc/<pid>/cwd is a symlink to the live working directory.
+//   macOS — no /proc; lsof reports the cwd descriptor (-d cwd) in field format.
+//   Windows — neither exists, and the Win32 equivalent needs a native call into
+//             the target process, so this returns null and the caller falls
+//             back to the configured startup path.
+//
+// Every failure path returns null instead of throwing: the pty may have exited
+// between the renderer asking and us looking, and a missing cwd is never worth
+// breaking a split over.
+ipcMain.handle("pty-cwd", async (_event, id) => {
+  const instance = ptyInstances.get(id);
+  if (!instance || instance.disposed) return null;
+
+  const pid = instance.process.pid;
+  if (!pid) return null;
+
+  try {
+    if (process.platform === "linux") {
+      return await fs.promises.readlink(`/proc/${pid}/cwd`);
+    }
+    if (process.platform === "darwin") {
+      const out = await new Promise((resolve, reject) => {
+        execFile("lsof", ["-a", "-p", String(pid), "-d", "cwd", "-Fn"], (err, stdout) =>
+          err ? reject(err) : resolve(stdout)
+        );
+      });
+      // -F output is one field per line, each prefixed by its letter; the cwd
+      // path is the `n` line. Take the last one — lsof emits the process
+      // header (p<pid>) first, and only one n line follows for -d cwd.
+      const line = out
+        .split("\n")
+        .filter((l) => l.startsWith("n"))
+        .pop();
+      return line ? line.slice(1) : null;
+    }
+  } catch (_) {
+    // Process gone, /proc unreadable, or lsof missing — no cwd to report.
+  }
+  return null;
+});
+
+// === Process inspection IPC ===
+//
+// What's running inside a pane, so the renderer's session providers (see
+// src/lib/session-providers/) can recognize a resumable program and write down
+// how to pick it back up. Deliberately generic: this side knows about parents,
+// children and named environment variables, and nothing about any particular
+// tool.
+//
+// Both handlers are best-effort by construction. A process can exit between the
+// scan and the read, /proc can be unreadable, and Windows offers no equivalent
+// without a native call into each target — every one of those returns empty
+// rather than throwing, because the only consequence is that a restored pane
+// comes back as a plain shell.
+
+// Direct children of a pid, from the kernel's own list.
+//
+// This is the whole reason the Linux path doesn't enumerate /proc. Walking down
+// from the shells we care about touches a handful of files; scanning every
+// process on the machine touches hundreds, and doing that with Promise.all
+// floods libuv's threadpool — which is only four threads wide by default and is
+// the *same* pool node-pty uses for terminal I/O. A background poll that stalls
+// every terminal in the app is far worse than no session detection at all.
+async function linuxChildren(pid) {
+  const out = [];
+  try {
+    // Children are listed per-thread, and a shell can have more than one.
+    const tids = await fs.promises.readdir(`/proc/${pid}/task`);
+    for (const tid of tids) {
+      const raw = await fs.promises.readFile(
+        `/proc/${pid}/task/${tid}/children`,
+        "utf8"
+      );
+      for (const c of raw.trim().split(/\s+/)) {
+        const n = Number(c);
+        if (Number.isInteger(n)) out.push(n);
+      }
+    }
+  } catch (_) {
+    // Process gone, or a kernel built without CONFIG_PROC_CHILDREN. Either way
+    // this pane reports nothing rather than falling back to a full scan.
+  }
+  return out;
+}
+
+// A process's own working directory. This is what makes a provider's answer
+// correct while a full-screen program is running: the *shell's* cached cwd goes
+// stale the moment something takes over the screen (no new prompt is drawn, so
+// no OSC 7 arrives and the probe is off), but the program itself always knows
+// where it is.
+async function processCwd(pid) {
+  if (process.platform !== "linux") return null;
+  try {
+    return await fs.promises.readlink(`/proc/${pid}/cwd`);
+  } catch (_) {
+    // Exited, or not ours to inspect.
+    return null;
+  }
+}
+
+async function linuxComm(pid) {
+  try {
+    return (await fs.promises.readFile(`/proc/${pid}/comm`, "utf8")).trim();
+  } catch (_) {
+    return null;
+  }
+}
+
+// macOS has no /proc, so its path does need a table — but it's one `ps` call for
+// the whole machine, not one syscall per process, so the threadpool concern
+// above doesn't apply. Returns pid -> { pid, ppid, comm }.
+async function scanProcessTable() {
+  const table = new Map();
+
+  if (process.platform === "darwin") {
+    try {
+      const out = await new Promise((resolve, reject) => {
+        execFile("ps", ["-Ao", "pid=,ppid=,comm="], (err, stdout) =>
+          err ? reject(err) : resolve(stdout)
+        );
+      });
+      for (const line of out.split("\n")) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+        if (!m) continue;
+        // `comm` here is the executable path; the basename is what a provider
+        // matches on, matching Linux's shorter form.
+        table.set(Number(m[1]), {
+          pid: Number(m[1]),
+          ppid: Number(m[2]),
+          comm: path.basename(m[3].trim()),
+        });
+      }
+    } catch (_) {
+      // ps missing or refused — no table, no session detection.
+    }
+    return table;
+  }
+
+  // Linux walks the kernel's child lists instead (see linuxChildren); Windows
+  // has no cheap equivalent at all, so panes there restore as plain shells.
+  return table;
+}
+
+// Descendants of one shell, breadth-first. `table` is the macOS process table;
+// on Linux it's unused and the kernel's per-pid child lists are walked directly.
+// Capped so a pathological tree (a fork bomb, a pid-reuse cycle) can't turn a
+// background poll into an unbounded walk.
+const MAX_DESCENDANTS = 64;
+
+async function descendantsOf(rootPid, table) {
+  const found = [];
+  const queue = [rootPid];
+  const seen = new Set(queue);
+
+  while (queue.length && found.length < MAX_DESCENDANTS) {
+    const pid = queue.shift();
+
+    if (process.platform === "linux") {
+      for (const childPid of await linuxChildren(pid)) {
+        if (seen.has(childPid)) continue;
+        seen.add(childPid);
+        const comm = await linuxComm(childPid);
+        // No comm means it exited between being listed and being read.
+        if (comm !== null) found.push({ pid: childPid, ppid: pid, comm });
+        queue.push(childPid);
+      }
+      continue;
+    }
+
+    for (const child of table.get(pid) ?? []) {
+      if (seen.has(child.pid)) continue;
+      seen.add(child.pid);
+      found.push(child);
+      queue.push(child.pid);
+    }
+  }
+
+  return found;
+}
+
+// The full command line of a process, for providers that need to tell two uses
+// of the same binary apart. Null whenever it can't be read.
+async function processArgs(pid) {
+  try {
+    if (process.platform === "linux") {
+      const raw = await fs.promises.readFile(`/proc/${pid}/cmdline`, "utf8");
+      return raw.split("\0").filter(Boolean).join(" ");
+    }
+    if (process.platform === "darwin") {
+      return await new Promise((resolve) => {
+        execFile("ps", ["-o", "args=", "-p", String(pid)], (err, stdout) =>
+          resolve(err ? null : stdout.trim())
+        );
+      });
+    }
+  } catch (_) {
+    // Gone or unreadable.
+  }
+  return null;
+}
+
+// Descendants of each pty's shell, breadth-first, as { [ptyId]: [proc, ...] }.
+// The shell itself is excluded — a provider is looking for what's *running in*
+// the pane, and the shell is the pane.
+ipcMain.handle("pty-descendants", async (_event, ids) => {
+  const result = {};
+  if (!Array.isArray(ids) || ids.length === 0) return result;
+
+  if (process.platform === "win32") return result;
+
+  // macOS builds its pid -> children index once for every pane; Linux doesn't
+  // need one (descendantsOf walks the kernel's lists directly).
+  let children = new Map();
+  if (process.platform === "darwin") {
+    const table = await scanProcessTable();
+    if (table.size === 0) return result;
+    for (const proc of table.values()) {
+      const siblings = children.get(proc.ppid);
+      if (siblings) siblings.push(proc);
+      else children.set(proc.ppid, [proc]);
+    }
+  }
+
+  for (const id of ids) {
+    const instance = ptyInstances.get(id);
+    if (!instance || instance.disposed || !instance.process.pid) continue;
+
+    const found = await descendantsOf(instance.process.pid, children);
+
+    // Command lines are read one at a time rather than with Promise.all, for
+    // the same threadpool reason as above — and `found` is a handful of
+    // processes, so the sequencing costs nothing measurable.
+    const procs = [];
+    for (const p of found) {
+      procs.push({
+        pid: p.pid,
+        ppid: p.ppid,
+        comm: p.comm,
+        args: await processArgs(p.pid),
+        cwd: await processCwd(p.pid),
+      });
+    }
+    result[id] = procs;
+  }
+
+  return result;
+});
+
+// Named environment variables of a process. Named, never bulk: a shell's
+// environment routinely holds API tokens and ssh material, and none of that has
+// any business crossing into the renderer just because something wanted to know
+// which session was running. Requests for anything that looks like a secret are
+// refused here rather than filtered at the call site.
+const ENV_NAME_RE = /^[A-Z][A-Z0-9_]*$/;
+const ENV_SECRET_RE = /(TOKEN|SECRET|PASSWORD|PASSWD|APIKEY|API_KEY|CREDENTIAL|AUTH)/;
+
+ipcMain.handle("read-process-env", async (_event, pid, names) => {
+  const out = {};
+  if (!Number.isInteger(pid) || !Array.isArray(names)) return out;
+
+  const wanted = names.filter(
+    (n) => typeof n === "string" && ENV_NAME_RE.test(n) && !ENV_SECRET_RE.test(n)
+  );
+  if (wanted.length === 0) return out;
+
+  let raw = null;
+  try {
+    if (process.platform === "linux") {
+      raw = await fs.promises.readFile(`/proc/${pid}/environ`, "utf8");
+    } else if (process.platform === "darwin") {
+      // `ps -E` prints the environment after the command, space-separated. Only
+      // works for processes this user owns, which is exactly our case; when the
+      // OS refuses, providers fall back to whatever else they have.
+      const out2 = await new Promise((resolve) => {
+        execFile("ps", ["-Eo", "command=", "-p", String(pid)], (err, stdout) =>
+          resolve(err ? null : stdout)
+        );
+      });
+      raw = out2 ? out2.replace(/ /g, "\0") : null;
+    }
+  } catch (_) {
+    // Process gone or environ unreadable (it's mode 0400, owner-only).
+  }
+  if (!raw) return out;
+
+  for (const pair of raw.split("\0")) {
+    const eq = pair.indexOf("=");
+    if (eq <= 0) continue;
+    const key = pair.slice(0, eq);
+    if (wanted.includes(key)) out[key] = pair.slice(eq + 1);
+  }
+  return out;
+});
+
 // === Filesystem IPC ===
 
 ipcMain.handle("get-home-path", () => {
   return os.homedir();
+});
+
+// A directory listing with modification times — the plain read-dir the file tree
+// uses doesn't stat, and providers need mtimes to tell which of several session
+// files is the live one. Missing directory = empty list, not an error: "this
+// tool has never run here" is the common answer.
+ipcMain.handle("read-dir-stats", async (_event, dirPath) => {
+  try {
+    const entries = await fs.promises.readdir(dirPath, { withFileTypes: true });
+    const stats = await Promise.all(
+      entries.map(async (e) => {
+        try {
+          const s = await fs.promises.stat(path.join(dirPath, e.name));
+          return { name: e.name, isDirectory: e.isDirectory(), mtimeMs: s.mtimeMs };
+        } catch (_) {
+          return null; // vanished between readdir and stat
+        }
+      })
+    );
+    return stats.filter(Boolean);
+  } catch (_) {
+    return [];
+  }
+});
+
+// This machine's name, used to tell a local OSC 7 report from one arriving over
+// ssh — the sequence carries the host that produced it, and a remote path is
+// meaningless locally. See registerCwdHandler in src/lib/osc.ts.
+ipcMain.handle("get-hostname", () => {
+  return os.hostname();
 });
 
 ipcMain.handle("read-text-file", async (_event, filePath) => {
@@ -669,11 +1137,12 @@ ipcMain.handle("set-window-opacity", (event, value) => {
 
 // === Multi-window IPC ===
 
-// Whatever this window was created with: a tab handed over by a tear-off, and
-// whether it owns the process's one automatic update check. Read once, on mount.
+// The tab a tear-off handed this window. Read once, on mount, and only by a
+// window whose boot flags said one is waiting — everything else it needs to
+// know came in through its launch arguments.
 ipcMain.handle("take-window-init", (event) => {
   const id = event.sender.id;
-  const init = windowInit.get(id) ?? { tab: null, autoCheckUpdates: false };
+  const init = windowInit.get(id) ?? { tab: null };
   windowInit.delete(id);
   return init;
 });
@@ -722,6 +1191,29 @@ ipcMain.on("broadcast", (event, channel, payload) => {
     if (win.webContents === event.sender) continue;
     win.webContents.send("broadcast", channel, payload);
   }
+});
+
+// How many panes are waiting on the user, shown outside the window — the point
+// of the badge is the case where the window isn't the one you're looking at.
+//
+// Two mechanisms, because no single one covers the three platforms:
+//   - setBadgeCount: the number on the macOS dock icon, and the Unity launcher
+//     count on the Linux desktops that implement it. Silently false elsewhere,
+//     which is why it isn't the only thing here.
+//   - flashFrame: the taskbar-entry highlight on Windows and most Linux WMs
+//     (macOS bounces the dock icon). Only ever raised while the window is
+//     unfocused — flashing the window someone is already typing in is noise —
+//     and always lowered when it isn't needed, since on Windows it otherwise
+//     keeps flashing until the window is activated.
+ipcMain.handle("set-attention-badge", (_event, count) => {
+  const n = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
+  try {
+    app.setBadgeCount(n);
+  } catch (_) {
+    /* No badge support on this desktop — the flash below still applies. */
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.flashFrame(n > 0 && !mainWindow.isFocused());
 });
 
 // === Application menu ===
@@ -1233,6 +1725,7 @@ app.whenReady().then(() => {
 // windows, which has no owner to clean it up.
 app.on("window-all-closed", () => {
   for (const [, instance] of ptyInstances) {
+    clearTransitTimer(instance);
     if (!instance.disposed) {
       instance.process.kill();
     }

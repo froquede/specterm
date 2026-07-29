@@ -17,6 +17,160 @@
   order, so a running build doesn't lose a line. A full-screen program (vim,
   htop, Claude Code) redraws itself in the new window the same way it does on
   any terminal resize.
+- **Panes that are waiting on you say so.** When Claude Code finishes a turn or
+  stops to ask permission, a dot appears on its tab and on its pane's
+  title-bar, and the dock/taskbar picks it up — so a session can run in another
+  tab, or behind another window, without being checked on. The dot goes out the
+  moment you focus the pane or type into it. A permission prompt is drawn in the
+  accent colour and pulses; a finished turn is a quiet grey dot, because a
+  screen full of finished sessions shouldn't blink at you.
+
+  Settings → *Flag panes waiting on you* picks how it's found out. **"Detect
+  it"** (the default) needs no setup: a Claude session that is working is never
+  silent — it repaints a spinner several times a second — so a pane that was
+  producing output steadily and has gone quiet is one that stopped for you. It
+  reads timing only, never the screen, so nothing about it breaks when Claude
+  rewords its footer. **"Let Claude say so"** is exact: it installs a
+  `Notification` and a `Stop` hook into `~/.claude/settings.json`, each writing
+  one escape sequence to the pane it runs in, which arrives instantly and can
+  tell a permission prompt apart from a finished turn. The hooks touch nothing
+  else in that file and can be removed from the same button; they need
+  `/dev/tty`, so that mode is macOS/Linux only. **"Off"** watches nothing.
+
+  A terminal bell flags a pane in either mode — it's what a program of any kind
+  uses to ask to be looked at, so a `make` that ends with `\a` gets the same dot.
+
+### Changed
+- **A shell's output no longer round-trips through an array of numbers.** Every
+  byte a terminal printed used to be boxed into a JS number, put in a plain
+  array, and serialized element by element on its way to the renderer. It now
+  crosses as bytes. This is the hottest path in the app — everything any shell
+  prints goes through it — and it was the ceiling on how fast a pane could
+  render a large `cat`, a verbose build, or a `git log`.
+- **Session restore and the reopen-closed stack know about windows.** The saved
+  session belongs to the window that restored it: it is the only one that writes
+  it back, so a second window can't overwrite the snapshot with its own tabs, and
+  opening one with `⌘N` gives you a plain terminal rather than a duplicate of
+  everything already open. The closed-tab stack, by contrast, is deliberately
+  shared — "reopen what I closed last" means the last thing closed anywhere —
+  and is now read back from storage on every push and pop, so two windows can't
+  drop each other's entries.
+
+### Fixed
+- **Windows: new panes and tabs inherit the directory again.** Windows has no
+  `/proc` to read a shell's working directory from, so PowerShell is now asked to
+  report it: both `pwsh` and the legacy `powershell.exe` get a prompt hook that
+  emits `OSC 7`, the same sequence zsh and fish send by default and the renderer
+  already understood. The `file:///C:/…` form it produces is normalized back to a
+  real Windows path.
+- **Terminal scroll position survives a tab switch.** Switching tabs moves the
+  terminal element into a new container, which resets the DOM scrollbar to the
+  top while xterm's own scroll position stays where it was — leaving the bar
+  pinned at the top over correctly-rendered bottom content, and snapping to the
+  top on the next scroll. The two are re-synced after the re-attach.
+
+## 0.15.0 — 2026-07-27
+
+### Added
+- **Reopen what you closed.** **⌘⇧T** (`Ctrl+Shift+R` on Linux/Windows) brings
+  back the last closed tab — or the last closed pane, whichever went more
+  recently — and keeps walking back through the close order on repeated presses,
+  25 deep and across restarts. A tab returns to the position it held; a pane
+  returns to the tab it came from, or becomes a tab of its own if that tab is
+  gone too. Panes come back with their layout, titles and working directories;
+  the shells are new, since nothing that was running is restarted.
+- **Reopen tabs on start.** The tabs, splits and directories you had open come
+  back on the next launch (Settings → *Reopen tabs on start*, on by default). A
+  renderer reload deliberately doesn't restore: the previous shells are still
+  alive in that case, and restoring would spawn a second set beside them.
+- **Restored panes remember Claude Code sessions.** A pane running Claude Code
+  has its session identified while it runs, so the restored terminal comes back
+  with `claude --resume <id>` ready at the prompt. Settings → *Resumable
+  sessions* chooses between typing it (the default — a remembered session id may
+  since have been deleted, so the command is left for you to confirm), running
+  it, or ignoring it. The mechanism is generic: the history stores a provider,
+  an id and a resume command, and Claude Code is simply the first provider.
+  Detection is exact when Claude has a child process to read the session from,
+  and falls back to the most recently active transcript for the pane's
+  directory; Windows can't report a pane's processes at all, so panes there
+  restore as plain shells.
+- **An optional clock in the tab bar.** Off by default. The format is a token
+  string rather than a locale preset — `HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`,
+  with `[bracketed]` literals — and Settings previews it as you type. It sits at
+  the far end from the tabs, so it doesn't move as tabs open and close.
+
+  It wakes only when the text it shows would change: once a minute for a format
+  without seconds, aligned to the minute boundary rather than drifting off it,
+  and once a second only if seconds are actually displayed. While the window is
+  hidden it doesn't tick at all, resyncing when it comes back. Switched off,
+  the component isn't mounted, so there is no timer at all.
+
+### Changed
+- **Renaming a tab is now `F2` on Linux/Windows** (macOS keeps `⌘R`), freeing
+  `Ctrl+Shift+R` for reopen. `Ctrl+Shift+T` stays *new tab*, as in every other
+  terminal — and bare `Ctrl+T` stays out of reach on purpose, since it's
+  readline's transpose-chars. `F2` steps aside whenever a full-screen program
+  owns the pane (it's on the alternate screen buffer), so it still reaches
+  htop's Setup and mc's menu; it renames only at a shell prompt.
+
+### Performance
+The session history is built to cost nothing when it isn't doing anything:
+- A pane's pty output path is untouched unless that specific pane owes a resume
+  command. Output is the hottest path in the app — every echoed keystroke, every
+  line of a build log — and a restore can only ever happen once, so it has no
+  business being checked there for the life of the process.
+- The "what was open" snapshot is serialized behind a debounce (a divider drag
+  writes the store on every mousemove) and skipped entirely when the result is
+  byte-identical to what's already stored, since `localStorage.setItem` is
+  synchronous on the same thread that draws the terminal. With *Reopen tabs on
+  start* off, no snapshot is ever built.
+- Session detection walks the kernel's per-process child lists down from each
+  shell rather than enumerating every process on the machine. The scan runs in
+  the main process, which is also where the ptys live, and flooding libuv's
+  (four-thread) pool there stalls terminal I/O app-wide. It also skips ticks
+  while the window is hidden, and doesn't run at all with *Resumable sessions*
+  set to "Ignore them".
+
+## 0.14.0 — 2026-07-24
+
+### Added
+- **Splits and new tabs open where you already are.** A new pane inherits the
+  working directory of the pane it was split from, instead of dropping you back
+  at the configured startup path. The directory is read from the shell's own
+  process (`/proc` on Linux, `lsof` on macOS), so it works without configuring
+  your shell; when the shell sends `OSC 7` — zsh and fish do by default, and most
+  prompt frameworks add it — that report is preferred, since it arrives the
+  moment the directory changes and costs nothing. A report naming another host
+  (an ssh session) is dropped rather than pointing a local pane at a path that
+  only exists on the remote machine. Windows can't report a shell's live
+  directory without a native call into the process, so inheritance there still
+  falls back to the startup path.
+- **Select & copy the input composer.** **⌘⇧A** (Ctrl+Shift+A on Linux/Windows)
+  highlights just the Claude Code prompt box the cursor is in and copies the
+  typed text, instead of a plain select-all grabbing the whole scrollback. At a
+  bare shell prompt it falls back to the cursor's logical line. Bare `Ctrl+A`
+  stays free for readline's "beginning of line", and `⌘A` for the markdown
+  editor's own select-all.
+
+### Fixed
+- **Closing a pane or tab returns focus to where you came from.** Closing the
+  active pane handed focus to the first leaf of the split tree, so splitting off
+  a pane and closing it dropped you on the top-left pane rather than the one you
+  were working in; closing a tab had the same shape one level up, picking the
+  replacement by index. Both now keep a most-recently-used focus history and hand
+  focus to the most recent survivor, falling back to the old position rule only
+  when nothing was focused before.
+- **`cd fav-N` on Windows lands in the favorite path again.** The expansion
+  injects a PowerShell one-liner into the input line in a single burst, and
+  ConPTY/PSReadLine strips the lone backslashes out of it — `C:\Users\x` reached
+  `Set-Location` as `C:Usersx`, so the jump silently failed. The path is now
+  emitted forward-slashed, which PowerShell accepts as a separator and which
+  survives injection intact. Linux and macOS were never affected.
+- **Same-origin reloads stay in the window.** `will-navigate` compared full URLs,
+  so any same-origin navigation (a trailing slash, a hash change, the dev
+  server's reload) counted as an external link and fired `openExternal` — which
+  in development looped the default browser and stalled the renderer. It now
+  compares origins, and only a genuinely different http(s) origin goes out.
 
 ## 0.13.0 — 2026-07-22
 

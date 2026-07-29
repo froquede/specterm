@@ -6,6 +6,7 @@ import MarkdownPane from "./MarkdownPane";
 import TextPane from "./TextPane";
 import TerminalSearch from "./TerminalSearch";
 import { searchPaneId } from "../stores/terminal-search";
+import { paneAttention } from "../stores/attention";
 import {
   draggingPaneId,
   setDraggingPaneId,
@@ -164,6 +165,23 @@ export default function Pane(props: PaneProps) {
         onPointerDown={onBarPointerDown}
       >
         <span class="pane-grip">⠿</span>
+        {/* Which pane in a split is the one waiting. The tab chip only says
+            that something in the tab is; this says where. */}
+        <Show when={paneAttention(paneId)} keyed>
+          {(kind) => (
+            <span
+              class="pane-attention"
+              data-kind={kind}
+              title={
+                kind === "permission"
+                  ? "Waiting for your answer"
+                  : kind === "bell"
+                    ? "Rang the terminal bell"
+                    : "Finished — waiting for you"
+              }
+            />
+          )}
+        </Show>
         <span class="pane-title">{label()}</span>
         <button
           class="pane-close-btn"
@@ -181,6 +199,11 @@ export default function Pane(props: PaneProps) {
         <Show when={props.pane.kind === "terminal"}>
           <TerminalPane
             paneId={paneId}
+            cwd={
+              props.pane.kind === "terminal"
+                ? (props.pane as PaneType & { kind: "terminal" }).cwd
+                : undefined
+            }
             onTitle={(t) => {
               setTermTitle(t);
               props.onTitle?.(t);

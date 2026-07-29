@@ -1,6 +1,6 @@
 import { createSignal } from "solid-js";
 import { Terminal } from "@xterm/xterm";
-import type { ITheme } from "@xterm/xterm";
+import type { ITheme, IBuffer } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -14,15 +14,25 @@ import {
   adoptPty,
   onPtyOutput,
   onPtyExit,
+  ptyCwd,
 } from "./pty";
 import { startupPath } from "../stores/settings";
 import { os } from "./platform";
-import { registerOscHandler } from "./osc";
+import {
+  registerOscHandler,
+  registerCwdHandler,
+  registerAttentionHandler,
+} from "./osc";
+import { noteOutput, noteInput, forgetPane } from "./claude-attention";
+import { markAttention, clearAttention } from "../stores/attention";
+import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
 import { publishStoreChange, registerStoreSync } from "./store-sync";
+import { cancelPendingRestore, takePendingRestore } from "./session-restore";
 import type { UnlistenFn } from "../backends/types";
+import type { SessionMeta } from "../types";
 
 // Active xterm palette, applied to new terminals at creation and pushed into
 // every live terminal by setTerminalTheme. Seeded with the default so terminals
@@ -57,6 +67,36 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
   }
 }
 
+// Re-sync the DOM scrollbar to xterm's logical scroll position after a re-attach.
+// Switching tabs disposes and recreates the pane (SplitContainer keys panes by
+// leaf id), so the terminal element is moved into a new container. That move
+// resets the `.xterm-viewport` element's scrollTop to 0, while xterm's own
+// viewportY (which drives what it renders) is preserved — leaving the scrollbar
+// pinned at the top over correctly-rendered bottom content, and the next scroll
+// snaps to the top. xterm's scrollToBottom/scrollToLine can't fix it: the delta
+// from the preserved viewportY is zero, so they no-op without touching the DOM.
+// Drive the DOM scrollTop directly instead; the resulting scroll event makes
+// xterm re-sync and repaint. Read from the live buffer (viewportY survives the
+// move), so there is no captured state to keep in step. Runs after the fit so
+// the moved element has been measured and scrollHeight is valid.
+function syncViewportScroll(instance: TerminalInstance) {
+  const viewport =
+    instance.container?.querySelector<HTMLElement>(".xterm-viewport");
+  if (!viewport) return;
+  const term = instance.term;
+  const buffer = term.buffer.active;
+  const totalRows = buffer.baseY + term.rows;
+  // At the bottom (or nothing to scroll): pin to the end so a live terminal
+  // keeps its prompt in view. Otherwise map the logical top row back to a pixel
+  // offset via the measured row height (scrollHeight covers baseY + rows).
+  if (buffer.viewportY >= buffer.baseY || totalRows <= term.rows) {
+    viewport.scrollTop = viewport.scrollHeight;
+  } else {
+    const cellHeight = viewport.scrollHeight / totalRows;
+    viewport.scrollTop = Math.round(buffer.viewportY * cellHeight);
+  }
+}
+
 export interface TerminalInstance {
   term: Terminal;
   fitAddon: FitAddon;
@@ -76,6 +116,22 @@ export interface TerminalInstance {
   // pane's callback, re-wired on every attach.
   title: string;
   onTitle: ((title: string) => void) | null;
+  // The shell's working directory, kept current so a new pane can open where
+  // this one is. Seeded with the spawn cwd, then updated from OSC 7 when the
+  // shell reports it and re-read from the shell process after each command
+  // (refreshCwd) for the shells that don't. Never blank once spawned.
+  cwd: string;
+  // Set once this shell has sent an OSC 7. From then on it is the authority on
+  // its own directory and the process probe stops: the shell reports the moment
+  // it moves, knows about cases a process snapshot can blur (a subshell, a
+  // pushd), and costs no IPC. Shells that never report keep being probed.
+  cwdReportedByShell: boolean;
+  // The resumable session a provider last recognized in this pane, if any (see
+  // lib/session-providers). Sticky on purpose: it's captured opportunistically
+  // while the process runs, and the moment it matters — the pane is closing, or
+  // the app is quitting — that process may already be gone. Cleared only when a
+  // provider positively identifies a *different* session in the same pane.
+  sessionMeta: SessionMeta | undefined;
 }
 
 const instances = new Map<string, TerminalInstance>();
@@ -258,9 +314,22 @@ function takeAdoption(paneId: string): TerminalAdoption | undefined {
 // screen. Colors and attributes survive; the internal state of a full-screen
 // program does not — vim or htop redraw themselves on the adopting window's
 // first resize, which is the same thing that happens on any terminal resize.
-export function serializeTerminal(paneId: string): string {
+//
+// Async because of the flush. `term.write` is queued, not immediate: bytes that
+// have already arrived from the host may still be sitting unparsed when a
+// tear-off asks for the snapshot. Serializing then would miss exactly those —
+// and they'd be missing from the host's transit buffer too, since the host had
+// already sent them — so they'd be gone for good. Writing an empty chunk and
+// waiting for its callback drains everything queued ahead of it first.
+export async function serializeTerminal(paneId: string): Promise<string> {
   const instance = instances.get(paneId);
   if (!instance || instance.disposed) return "";
+  try {
+    await new Promise<void>((resolve) => instance.term.write("", resolve));
+  } catch {
+    // Terminal disposed mid-flush — fall through and serialize what's there.
+  }
+  if (instance.disposed) return "";
   const addon = new SerializeAddon();
   try {
     instance.term.loadAddon(addon);
@@ -274,6 +343,98 @@ export function serializeTerminal(paneId: string): string {
   }
 }
 
+// Claude Code marks its composer input line with a ❯ (U+276F) caret glyph, then
+// a non-breaking space, then the text. It hides the real terminal cursor and
+// paints its own, so we can't anchor on buf.cursorY — we find the marker line
+// instead. The statusline below the composer is a horizontal rule of ─ (U+2500).
+const PROMPT_MARKER = "❯";
+const COMPOSER_RULE_RE = /^─{5,}/;
+
+function bufferLineText(buf: IBuffer, row: number): string {
+  return buf.getLine(row)?.translateToString(true) ?? "";
+}
+
+// Locate the composer: the lowest ❯ marker line in the viewport, extended down
+// over continuation rows (Shift+Enter wraps the message onto more lines) until
+// the statusline rule or a blank row closes it. Null when no composer is on
+// screen (a plain shell prompt).
+function findComposer(
+  buf: IBuffer,
+  viewTop: number,
+  viewBottom: number
+): { top: number; bottom: number } | null {
+  let top = -1;
+  for (let r = viewBottom; r >= viewTop; r--) {
+    if (bufferLineText(buf, r).trimStart().startsWith(PROMPT_MARKER)) {
+      top = r;
+      break;
+    }
+  }
+  if (top === -1) return null;
+  let bottom = top;
+  for (let r = top + 1; r <= viewBottom; r++) {
+    const t = bufferLineText(buf, r).trim();
+    if (t === "" || COMPOSER_RULE_RE.test(t)) break;
+    bottom = r;
+  }
+  return { top, bottom };
+}
+
+// Pull the typed text out of the composer rows: strip the ❯ marker (and the
+// non-breaking space that trails it) from the first row, and the two-space
+// alignment continuation rows carry under it. Heuristic — tuned to Claude Code —
+// so exotic indentation may not survive exactly, but the message body does.
+function extractComposerText(buf: IBuffer, top: number, bottom: number): string {
+  const rows: string[] = [];
+  for (let r = top; r <= bottom; r++) {
+    let s = bufferLineText(buf, r);
+    s =
+      r === top
+        // Strip the ❯ marker plus the whitespace/non-breaking-space around it.
+        // NBSP (U+00A0) is spelled out because \s doesn't match it everywhere.
+        ? s.replace(/^[\s ]*❯[\s ]*/, "")
+        : s.replace(/^ {0,2}/, ""); // continuation alignment
+    rows.push(s.replace(/\s+$/, ""));
+  }
+  return rows.join("\n").replace(/\s+$/, "");
+}
+
+// Fall back to the logical line at the cursor (following soft-wrap) when there's
+// no composer on screen — keeps the shortcut useful at a plain shell prompt.
+function currentLogicalLine(buf: IBuffer, cursorRow: number): { top: number; bottom: number } {
+  let top = cursorRow;
+  while (top > 0 && buf.getLine(top)?.isWrapped) top--;
+  let bottom = cursorRow;
+  while (bottom < buf.length - 1 && buf.getLine(bottom + 1)?.isWrapped) bottom++;
+  return { top, bottom };
+}
+
+// Select the active pane's input area and return its text for the clipboard.
+// Prefers the Claude Code composer (the intended target); at a bare shell prompt
+// it degrades to the cursor's logical line. Bound to Cmd/Ctrl+Shift+A (see
+// keymap) as a scoped alternative to selecting the whole scrollback.
+export function selectComposerText(paneId: string): string | null {
+  const inst = instances.get(paneId);
+  if (!inst || inst.disposed) return null;
+  const { term } = inst;
+  const buf = term.buffer.active;
+  const viewTop = buf.baseY;
+  const viewBottom = buf.baseY + term.rows - 1;
+
+  const composer = findComposer(buf, viewTop, viewBottom);
+  const region =
+    composer ?? currentLogicalLine(buf, buf.baseY + buf.cursorY);
+
+  term.clearSelection();
+  term.selectLines(region.top, region.bottom);
+  term.focus();
+
+  const text = composer
+    ? extractComposerText(buf, region.top, region.bottom)
+    : term.getSelection();
+  return text.trim() ? text : null;
+}
+
 // --- "cd fav-N" expansion -------------------------------------------------
 // Typing `cd fav-1` at the shell prompt and pressing Enter is rewritten into a
 // real `cd <path>` for the favorite pinned at that 1-based index, mirroring the
@@ -284,6 +445,12 @@ export function serializeTerminal(paneId: string): string {
 // The mirror resets on every Enter/Ctrl-C/Ctrl-U.
 
 const CD_FAV_RE = /^cd\s+fav-(\d+)$/;
+
+// A mouse report on its way to a program that grabbed the mouse — SGR
+// (`\x1b[<0;12;3M`) or the older X10 form (`\x1b[M...`). xterm sends these down
+// the same onData channel as typing, so anything that means "the user answered"
+// has to tell them apart.
+const MOUSE_REPORT = /^\x1b\[(<|M)/;
 
 // POSIX single-quote a path so spaces and shell metacharacters survive intact.
 function shellQuote(p: string): string {
@@ -298,7 +465,14 @@ function cdFavCommand(dir: string, favPath: string): string {
   if (os === "windows") {
     // PowerShell escapes a single quote by doubling it; -LiteralPath avoids
     // glob/[] interpretation of the path.
-    const q = (p: string) => `'${p.replace(/'/g, "''")}'`;
+    //
+    // Backslashes must become forward slashes first: when this line is injected
+    // into the shell's input in one burst, ConPTY/PSReadLine drops the lone
+    // backslashes from the favorite path (`C:\Users\x` arrives as `C:Usersx`),
+    // so Set-Location fails with PathNotFound and the jump silently breaks.
+    // PowerShell accepts `/` as a path separator, and `/` survives injection
+    // intact, so emit the path forward-slashed.
+    const q = (p: string) => `'${p.replace(/\\/g, "/").replace(/'/g, "''")}'`;
     return (
       `if (Test-Path -LiteralPath ${q(dir)}) ` +
       `{ Set-Location -LiteralPath ${q(dir)} } ` +
@@ -338,12 +512,82 @@ function foldInput(
   return { buffer, tracked: false };
 }
 
+// Re-read the shell's directory from its own process and cache it. Silent and
+// best-effort: a null answer (Windows, or a pty that exited between the ask and
+// the look) leaves the last known value alone rather than blanking it.
+async function refreshCwd(instance: TerminalInstance) {
+  if (instance.ptyId === null || instance.disposed) return;
+  // The shell reports for itself — don't second-guess it with a snapshot taken
+  // at a slightly different moment.
+  if (instance.cwdReportedByShell) return;
+  const cwd = await ptyCwd(instance.ptyId);
+  if (cwd && !instance.disposed) instance.cwd = cwd;
+}
+
+// A command just ran, so the directory may have moved. A bare `cd` lands
+// immediately, but a script that cds partway through takes longer — so probe
+// twice around the command instead of polling on a timer while the terminal
+// sits idle, which would cost an IPC round trip per second per pane forever.
+// Shells that send OSC 7 have already updated the value by now; this is the
+// fallback path, and re-reading is harmless when it agrees.
+const cwdProbes = new WeakMap<TerminalInstance, number[]>();
+
+function scheduleCwdRefresh(instance: TerminalInstance) {
+  for (const timer of cwdProbes.get(instance) ?? []) clearTimeout(timer);
+  cwdProbes.set(instance, [
+    window.setTimeout(() => refreshCwd(instance), 150),
+    window.setTimeout(() => refreshCwd(instance), 1500),
+  ]);
+}
+
+/** The live working directory of a pane's shell, or "" if it has no terminal. */
+export function getTerminalCwd(paneId: string): string {
+  return instances.get(paneId)?.cwd ?? "";
+}
+
+/**
+ * Is a full-screen program in control of this pane?
+ *
+ * The alternate screen buffer is the standard signal: htop, vim, less and mc all
+ * switch to it on entry (`?1049h`) and back on exit, which is exactly what makes
+ * them "the program that owns the keyboard right now". Bare-key shortcuts check
+ * this and stand down while it's true, so F2 opens the tab rename at a shell
+ * prompt and still reaches htop's Setup inside htop.
+ */
+export function paneRunsFullscreenApp(paneId: string): boolean {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed) return false;
+  return instance.term.buffer.active.type === "alternate";
+}
+
+/** Record (or clear) the resumable session a provider found in a pane. */
+export function setSessionMeta(paneId: string, meta: SessionMeta | undefined) {
+  const instance = instances.get(paneId);
+  if (instance) instance.sessionMeta = meta;
+}
+
+/** Every live terminal pane, for the pollers that inspect running processes. */
+export function livePaneIds(): string[] {
+  return [...instances.entries()]
+    .filter(([, i]) => !i.disposed && i.ptyId !== null)
+    .map(([id]) => id);
+}
+
+/** The pty backing a pane, or null when it hasn't spawned (or has exited). */
+export function getPanePtyId(paneId: string): number | null {
+  const instance = instances.get(paneId);
+  return instance && !instance.disposed ? instance.ptyId : null;
+}
+
 export async function createTerminalInstance(
   paneId: string,
   opts?: {
     onTitle?: (title: string) => void;
     onExit?: () => void;
     onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+    // Directory this terminal should open in — the live cwd of the pane it was
+    // split from. Blank for the boot terminal, which uses the startup path.
+    initialCwd?: string;
   }
 ): Promise<TerminalInstance> {
   // Return existing if already created
@@ -390,9 +634,40 @@ export async function createTerminalInstance(
     disposed: false,
     title: "Terminal",
     onTitle: opts?.onTitle ?? null,
+    // Where this terminal will spawn. The pane carries the directory it should
+    // inherit (the pane it was split from); blank falls back to the configured
+    // startup path, then to home main-side.
+    cwd: opts?.initialCwd || startupPath() || "",
+    cwdReportedByShell: false,
+    sessionMeta: undefined,
   };
 
   instances.set(paneId, instance);
+
+  // The exact "I'm waiting on you" signal, written into this pane by the Claude
+  // Code hooks (lib/claude-hooks.ts) when they're installed. Always registered:
+  // the sequence only ever arrives if the user installed the hooks, and honoring
+  // it costs nothing until then. The mode check is here rather than at the hook,
+  // so switching the feature off stops the flags without touching ~/.claude.
+  registerAttentionHandler(term, (kind) => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, kind);
+  });
+
+  // The terminal bell — how a program of any kind asks to be looked at. Claude
+  // Code rings it when its notification channel is terminal_bell, and so does a
+  // long build that ends with `\a`; both are the same request.
+  term.onBell(() => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, "bell");
+  });
+
+  // The shell's own report of its directory, when it sends one. Free and
+  // instant where available; refreshCwd covers the shells that stay quiet.
+  registerCwdHandler(term, (cwd) => {
+    instance.cwd = cwd;
+    instance.cwdReportedByShell = true;
+  });
 
   // Title is reported once here and cached on the instance, then forwarded to
   // whichever pane is currently mounted. Wiring it on the instance (not in a
@@ -413,6 +688,7 @@ export async function attachTerminal(
     onTitle?: (title: string) => void;
     onExit?: () => void;
     onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+    initialCwd?: string;
   }
 ) {
   let instance = instances.get(paneId);
@@ -435,6 +711,7 @@ export async function attachTerminal(
   if (instance.container === container) {
     instance.detachSelection ??= installClickVsDragSelection(term, container);
     safeFit(term, fitAddon);
+    syncViewportScroll(instance);
     term.focus();
     return;
   }
@@ -468,6 +745,7 @@ export async function attachTerminal(
     instance.resizeObserver.observe(container);
 
     safeFit(term, fitAddon);
+    syncViewportScroll(instance);
     term.focus();
     return;
   }
@@ -568,21 +846,51 @@ export async function attachTerminal(
     instance.onTitle?.(adoption.title);
     if (adoption.scrollback) term.write(adoption.scrollback);
   } else {
-    // Spawn PTY. The configured startup directory (Settings) is passed through
-    // as cwd; blank → undefined, and the main process falls back to the OS home.
-    // A stale/deleted path is guarded main-side so spawning can't crash.
+    // Spawn PTY. instance.cwd is the directory inherited from the pane this one
+    // was split from, or the configured startup directory (Settings) for the
+    // boot terminal; blank → undefined, and the main process falls back to the
+    // OS home. A stale/deleted path is guarded main-side so spawning can't
+    // crash.
     instance.ptyId = await spawnPty({
       cols: term.cols,
       rows: term.rows,
-      cwd: startupPath() || undefined,
+      cwd: instance.cwd || undefined,
     });
   }
 
-  // Wire output
+  // The spawn directory is only the starting point — from here the value has to
+  // track the user's `cd`s, or a split taken an hour later would still inherit
+  // where the shell began. Read it back once now so a shell rc that cds on
+  // startup is reflected too. An adopted shell needs it more than a spawned one:
+  // this window never saw where that shell has been, so its only directory is
+  // whatever the process itself reports.
+  refreshCwd(instance);
+
+  // Wire output. A restored pane owes its shell a resume command that can only
+  // be sent once there's a prompt to send it to, so its first chunk of output
+  // doubles as the "shell is ready" signal — but only that pane pays for the
+  // check: the branch is resolved once, here, not per chunk. Every other pane
+  // (which is nearly all of them) gets the bare writer.
+  //
+  // Every chunk is also timed by the attention heuristic (lib/claude-attention),
+  // which reads nothing from the data — only when it arrived — to spot a pane
+  // that was working and has gone quiet.
+  const onShellReady = takePendingRestore(paneId, instance.ptyId);
+  const writeChunk = onShellReady
+    ? (data: Uint8Array) => {
+        term.write(data);
+        noteOutput(paneId);
+        onShellReady();
+      }
+    : (data: Uint8Array) => {
+        term.write(data);
+        noteOutput(paneId);
+      };
+
   instance.unlistenOutput = await onPtyOutput((id, data) => {
     if (id !== instance!.ptyId) return;
     if (gate) gate.push(data);
-    else term.write(data);
+    else writeChunk(data);
   });
 
   // Wire exit
@@ -609,7 +917,7 @@ export async function attachTerminal(
     } finally {
       const held = gate ?? [];
       gate = null;
-      for (const chunk of held) term.write(chunk);
+      for (const chunk of held) writeChunk(chunk);
     }
     // The process died mid-move: its exit event went to a window that had
     // already let go, so nothing else will report it.
@@ -627,8 +935,19 @@ export async function attachTerminal(
     if (instance!.ptyId === null) return;
     const ptyId = instance!.ptyId;
 
+    // Typing into a waiting pane *is* the answer it was waiting for. Clearing
+    // here (rather than only on focus) covers answering a prompt in a split you
+    // never made active. Mouse reports come down this same channel from a pane
+    // whose program grabbed the mouse, and moving the pointer over a pane
+    // answers nothing — a real click focuses it, which clears it anyway.
+    if (!MOUSE_REPORT.test(data)) noteInput(paneId);
+
     // Enter — try to expand the line before it reaches the shell.
     if (data === "\r" || data === "\n") {
+      // Whatever the command turns out to be, it may leave the shell somewhere
+      // new — including the `cd fav-N` expansion below, which is a cd by
+      // definition. Covers both paths out of this branch.
+      scheduleCwdRefresh(instance!);
       const m = lineTracked ? CD_FAV_RE.exec(lineBuffer.trim()) : null;
       const fav = m ? favoriteByIndex(Number(m[1])) : undefined;
       const typedLen = lineBuffer.length;
@@ -702,6 +1021,14 @@ export function detachTerminal(paneId: string) {
 // kill: the shell survives, and the window that adopts the PTY builds a fresh
 // terminal around it.
 export function releaseTerminal(paneId: string) {
+  // Everything destroyTerminal drops for a pane that stops existing applies
+  // here too — this pane is leaving the window, and none of it means anything
+  // once it has. Only the kill is different: the shell is being handed on, and
+  // the pty id is what the destination window adopts.
+  cancelPendingRestore(paneId);
+  clearAttention(paneId);
+  forgetPane(paneId);
+
   const instance = instances.get(paneId);
   if (!instance) return;
 
@@ -716,6 +1043,15 @@ export function releaseTerminal(paneId: string) {
 }
 
 export function destroyTerminal(paneId: string) {
+  // A pane closed before it ever mounted still has its resume command queued —
+  // drop it, or the map holds entries for panes that no longer exist.
+  cancelPendingRestore(paneId);
+
+  // A pane that was waiting on the user has just stopped existing — the flag
+  // and the timer behind it go with it.
+  clearAttention(paneId);
+  forgetPane(paneId);
+
   const instance = instances.get(paneId);
   if (!instance) return;
 

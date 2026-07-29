@@ -22,6 +22,19 @@ import {
   WINDOW_OPACITY_DEFAULT,
   startupPath,
   setStartupPath,
+  clockEnabled,
+  setClockEnabled,
+  clockFormat,
+  setClockFormat,
+  CLOCK_FORMAT_MAX,
+  restoreLastSession,
+  setRestoreLastSession,
+  sessionRestoreMode,
+  setSessionRestoreMode,
+  type SessionRestoreMode,
+  claudeAttentionMode,
+  setClaudeAttentionMode,
+  type ClaudeAttentionMode,
   tabBarCorner,
   setTabBarCorner,
   TAB_BAR_CORNERS,
@@ -65,6 +78,13 @@ import {
   setTerminalFontFamily,
 } from "../lib/terminal-registry";
 import { detectMonospaceFonts } from "../lib/fonts";
+import { formatClock } from "../lib/clock-format";
+import {
+  hooksSupported,
+  hooksInstalled,
+  installHooks,
+  removeHooks,
+} from "../lib/claude-hooks";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -98,6 +118,47 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // Gallery browser (the 325 bundled base16 schemes), with a name filter.
   const [galleryOpen, setGalleryOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
+
+  // Clock format: a local draft while typing (same reason as the startup path
+  // below), plus a preview rendered from the draft so a half-typed format shows
+  // what it would produce before it's committed. The preview only re-renders on
+  // keystrokes — it's not on a timer.
+  const [clockDraft, setClockDraft] = createSignal(clockFormat());
+  const clockPreview = () => formatClock(clockDraft() || " ", new Date());
+
+  // Claude hooks: whether our two entries are currently in the user's
+  // ~/.claude/settings.json. Re-read whenever the "exact" mode is selected
+  // rather than kept in our own settings — the file is the user's, they can
+  // edit it out from under us, and it is the only thing that decides whether
+  // the hooks actually fire.
+  const [hooksOn, setHooksOn] = createSignal(false);
+  const [hooksBusy, setHooksBusy] = createSignal(false);
+  const [hooksError, setHooksError] = createSignal<string | null>(null);
+
+  createEffect(() => {
+    if (claudeAttentionMode() !== "hooks" || !hooksSupported) return;
+    void hooksInstalled().then(setHooksOn);
+  });
+
+  async function toggleHooks() {
+    setHooksBusy(true);
+    setHooksError(null);
+    try {
+      if (hooksOn()) {
+        await removeHooks();
+        setHooksOn(false);
+      } else {
+        await installHooks();
+        setHooksOn(true);
+      }
+    } catch (err) {
+      // The most likely cause by far is a settings.json that doesn't parse, and
+      // the right move there is to say so and change nothing.
+      setHooksError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setHooksBusy(false);
+    }
+  }
 
   // Startup-directory field: a local draft so the user can type freely; the
   // store (and terminal/sidebar behavior) only updates on commit (blur/Enter),
@@ -558,6 +619,153 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             Where new terminals open and the file sidebar starts. Blank uses
             your home directory.
           </div>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="clock-enabled">
+              Clock in the tab bar
+            </label>
+            <input
+              id="clock-enabled"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={clockEnabled()}
+              onChange={(e) => setClockEnabled(e.currentTarget.checked)}
+            />
+          </div>
+          <Show when={clockEnabled()}>
+            <input
+              id="clock-format"
+              class="settings-select"
+              type="text"
+              maxLength={CLOCK_FORMAT_MAX}
+              value={clockDraft()}
+              onInput={(e) => setClockDraft(e.currentTarget.value)}
+              onBlur={() => setClockFormat(clockDraft())}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.currentTarget.blur();
+              }}
+            />
+            <div class="settings-hint">
+              Now: <strong>{clockPreview()}</strong> — <code>HH</code>{" "}
+              <code>mm</code> <code>ss</code> <code>DD</code> <code>MM</code>{" "}
+              <code>YYYY</code> <code>ddd</code> <code>h</code> <code>a</code>.
+              Wrap literal text in brackets: <code>[at] HH:mm</code>. Seconds
+              make it tick every second instead of every minute.
+            </div>
+          </Show>
+        </div>
+
+        <div class="settings-divider" />
+
+        <div class="settings-section">
+          <div class="settings-row">
+            <label class="settings-label" for="restore-last-session">
+              Reopen tabs on start
+            </label>
+            <input
+              id="restore-last-session"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={restoreLastSession()}
+              onChange={(e) => setRestoreLastSession(e.currentTarget.checked)}
+            />
+          </div>
+          <div class="settings-hint">
+            Brings back the tabs, splits and directories you had open. The
+            shells are new — nothing you were running is restarted.
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="session-restore-mode">
+              Resumable sessions
+            </label>
+          </div>
+          <select
+            id="session-restore-mode"
+            class="settings-select"
+            value={sessionRestoreMode()}
+            onChange={(e) =>
+              setSessionRestoreMode(
+                e.currentTarget.value as SessionRestoreMode
+              )
+            }
+          >
+            <option value="off">Ignore them</option>
+            <option value="type">Type the resume command</option>
+            <option value="run">Run the resume command</option>
+          </select>
+          <div class="settings-hint">
+            When a restored pane was running Claude Code, its session is
+            remembered. "Type" leaves <code>claude --resume …</code> at the
+            prompt for you to confirm; "run" submits it.
+          </div>
+
+          <div class="settings-row">
+            <label class="settings-sublabel" for="claude-attention-mode">
+              Flag panes waiting on you
+            </label>
+          </div>
+          <select
+            id="claude-attention-mode"
+            class="settings-select"
+            value={claudeAttentionMode()}
+            onChange={(e) =>
+              setClaudeAttentionMode(
+                e.currentTarget.value as ClaudeAttentionMode
+              )
+            }
+          >
+            <option value="off">Off</option>
+            <option value="heuristic">On — detect it</option>
+            <option value="hooks">On — let Claude say so</option>
+          </select>
+          <div class="settings-hint">
+            A dot on the tab and on the pane's title-bar when Claude Code has
+            finished a turn or is asking permission, so you can leave it running
+            in another tab. "Detect it" needs no setup and watches for a pane
+            that was working going quiet. A terminal bell counts either way.
+          </div>
+
+          <Show when={claudeAttentionMode() === "hooks"}>
+            <Show
+              when={hooksSupported}
+              fallback={
+                <div class="settings-hint">
+                  Not available on Windows — the hook writes to{" "}
+                  <code>/dev/tty</code>, which it has no equivalent of. Use
+                  "detect it" instead.
+                </div>
+              }
+            >
+              <div class="settings-actions">
+                <button
+                  class="settings-action"
+                  disabled={hooksBusy()}
+                  onClick={toggleHooks}
+                >
+                  {hooksBusy()
+                    ? "Working…"
+                    : hooksOn()
+                      ? "Remove hooks"
+                      : "Install hooks…"}
+                </button>
+              </div>
+              <div class="settings-hint">
+                Adds a <code>Notification</code> and a <code>Stop</code> hook to{" "}
+                <code>~/.claude/settings.json</code>; each writes one escape
+                sequence to the pane it runs in. Nothing else in that file is
+                touched, and "Remove" takes back exactly these two. Sessions
+                already running pick the hooks up on their next turn.
+              </div>
+              <Show when={hooksError()}>
+                <div class="settings-error">{hooksError()}</div>
+              </Show>
+            </Show>
+          </Show>
         </div>
 
         <div class="settings-divider" />

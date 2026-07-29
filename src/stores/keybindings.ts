@@ -10,6 +10,10 @@ interface Keybinding {
   meta?: boolean;
   alt?: boolean;
   allowInInput?: boolean;
+  // Consulted at press time. Returning false makes the binding step aside for
+  // this keystroke — the event is neither consumed nor preventDefault'd, so it
+  // carries on to xterm.js and into the shell. See the dispatcher below.
+  enabled?: () => boolean;
   handler: KeyHandler;
 }
 
@@ -28,6 +32,8 @@ export function registerBinding(
     // modifier shortcuts that must work from inside an input (e.g. the
     // sidebar-search toggle, which itself focuses an input).
     allowInInput?: boolean;
+    // Decline the keystroke conditionally; see Keybinding.enabled.
+    enabled?: () => boolean;
   }
 ) {
   directBindings.push({
@@ -38,6 +44,7 @@ export function registerBinding(
     meta: opts?.meta,
     alt: opts?.alt,
     allowInInput: opts?.allowInInput,
+    enabled: opts?.enabled,
     handler,
   });
 }
@@ -65,6 +72,7 @@ export interface BindingSpec extends Chord {
   run: KeyHandler;
   label?: string;
   allowInInput?: boolean;
+  enabled?: () => boolean;
   byOS?: Partial<Record<OS, Chord>>;
 }
 
@@ -79,6 +87,7 @@ export function registerBindings(specs: BindingSpec[]) {
       alt: chord.alt,
       code: chord.code,
       allowInInput: spec.allowInInput,
+      enabled: spec.enabled,
     });
   }
 }
@@ -122,12 +131,19 @@ export function initKeybindings() {
           keyMatch = e.key.toLowerCase() === binding.key;
         }
 
-        if (keyMatch && ctrlMatch && shiftMatch && metaMatch && altMatch) {
-          e.preventDefault();
-          e.stopPropagation();
-          binding.handler();
-          return;
+        if (!keyMatch || !ctrlMatch || !shiftMatch || !metaMatch || !altMatch) {
+          continue;
         }
+        // A binding may decline a keystroke it would otherwise own. `continue`
+        // rather than `return`, so the key keeps looking for another binding and,
+        // failing that, reaches the terminal untouched — which is the point: a
+        // bare key like F2 belongs to whatever full-screen program is running.
+        if (binding.enabled && !binding.enabled()) continue;
+
+        e.preventDefault();
+        e.stopPropagation();
+        binding.handler();
+        return;
       }
     },
     true // capture phase — before xterm.js

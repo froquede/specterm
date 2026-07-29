@@ -2,7 +2,9 @@ import type {
   Backend,
   SpawnPtyOptions,
   FileEntry,
+  FileEntryStats,
   DriveEntry,
+  ProcessInfo,
   UnlistenFn,
   UpdaterEvent,
   TransferTab,
@@ -20,12 +22,16 @@ interface SpectermAPI {
     id: number,
     cols: number,
     rows: number
-  ): Promise<{ buffered: number[]; exited: boolean }>;
-  onPtyOutput(cb: (id: number, data: number[]) => void): () => void;
+  ): Promise<{ buffered: Uint8Array; exited: boolean }>;
+  ptyCwd(id: number): Promise<string | null>;
+  ptyDescendants(ids: number[]): Promise<Record<number, ProcessInfo[]>>;
+  readProcessEnv(pid: number, names: string[]): Promise<Record<string, string>>;
+  onPtyOutput(cb: (id: number, data: Uint8Array) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
+  readDirStats(path: string): Promise<FileEntryStats[]>;
   listDrives(): Promise<DriveEntry[]>;
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   clipboardHasImage(): Promise<boolean>;
@@ -34,16 +40,21 @@ interface SpectermAPI {
   watchDir(path: string, cb: () => void): () => void;
   onOpenPath(cb: (path: string) => void): () => void;
   getHomePath(): Promise<string>;
+  getHostname(): Promise<string>;
   isFullscreen(): Promise<boolean>;
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
   setWindowOpacity(value: number): Promise<void>;
+  // Plain data read from the window's launch arguments by the preload — no IPC.
+  // Consumed by windowBoot() in backends/index.ts, not through this class.
+  windowBoot: unknown;
   takeWindowInit(): Promise<WindowInit>;
   newWindow(): Promise<void>;
   dropTransfer(tab: TransferTab): Promise<void>;
   onAdoptTab(cb: (tab: TransferTab) => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
+  setAttentionBadge(count: number): Promise<void>;
   checkForUpdate(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   installUpdate(): Promise<void>;
@@ -87,19 +98,35 @@ export class ElectronBackend implements Backend {
     cols: number,
     rows: number
   ): Promise<{ buffered: Uint8Array; exited: boolean }> {
-    const result = await this.api.adoptPty(id, cols, rows);
-    return {
-      buffered: new Uint8Array(result.buffered),
-      exited: result.exited,
-    };
+    // Same as onPtyOutput: the host answers with a Buffer, which arrives here
+    // as a Uint8Array already.
+    return this.api.adoptPty(id, cols, rows);
+  }
+
+  async ptyCwd(id: number): Promise<string | null> {
+    return this.api.ptyCwd(id);
+  }
+
+  async ptyDescendants(
+    ids: number[]
+  ): Promise<Record<number, ProcessInfo[]>> {
+    return this.api.ptyDescendants(ids);
+  }
+
+  async readProcessEnv(
+    pid: number,
+    names: string[]
+  ): Promise<Record<string, string>> {
+    return this.api.readProcessEnv(pid, names);
   }
 
   async onPtyOutput(
     cb: (id: number, data: Uint8Array) => void
   ): Promise<UnlistenFn> {
-    return this.api.onPtyOutput((id, data) => {
-      cb(id, new Uint8Array(data));
-    });
+    // Straight through. The host sends a Buffer and structured clone delivers it
+    // as a Uint8Array, so there is nothing left to convert — re-wrapping it
+    // would copy every byte of every chunk a shell ever prints, for nothing.
+    return this.api.onPtyOutput(cb);
   }
 
   async onPtyExit(cb: (id: number) => void): Promise<UnlistenFn> {
@@ -116,6 +143,10 @@ export class ElectronBackend implements Backend {
 
   async readDir(path: string): Promise<FileEntry[]> {
     return this.api.readDir(path);
+  }
+
+  async readDirStats(path: string): Promise<FileEntryStats[]> {
+    return this.api.readDirStats(path);
   }
 
   async listDrives(): Promise<DriveEntry[]> {
@@ -149,6 +180,10 @@ export class ElectronBackend implements Backend {
 
   async getHomePath(): Promise<string> {
     return this.api.getHomePath();
+  }
+
+  async getHostname(): Promise<string> {
+    return this.api.getHostname();
   }
 
   async isFullscreen(): Promise<boolean> {
@@ -193,6 +228,10 @@ export class ElectronBackend implements Backend {
     cb: (channel: string, payload?: unknown) => void
   ): Promise<UnlistenFn> {
     return this.api.onBroadcast(cb);
+  }
+
+  async setAttentionBadge(count: number): Promise<void> {
+    return this.api.setAttentionBadge(count);
   }
 
   async checkForUpdate(): Promise<void> {

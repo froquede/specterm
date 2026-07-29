@@ -1,6 +1,43 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
+// What kind of window this is, stamped into our own launch arguments by the main
+// process (see `additionalArguments` in main.cjs). Read here, at preload time,
+// so the renderer has it before its first line runs — the first tab is built
+// from it, and putting an IPC round trip in front of that would delay the shell
+// of every launch.
+//
+// A window that somehow starts without the flag (an unexpected reload path, a
+// backend that doesn't set it) falls back to the single-window answer: it owns
+// the session and the update check, which is exactly right when it is the only
+// window there is.
+function readBootFlags() {
+  const prefix = "--specterm-boot=";
+  const arg = process.argv.find((a) => a.startsWith(prefix));
+  if (arg) {
+    const flags = {};
+    for (const pair of arg.slice(prefix.length).split(",")) {
+      const eq = pair.indexOf("=");
+      if (eq > 0) flags[pair.slice(0, eq)] = pair.slice(eq + 1) === "1";
+    }
+    // Only trust a value that was actually there — a missing key means an older
+    // host, or a shape we don't recognize, and the defaults below are safer.
+    if ("ownsSession" in flags) {
+      return {
+        hasTab: flags.hasTab === true,
+        autoCheckUpdates: flags.autoCheckUpdates === true,
+        ownsSession: flags.ownsSession === true,
+      };
+    }
+  }
+  return { hasTab: false, autoCheckUpdates: true, ownsSession: true };
+}
+
+const windowBoot = readBootFlags();
+
 contextBridge.exposeInMainWorld("specterm", {
+  // Plain data, not a function: there is nothing to ask anyone.
+  windowBoot,
+
   // PTY
   spawnPty: (opts) => ipcRenderer.invoke("spawn-pty", opts),
 
@@ -16,6 +53,14 @@ contextBridge.exposeInMainWorld("specterm", {
   releasePty: (ids) => ipcRenderer.invoke("release-pty", ids),
 
   adoptPty: (id, cols, rows) => ipcRenderer.invoke("adopt-pty", id, cols, rows),
+  ptyCwd: (id) => ipcRenderer.invoke("pty-cwd", id),
+
+  // What's running inside each pane, and named env vars off a process, for the
+  // session providers. See the handlers in main.cjs for why both are narrow.
+  ptyDescendants: (ids) => ipcRenderer.invoke("pty-descendants", ids),
+
+  readProcessEnv: (pid, names) =>
+    ipcRenderer.invoke("read-process-env", pid, names),
 
   onPtyOutput: (cb) => {
     const handler = (_event, id, data) => cb(id, data);
@@ -37,6 +82,8 @@ contextBridge.exposeInMainWorld("specterm", {
 
   readDir: (path) => ipcRenderer.invoke("read-dir", path),
 
+  readDirStats: (path) => ipcRenderer.invoke("read-dir-stats", path),
+
   listDrives: () => ipcRenderer.invoke("list-drives"),
 
   revealInFileManager: (path, isDirectory) =>
@@ -49,6 +96,8 @@ contextBridge.exposeInMainWorld("specterm", {
   clipboardWriteText: (text) => ipcRenderer.invoke("clipboard-write-text", text),
 
   getHomePath: () => ipcRenderer.invoke("get-home-path"),
+
+  getHostname: () => ipcRenderer.invoke("get-hostname"),
 
   watchDir: (path, cb) => {
     ipcRenderer.invoke("watch-dir", path);
@@ -105,6 +154,8 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.on("broadcast", handler);
     return () => ipcRenderer.removeListener("broadcast", handler);
   },
+  setAttentionBadge: (count) =>
+    ipcRenderer.invoke("set-attention-badge", count),
 
   // Auto-update
   checkForUpdate: () => ipcRenderer.invoke("updater:check"),

@@ -10,7 +10,9 @@ import type {
   Backend,
   SpawnPtyOptions,
   FileEntry,
+  FileEntryStats,
   DriveEntry,
+  ProcessInfo,
   UnlistenFn,
   UpdaterEvent,
   TransferTab,
@@ -53,6 +55,28 @@ export class TauriBackend implements Backend {
     return { buffered: new Uint8Array(), exited: false };
   }
 
+  // No `pty_cwd` command on the Tauri side yet; reporting null degrades to the
+  // configured startup path, exactly as on a platform that can't answer.
+  async ptyCwd(_id: number): Promise<string | null> {
+    return null;
+  }
+
+  // Process inspection has no Tauri command yet. Empty answers are a supported
+  // outcome everywhere (Windows reports nothing either), so panes here restore
+  // as plain shells rather than resumed sessions.
+  async ptyDescendants(
+    _ids: number[]
+  ): Promise<Record<number, ProcessInfo[]>> {
+    return {};
+  }
+
+  async readProcessEnv(
+    _pid: number,
+    _names: string[]
+  ): Promise<Record<string, string>> {
+    return {};
+  }
+
   async onPtyOutput(
     cb: (id: number, data: Uint8Array) => void
   ): Promise<UnlistenFn> {
@@ -81,6 +105,12 @@ export class TauriBackend implements Backend {
       name: e.name,
       isDirectory: e.isDirectory,
     }));
+  }
+
+  // Tauri's readDir gives no mtimes, and the session providers are the only
+  // caller — see ptyDescendants above for why an empty answer is safe.
+  async readDirStats(_path: string): Promise<FileEntryStats[]> {
+    return [];
   }
 
   async listDrives(): Promise<DriveEntry[]> {
@@ -131,6 +161,12 @@ export class TauriBackend implements Backend {
     return invoke<string>("get_home_path");
   }
 
+  // No `get_hostname` command on the Tauri side yet. Blank means OSC 7 reports
+  // are accepted only in their unambiguous local forms (empty host/localhost).
+  async getHostname(): Promise<string> {
+    return "";
+  }
+
   async isFullscreen(): Promise<boolean> {
     return getCurrentWindow().isFullscreen();
   }
@@ -150,6 +186,13 @@ export class TauriBackend implements Backend {
     });
   }
 
+  async setAttentionBadge(_count: number): Promise<void> {
+    // Tauri exposes no badge/attention API from JS (Electron's setBadgeCount
+    // and flashFrame have no counterpart), and Electron is the shipping target.
+    // The in-window indicators — the tab chip and the pane title-bar — are
+    // unaffected; only the outside-the-window signal is missing here.
+  }
+
   async setWindowOpacity(_value: number): Promise<void> {
     // Tauri's window API exposes no JS setOpacity; honoring this would need a
     // native `set_window_opacity` command. Electron is the shipping target, so
@@ -162,7 +205,7 @@ export class TauriBackend implements Backend {
   // backend has no counterpart for. These stubs keep the single window it does
   // have working exactly as before — it just never gets a second one.
   async takeWindowInit(): Promise<WindowInit> {
-    return { tab: null, autoCheckUpdates: true };
+    return { tab: null };
   }
 
   async newWindow(): Promise<void> {}
