@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Panes that are waiting on you say so.** When Claude Code finishes a turn or
+  stops to ask permission, a dot appears on its tab and on its pane's
+  title-bar, and the dock/taskbar picks it up — so a session can run in another
+  tab, or behind another window, without being checked on. The dot goes out the
+  moment you focus the pane or type into it. A permission prompt is drawn in the
+  accent colour and pulses; a finished turn is a quiet grey dot, because a
+  screen full of finished sessions shouldn't blink at you.
+
+  Settings → *Flag panes waiting on you* picks how it's found out. **"Detect
+  it"** (the default) needs no setup: a Claude session that is working is never
+  silent — it repaints a spinner several times a second — so a pane that was
+  producing output steadily and has gone quiet is one that stopped for you. It
+  reads timing only, never the screen, so nothing about it breaks when Claude
+  rewords its footer. **"Let Claude say so"** is exact: it installs a
+  `Notification` and a `Stop` hook into `~/.claude/settings.json`, each writing
+  one escape sequence to the pane it runs in, which arrives instantly and can
+  tell a permission prompt apart from a finished turn. The hooks touch nothing
+  else in that file and can be removed from the same button; they need
+  `/dev/tty`, so that mode is macOS/Linux only. **"Off"** watches nothing.
+
+  A terminal bell flags a pane in either mode — it's what a program of any kind
+  uses to ask to be looked at, so a `make` that ends with `\a` gets the same dot.
+
 ## 0.15.0 — 2026-07-27
 
 ### Added

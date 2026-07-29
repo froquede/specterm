@@ -87,6 +87,9 @@ contextBridge.exposeInMainWorld("specterm", {
 
   setWindowOpacity: (value) => ipcRenderer.invoke("set-window-opacity", value),
 
+  setAttentionBadge: (count) =>
+    ipcRenderer.invoke("set-attention-badge", count),
+
   // Auto-update
   checkForUpdate: () => ipcRenderer.invoke("updater:check"),
 

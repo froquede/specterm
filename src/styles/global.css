@@ -201,6 +201,47 @@ body,
   text-overflow: ellipsis;
 }
 
+/* Something in this tab (or, in .pane-attention's case, this pane) has stopped
+   and is waiting on the user — see stores/attention.ts. A dot rather than a
+   glyph so it reads at a glance from across the tab bar, and it sits ahead of
+   the title so it lines up in a column down a row of tabs.
+
+   Colour carries the urgency: the accent for a blocking permission prompt, the
+   muted foreground for a turn that merely ended. Only the blocking one pulses,
+   so a screen full of finished sessions stays still. */
+.tab-attention,
+.pane-attention {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-muted);
+}
+
+.tab-attention[data-kind="permission"],
+.pane-attention[data-kind="permission"] {
+  background: var(--accent);
+  animation: attention-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes attention-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Respect the OS "reduce motion" setting: the dot still reads as the urgent
+   one by colour, it just stops moving. */
+@media (prefers-reduced-motion: reduce) {
+  .tab-attention[data-kind="permission"],
+  .pane-attention[data-kind="permission"] {
+    animation: none;
+  }
+}
+
+/* The dot in a dimmed split stays legible for free: .pane-titlebar sits at
+   z-index 35, above the unfocused-split wash at 25 — and a dimmed pane is
+   exactly the one you need to be told about. */
+
 /* Inline rename editor — swaps in for .tab-title, same box, no input chrome. */
 .tab-title-input {
   max-width: 150px;
@@ -538,6 +579,18 @@ body,
 .settings-action:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* A button mid-action (writing ~/.claude/settings.json) shouldn't keep offering
+   itself to the pointer. */
+.settings-action:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.settings-action:disabled:hover {
+  border-color: var(--border);
+  color: var(--fg);
 }
 
 /* === Auto-update control === */

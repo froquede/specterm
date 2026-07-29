@@ -37,6 +37,7 @@ interface SpectermAPI {
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
   setWindowOpacity(value: number): Promise<void>;
+  setAttentionBadge(count: number): Promise<void>;
   checkForUpdate(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   installUpdate(): Promise<void>;
@@ -169,6 +170,10 @@ export class ElectronBackend implements Backend {
 
   async setWindowOpacity(value: number): Promise<void> {
     return this.api.setWindowOpacity(value);
+  }
+
+  async setAttentionBadge(count: number): Promise<void> {
+    return this.api.setAttentionBadge(count);
   }
 
   async checkForUpdate(): Promise<void> {

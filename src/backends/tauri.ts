@@ -172,6 +172,13 @@ export class TauriBackend implements Backend {
     });
   }
 
+  async setAttentionBadge(_count: number): Promise<void> {
+    // Tauri exposes no badge/attention API from JS (Electron's setBadgeCount
+    // and flashFrame have no counterpart), and Electron is the shipping target.
+    // The in-window indicators — the tab chip and the pane title-bar — are
+    // unaffected; only the outside-the-window signal is missing here.
+  }
+
   async setWindowOpacity(_value: number): Promise<void> {
     // Tauri's window API exposes no JS setOpacity; honoring this would need a
     // native `set_window_opacity` command. Electron is the shipping target, so

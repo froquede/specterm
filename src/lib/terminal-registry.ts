@@ -8,7 +8,14 @@ import { SearchAddon } from "@xterm/addon-search";
 import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit, ptyCwd } from "./pty";
 import { startupPath } from "../stores/settings";
 import { os } from "./platform";
-import { registerOscHandler, registerCwdHandler } from "./osc";
+import {
+  registerOscHandler,
+  registerCwdHandler,
+  registerAttentionHandler,
+} from "./osc";
+import { noteOutput, noteInput, forgetPane } from "./claude-attention";
+import { markAttention, clearAttention } from "../stores/attention";
+import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
@@ -323,6 +330,12 @@ export function selectComposerText(paneId: string): string | null {
 
 const CD_FAV_RE = /^cd\s+fav-(\d+)$/;
 
+// A mouse report on its way to a program that grabbed the mouse — SGR
+// (`\x1b[<0;12;3M`) or the older X10 form (`\x1b[M...`). xterm sends these down
+// the same onData channel as typing, so anything that means "the user answered"
+// has to tell them apart.
+const MOUSE_REPORT = /^\x1b\[(<|M)/;
+
 // POSIX single-quote a path so spaces and shell metacharacters survive intact.
 function shellQuote(p: string): string {
   return `'${p.replace(/'/g, "'\\''")}'`;
@@ -515,6 +528,24 @@ export async function createTerminalInstance(
 
   instances.set(paneId, instance);
 
+  // The exact "I'm waiting on you" signal, written into this pane by the Claude
+  // Code hooks (lib/claude-hooks.ts) when they're installed. Always registered:
+  // the sequence only ever arrives if the user installed the hooks, and honoring
+  // it costs nothing until then. The mode check is here rather than at the hook,
+  // so switching the feature off stops the flags without touching ~/.claude.
+  registerAttentionHandler(term, (kind) => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, kind);
+  });
+
+  // The terminal bell — how a program of any kind asks to be looked at. Claude
+  // Code rings it when its notification channel is terminal_bell, and so does a
+  // long build that ends with `\a`; both are the same request.
+  term.onBell(() => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, "bell");
+  });
+
   // The shell's own report of its directory, when it sends one. Free and
   // instant where available; refreshCwd covers the shells that stay quiet.
   registerCwdHandler(term, (cwd) => {
@@ -702,17 +733,25 @@ export async function attachTerminal(
   // be sent once there's a prompt to send it to, so its first chunk of output
   // doubles as the "shell is ready" signal — but only that pane pays for the
   // check. Every other pane (which is nearly all of them) gets the bare handler.
+  //
+  // Every chunk is also timed by the attention heuristic (lib/claude-attention),
+  // which reads nothing from the data — only when it arrived — to spot a pane
+  // that was working and has gone quiet.
   const onShellReady = takePendingRestore(paneId, instance.ptyId);
   instance.unlistenOutput = await onPtyOutput(
     onShellReady
       ? (id, data) => {
           if (id === instance!.ptyId) {
             term.write(data);
+            noteOutput(paneId);
             onShellReady();
           }
         }
       : (id, data) => {
-          if (id === instance!.ptyId) term.write(data);
+          if (id === instance!.ptyId) {
+            term.write(data);
+            noteOutput(paneId);
+          }
         }
   );
 
@@ -731,6 +770,13 @@ export async function attachTerminal(
   term.onData((data) => {
     if (instance!.ptyId === null) return;
     const ptyId = instance!.ptyId;
+
+    // Typing into a waiting pane *is* the answer it was waiting for. Clearing
+    // here (rather than only on focus) covers answering a prompt in a split you
+    // never made active. Mouse reports come down this same channel from a pane
+    // whose program grabbed the mouse, and moving the pointer over a pane
+    // answers nothing — a real click focuses it, which clears it anyway.
+    if (!MOUSE_REPORT.test(data)) noteInput(paneId);
 
     // Enter — try to expand the line before it reaches the shell.
     if (data === "\r" || data === "\n") {
@@ -810,6 +856,11 @@ export function destroyTerminal(paneId: string) {
   // A pane closed before it ever mounted still has its resume command queued —
   // drop it, or the map holds entries for panes that no longer exist.
   cancelPendingRestore(paneId);
+
+  // A pane that was waiting on the user has just stopped existing — the flag
+  // and the timer behind it go with it.
+  clearAttention(paneId);
+  forgetPane(paneId);
 
   const instance = instances.get(paneId);
   if (!instance) return;

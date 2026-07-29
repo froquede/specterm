@@ -8,7 +8,17 @@ import {
 import { getBackend } from "./backends";
 import { initKeybindings, registerBindings } from "./stores/keybindings";
 import { createKeymap } from "./stores/keymap";
-import { initSettings, tabBarEdge, tabBarAutoHide } from "./stores/settings";
+import {
+  initSettings,
+  tabBarEdge,
+  tabBarAutoHide,
+  claudeAttentionMode,
+} from "./stores/settings";
+import {
+  attentionCount,
+  clearAllAttention,
+  setFocusedPane,
+} from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
 import { getTerminalInstance } from "./lib/terminal-registry";
@@ -55,6 +65,14 @@ export default function App() {
     getTerminalInstance(tab.activePaneId)?.term.focus();
   }
 
+  // The window came back to the front: put the cursor back in the active pane
+  // and re-assert it as the focused one, which clears whatever flag it picked
+  // up while you were away.
+  function onWindowFocus() {
+    focusActiveTerminal();
+    setFocusedPane(store.activeTab?.activePaneId ?? null);
+  }
+
   // Deterministically move keyboard focus into a pane after an *explicit* action
   // (a drag-drop). Unlike focusActiveTerminal this ignores the input guard —
   // dropping a pane is an unambiguous intent to focus it — and it verifies the
@@ -89,6 +107,32 @@ export default function App() {
     // rapid tab/pane switches don't queue up stale focus calls.
     const raf = requestAnimationFrame(focusActiveTerminal);
     onCleanup(() => cancelAnimationFrame(raf));
+  });
+
+  // Tell the attention store where the user is. Arriving at a pane that was
+  // flagged as waiting puts its flag out — you're looking at it, so the app has
+  // nothing left to tell you — and stops a detector from re-flagging it while
+  // you sit there.
+  createEffect(() => {
+    setFocusedPane(activePaneId() ?? null);
+  });
+
+  // Switching the feature off drops the flags that are already up — leaving
+  // them would strand indicators that nothing is left to clear.
+  createEffect(() => {
+    if (claudeAttentionMode() === "off") clearAllAttention();
+  });
+
+  // Mirror the count onto whatever the OS gives us outside the window (a dock
+  // badge, a flashing taskbar entry). Kept separate from the effect above so
+  // clearing the flags doesn't re-enter the effect that reads their count.
+  createEffect(() => {
+    const count = attentionCount();
+    getBackend()
+      .then((backend) => backend.setAttentionBadge(count))
+      .catch(() => {
+        /* No badge on this platform/backend — the in-window dots still show. */
+      });
   });
 
   // Close the find bar when focus leaves the pane it was opened on (pane
@@ -192,8 +236,12 @@ export default function App() {
     // later check is the manual button in Settings.
     void initUpdater();
 
-    // When the OS window regains focus, return the cursor to the active pane.
-    window.addEventListener("focus", focusActiveTerminal);
+    // When the OS window regains focus, return the cursor to the active pane —
+    // and, since the user is now looking at it, put out any attention flag it
+    // was carrying. The effect above can't do this on its own: coming back to
+    // the window doesn't change which pane is active, so nothing it watches
+    // moves.
+    window.addEventListener("focus", onWindowFocus);
 
     // Last chance to write down what was open. Store writes already keep the
     // snapshot current on a debounce, but the two things that matter most —
