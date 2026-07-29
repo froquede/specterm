@@ -1189,7 +1189,20 @@ try {
   await win.keyboard.press(SETTINGS_KEY);
   await win.waitForTimeout(400);
   await win.locator("#tab-bar-autohide").check();
-  await win.waitForTimeout(500);
+  // Wait for the slide to actually finish rather than assuming a duration for
+  // it. The bar moves on a CSS transition, so it lands a *frame* count later,
+  // not a wall-clock one — and a renderer Chromium is throttling (an occluded
+  // window, a loaded machine) paints at ~1fps, which turned a 0.15s transition
+  // into two seconds and a red that said nothing about the feature.
+  await win
+    .waitForFunction(
+      () => document.querySelector(".tab-bar").getBoundingClientRect().top < 0,
+      null,
+      { timeout: 10000 }
+    )
+    .catch(() => {
+      /* Leave it to the check below to report what it actually found. */
+    });
   const hidden = await layout();
   check(
     "auto-hide slides the tab bar off its edge",
