@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.16.0 — 2026-07-29
 
 ### Added
 - **Multiple windows.** `⌘N` (`Ctrl+Shift+N`) opens another Specterm window,
