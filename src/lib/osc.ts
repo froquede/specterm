@@ -57,12 +57,51 @@ export function registerCwdHandler(
     if (!localHosts.has(host)) return true;
 
     try {
-      const decoded = decodeURIComponent(rest.slice(slash));
+      // A Windows file URI is file:///C:/path — empty host, and the path keeps a
+      // leading slash before the drive letter (/C:/...). Strip that slash so the
+      // value is a real Windows path node can spawn in; POSIX paths (/home/...)
+      // have no drive colon and are left untouched.
+      const decoded = decodeURIComponent(rest.slice(slash)).replace(
+        /^\/([A-Za-z]:)/,
+        "$1"
+      );
       if (decoded) onCwd(decoded);
     } catch (_) {
       // Malformed percent-encoding — ignore this report and keep the last
       // known cwd rather than storing a corrupted path.
     }
+    return true;
+  });
+}
+
+// OSC 1337 ; Attention ; kind=<permission|idle> — a program in the pane saying
+// it has stopped and is waiting on the user.
+//
+// Written by the Claude Code hooks the Settings panel installs (see
+// lib/claude-hooks.ts): the hook process is a child of `claude`, so its
+// controlling terminal is this pane's pty and the sequence arrives here and
+// nowhere else — which is what makes the answer per-pane without anything
+// having to be correlated after the fact.
+//
+// Registered independently of the OpenMD handler above. xterm keeps a stack of
+// handlers per OSC identifier and tries them newest-first until one returns
+// true, so each ignores (returns false for) payloads that aren't its own.
+export function registerAttentionHandler(
+  term: Terminal,
+  onAttention: (kind: "permission" | "idle") => void
+): void {
+  term.parser.registerOscHandler(1337, (data: string) => {
+    if (!data.startsWith("Attention;")) return false;
+
+    const params: Record<string, string> = {};
+    for (const part of data.split(";").slice(1)) {
+      const eqIdx = part.indexOf("=");
+      if (eqIdx > 0) params[part.slice(0, eqIdx)] = part.slice(eqIdx + 1);
+    }
+
+    // An unknown or missing kind still means "look at me" — the sequence was
+    // addressed to us, so it's handled either way; only the emphasis differs.
+    onAttention(params.kind === "permission" ? "permission" : "idle");
     return true;
   });
 }

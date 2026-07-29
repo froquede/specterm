@@ -6,6 +6,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 
 - **Split panes** -- horizontal and vertical splits with draggable resize handles, drag-and-drop reordering via each pane's title-bar, and one-click/keyboard direction flipping. Aligned dividers move together; hold **Alt** to resize just one split
 - **Tabs** -- create, close, and cycle through terminal tabs; drag a pane's title-bar onto another tab to move it there (the live terminal rides along)
+- **Multiple windows** -- `⌘N` opens another independent window; drag a tab (or a pane, by its title-bar) past the window's edge to tear it off into a window of its own, or drop it on another Specterm window to move it there. The shell is handed over still running, scrollback and all (see [Moving tabs between windows](#moving-tabs-between-windows))
 - **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
 - **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
 - **Markdown preview & editor** -- render `.md` files inline with Mermaid diagram support, or toggle (`⌘E`) into a live-preview CodeMirror editor and save (`⌘S`) back to disk; installed builds also register as a `.md` handler, so you can *Open With → Specterm* (or double-click) a markdown file to open it in a new tab
@@ -17,6 +18,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Splits inherit the directory** -- a new pane or tab opens where the pane you split from is, not back at the startup path. The shell's directory is read from its own process, so it works without configuring your shell; `OSC 7` (which zsh and fish send by default) is used as a faster signal when it's there
 - **OSC protocol** -- captures title sequences and working directory updates
 - **Session history** -- reopen the last closed tab or pane (`⌘⇧T` / `Ctrl+Shift+R`), repeatedly, walking back through what you closed; and pick your tabs, splits and directories back up where you left them after a restart. A pane that was running Claude Code remembers *which session*, so the restored terminal comes back with `claude --resume <id>` waiting at the prompt (or runs it, or ignores it -- your choice in Settings)
+- **Panes tell you when they're waiting** -- a dot on the tab and the pane's title-bar (plus the dock/taskbar) when Claude Code finishes a turn or stops to ask permission, so a session can run in a tab you're not looking at. It clears when you focus the pane or type into it. Settings picks between detecting it with no setup at all (a Claude session that's working is never silent, so a pane that goes quiet has stopped for you) and installing two Claude Code hooks that say so exactly; a terminal bell flags a pane either way (see [Waiting panes](#waiting-panes))
 - **Optional tab-bar clock** -- off by default; when on, its format is a token string (`HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`, `[at] HH:mm`) with a live preview in Settings. It wakes only when the displayed text would actually change -- once a minute unless the format shows seconds -- aligned to the boundary, and stops entirely while the window is hidden
 - **Per-OS keybindings** -- macOS uses `⌘`; Linux/Windows keep the Kitty-style `Ctrl+Shift+<key>` scheme
 
@@ -28,6 +30,7 @@ free for terminal control codes).
 
 | Action | macOS | Linux / Windows |
 |---|---|---|
+| New window | `⌘N` | `Ctrl+Shift+N` |
 | New tab | `⌘T` | `Ctrl+Shift+T` |
 | Reopen last closed tab / pane | `⌘⇧T` | `Ctrl+Shift+R` |
 | Rename tab | `⌘R` | `F2` |
@@ -71,6 +74,46 @@ Specterm tells the two intents apart instead:
 Panes with no mouse tracking behave exactly as before. See
 `src/lib/mouse-selection.ts`.
 
+## Moving tabs between windows
+
+Drag a tab — or any pane, by its title-bar — **past the edge of the window** and
+release. The tab outlines itself in the accent colour once the cursor is outside,
+so you can tell the drop will move it out rather than reorder it.
+
+| where you release | what happens |
+|---|---|
+| **over another Specterm window** | the tab moves into that window, which comes to the front |
+| **anywhere else** | it becomes a new window, opening where you dropped it |
+| **still inside this window** | the usual reorder / pane-split drop |
+
+The terminal is not restarted. The shell process is handed from one window to
+the other still running, its scrollback is serialized and replayed on the far
+side, and anything it prints during the move is buffered and written back in
+order — so a build or a long `tail -f` doesn't drop a line. A full-screen
+program (vim, htop, Claude Code) repaints itself in the new window exactly as it
+does on any terminal resize.
+
+Two guards, both no-ops rather than errors: a window's **only** tab can't be torn
+off, and neither can the **last pane of that only tab** — the move would just
+rebuild the same window somewhere else and leave an empty one behind.
+
+Windows are otherwise independent: each has its own tabs, sidebar and terminals,
+and closing one kills only the shells that belong to it. Theme, terminal font
+and pinned favourites are shared and update live in every open window; font zoom
+(`⌘=` / `⌘-`) stays per-window, like a browser's.
+
+Two things from [session history](#features) split along the same line, and the
+split is deliberate:
+
+- **The restored session belongs to one window** — the first one of the launch.
+  It restores what was open and is the only one that writes the snapshot back, so
+  a second window can't overwrite it with its own tabs. A window opened with `⌘N`
+  therefore starts on a plain terminal rather than a copy of everything you
+  already have open.
+- **The closed-tab stack is shared.** `⌘⇧T` reopens the last thing closed in
+  *any* window, which is what "last closed" ought to mean, and both windows keep
+  their view of it in step.
+
 ## Settings
 
 Open with `⌘,` / `Ctrl+Shift+,`, or the ⚙ icon. Settings live in the sidebar and
@@ -90,6 +133,40 @@ edits settle.
 - **Layout** — the tab bar's corner (a 2×2 grid of the window's corners), its
   height, the sidebar's width, and whether the bar auto-hides. The sidebar also
   resizes by dragging the strip beside it; double-click to reset.
+- **Flag panes waiting on you** — see [Waiting panes](#waiting-panes) below.
+
+## Waiting panes
+
+A Claude Code session you left running in another tab has no way to get your
+attention, so you end up checking on it. Specterm flags the pane instead: a dot
+on its tab chip and on its title-bar, and the count on the dock icon (macOS,
+Unity) or a flashing taskbar entry (Windows and most Linux WMs) for when the
+whole window is behind something else.
+
+The dot goes out as soon as you focus the pane or type into it — answering the
+prompt *is* the acknowledgement, including in a split you never made active. A
+permission prompt is drawn in the accent colour and pulses (nothing moves until
+you answer); a finished turn is a quiet grey dot.
+
+Settings → **Flag panes waiting on you** chooses how it's found out:
+
+| mode | how |
+|---|---|
+| **On — detect it** (default) | No setup. A Claude session that's working repaints its spinner several times a second, and the two states where it wants you — turn finished, permission prompt up — are both perfectly silent. So *sustained output → silence* is the signal. It's read purely from the timing of the output stream, never from the screen, so a reworded Claude footer can't break it. Gated on a `claude` process actually running in that pane, which the session poll already knows. |
+| **On — let Claude say so** | Exact. Installs a `Notification` and a `Stop` hook into `~/.claude/settings.json`; each writes one escape sequence (`OSC 1337 ; Attention`) to `/dev/tty`, which is the pane's own pty — so it lands in the right pane with nothing to correlate, instantly, and it can tell a permission prompt apart from a finished turn. The two entries are added and removed from the same button and nothing else in that file is touched. macOS/Linux only (Windows has no `/dev/tty` a one-line hook can reach). |
+| **Off** | Nothing is watched and nothing is drawn. |
+
+A terminal bell flags a pane in every mode but *off* — it's how a program of any
+kind asks to be looked at, so a long `make` that ends with `\a` gets the same
+dot, and so does Claude Code with `preferredNotifChannel` set to
+`terminal_bell`.
+
+The trade-off of *detect it* is that an unrelated long command finishing in a
+pane where Claude is also running looks the same from outside the process. If
+that bothers you, the hooks mode has no false positives at all.
+
+See `src/stores/attention.ts`, `src/lib/claude-attention.ts` and
+`src/lib/claude-hooks.ts`.
 
 ## Theming
 
@@ -244,8 +321,11 @@ src/
     fspath.ts              # Cross-platform paths + shell quoting
     markdown.ts            # markdown-it + Mermaid setup
     osc.ts                 # OSC sequence parser
+    claude-attention.ts    # Spotting a Claude pane that has gone quiet
+    claude-hooks.ts        # Installing the Claude Code hooks that say so exactly
   stores/
     tabs.ts                # Tab/pane/sidebar state
+    attention.ts           # Which panes are waiting on the user
     settings.ts            # Persisted preferences
     theme.ts               # Active theme + persistence
     favorites.ts           # Pinned folders (fav-N)

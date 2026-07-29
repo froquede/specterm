@@ -1,5 +1,74 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Multiple windows.** `⌘N` (`Ctrl+Shift+N`) opens another Specterm window,
+  with its own tabs, splits and terminals. Windows are fully independent —
+  closing one kills only its own shells — while theme, terminal font and pinned
+  favourites stay in step across all of them the moment you change them
+  anywhere. (Font *zoom* stays per-window, like a browser's.)
+- **Tear a tab or a pane out into its own window.** Drag a tab — or any pane, by
+  its title bar — past the edge of the window and let go. Drop it on another
+  Specterm window and it moves in there; drop it anywhere else and it becomes a
+  window of its own, opening where you released it. The shell comes along
+  alive: the process is handed over rather than restarted, its scrollback is
+  carried across, and anything it prints mid-move is buffered and replayed in
+  order, so a running build doesn't lose a line. A full-screen program (vim,
+  htop, Claude Code) redraws itself in the new window the same way it does on
+  any terminal resize.
+- **Panes that are waiting on you say so.** When Claude Code finishes a turn or
+  stops to ask permission, a dot appears on its tab and on its pane's
+  title-bar, and the dock/taskbar picks it up — so a session can run in another
+  tab, or behind another window, without being checked on. The dot goes out the
+  moment you focus the pane or type into it. A permission prompt is drawn in the
+  accent colour and pulses; a finished turn is a quiet grey dot, because a
+  screen full of finished sessions shouldn't blink at you.
+
+  Settings → *Flag panes waiting on you* picks how it's found out. **"Detect
+  it"** (the default) needs no setup: a Claude session that is working is never
+  silent — it repaints a spinner several times a second — so a pane that was
+  producing output steadily and has gone quiet is one that stopped for you. It
+  reads timing only, never the screen, so nothing about it breaks when Claude
+  rewords its footer. **"Let Claude say so"** is exact: it installs a
+  `Notification` and a `Stop` hook into `~/.claude/settings.json`, each writing
+  one escape sequence to the pane it runs in, which arrives instantly and can
+  tell a permission prompt apart from a finished turn. The hooks touch nothing
+  else in that file and can be removed from the same button; they need
+  `/dev/tty`, so that mode is macOS/Linux only. **"Off"** watches nothing.
+
+  A terminal bell flags a pane in either mode — it's what a program of any kind
+  uses to ask to be looked at, so a `make` that ends with `\a` gets the same dot.
+
+### Changed
+- **A shell's output no longer round-trips through an array of numbers.** Every
+  byte a terminal printed used to be boxed into a JS number, put in a plain
+  array, and serialized element by element on its way to the renderer. It now
+  crosses as bytes. This is the hottest path in the app — everything any shell
+  prints goes through it — and it was the ceiling on how fast a pane could
+  render a large `cat`, a verbose build, or a `git log`.
+- **Session restore and the reopen-closed stack know about windows.** The saved
+  session belongs to the window that restored it: it is the only one that writes
+  it back, so a second window can't overwrite the snapshot with its own tabs, and
+  opening one with `⌘N` gives you a plain terminal rather than a duplicate of
+  everything already open. The closed-tab stack, by contrast, is deliberately
+  shared — "reopen what I closed last" means the last thing closed anywhere —
+  and is now read back from storage on every push and pop, so two windows can't
+  drop each other's entries.
+
+### Fixed
+- **Windows: new panes and tabs inherit the directory again.** Windows has no
+  `/proc` to read a shell's working directory from, so PowerShell is now asked to
+  report it: both `pwsh` and the legacy `powershell.exe` get a prompt hook that
+  emits `OSC 7`, the same sequence zsh and fish send by default and the renderer
+  already understood. The `file:///C:/…` form it produces is normalized back to a
+  real Windows path.
+- **Terminal scroll position survives a tab switch.** Switching tabs moves the
+  terminal element into a new container, which resets the DOM scrollbar to the
+  top while xterm's own scroll position stays where it was — leaving the bar
+  pinned at the top over correctly-rendered bottom content, and snapping to the
+  top on the next scroll. The two are re-synced after the re-attach.
+
 ## 0.15.0 — 2026-07-27
 
 ### Added

@@ -6,6 +6,7 @@ import MarkdownPane from "./MarkdownPane";
 import TextPane from "./TextPane";
 import TerminalSearch from "./TerminalSearch";
 import { searchPaneId } from "../stores/terminal-search";
+import { paneAttention } from "../stores/attention";
 import {
   draggingPaneId,
   setDraggingPaneId,
@@ -16,6 +17,7 @@ import {
   computeDropEdge,
   isRootEdgeDrop,
 } from "../stores/pane-drag";
+import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
 
 interface PaneProps {
   id: PaneId;
@@ -32,6 +34,9 @@ interface PaneProps {
     atRoot?: boolean
   ) => void;
   onDropToTab?: (sourceId: PaneId, tabId: string) => void;
+  // Released outside the window: hand this pane off to another window (or a new
+  // one), where it lands as a tab of its own.
+  onTearOff?: (sourceId: PaneId) => void;
 }
 
 export default function Pane(props: PaneProps) {
@@ -64,6 +69,14 @@ export default function Pane(props: PaneProps) {
     setDraggingPaneId(paneId);
 
     function onMove(ev: PointerEvent) {
+      // Dragged clear of the window: nothing in here can be a drop target any
+      // more, and releasing means "move this pane out".
+      setTearingOff(isOutsideWindow(ev));
+      if (tearingOff()) {
+        setDropTarget(null);
+        setDropTabId(null);
+        return;
+      }
       // Overlays are pointer-events:none, so this resolves to the pane under
       // the cursor, whose ancestor carries data-pane-id.
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
@@ -101,10 +114,13 @@ export default function Pane(props: PaneProps) {
       bar.removeEventListener("pointercancel", onUp);
       const dt = dropTarget();
       const tabId = dropTabId();
+      const tearOff = tearingOff();
       setDraggingPaneId(null);
       setDropTarget(null);
       setDropTabId(null);
-      if (tabId) props.onDropToTab?.(paneId, tabId);
+      setTearingOff(false);
+      if (tearOff) props.onTearOff?.(paneId);
+      else if (tabId) props.onDropToTab?.(paneId, tabId);
       else if (dt) props.onDrop?.(paneId, dt.paneId, dt.edge, dt.root);
     }
 
@@ -122,6 +138,7 @@ export default function Pane(props: PaneProps) {
       setDraggingPaneId(null);
       setDropTarget(null);
       setDropTabId(null);
+      setTearingOff(false);
     }
   });
 
@@ -133,7 +150,11 @@ export default function Pane(props: PaneProps) {
 
   return (
     <div
-      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""}`}
+      // Folded into `class` rather than a separate `classList`: the two write the
+      // same attribute, and this template is reactive, so a re-render for any
+      // other reason would wipe a classList-applied token until its own effect
+      // caught up.
+      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
       data-pane-id={paneId}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}
@@ -144,6 +165,23 @@ export default function Pane(props: PaneProps) {
         onPointerDown={onBarPointerDown}
       >
         <span class="pane-grip">⠿</span>
+        {/* Which pane in a split is the one waiting. The tab chip only says
+            that something in the tab is; this says where. */}
+        <Show when={paneAttention(paneId)} keyed>
+          {(kind) => (
+            <span
+              class="pane-attention"
+              data-kind={kind}
+              title={
+                kind === "permission"
+                  ? "Waiting for your answer"
+                  : kind === "bell"
+                    ? "Rang the terminal bell"
+                    : "Finished — waiting for you"
+              }
+            />
+          )}
+        </Show>
         <span class="pane-title">{label()}</span>
         <button
           class="pane-close-btn"

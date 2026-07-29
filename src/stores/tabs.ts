@@ -27,9 +27,17 @@ import {
 } from "../lib/split-tree";
 import {
   destroyTerminal,
+  releaseTerminal,
   getTerminalInstance,
   getTerminalCwd,
 } from "../lib/terminal-registry";
+import { releasePty } from "../lib/pty";
+import type { TransferTab } from "../backends/types";
+import {
+  rebuildTab,
+  serializeLeaf,
+  serializeTab,
+} from "../lib/transfer";
 import {
   hydrateNode,
   hydrateTab,
@@ -126,11 +134,11 @@ function reseatFocus(tab: Tab, newRoot: SplitNode, closedId: PaneId): Tab {
 }
 
 // --- Boot state ------------------------------------------------------------
-// The saved session is restored *here*, at module load, rather than from a
-// component's onMount. By the time onMount runs the first tab has already
-// rendered — which means its pane mounted and spawned a pty — and replacing the
-// state then would leave that shell running with nothing pointing at it. Built
-// before the first render, there is nothing to throw away.
+// What goes into a window is decided by initWindow(), below, and by nothing
+// else. The rule it exists to keep is that no tab may render before that
+// decision: a rendered tab has already mounted its pane and spawned a pty, and
+// replacing the state afterwards would leave that shell running with nothing
+// pointing at it. The store therefore starts with no tabs at all.
 
 // A reload is not a restart, and restoring across one would be actively wrong:
 // the ptys live in the main process, which a renderer reload doesn't touch. The
@@ -150,28 +158,41 @@ function isRendererReload(): boolean {
   }
 }
 
-function initialState(): AppState {
-  const base = {
-    sidebarView: "files" as SidebarView,
-    renamingTabId: null,
-    tabHistory: [] as TabId[],
-  };
-  const saved =
-    restoreLastSession() && !isRendererReload() ? loadSession() : null;
-  if (saved) {
-    const tabs = saved.tabs.map((t) => hydrateTab(t, registerPendingRestore));
-    return {
-      ...base,
-      tabs,
-      activeTabId: (tabs[saved.activeTabIndex] ?? tabs[0]).id,
-    };
-  }
-  const tab = createTerminalTab();
-  return { ...base, tabs: [tab], activeTabId: tab.id };
+// The saved "what was open" session, hydrated — or null when there is nothing to
+// restore, restore is switched off, or this is a renderer reload (the previous
+// shells are still alive in that case, and restoring would spawn a second set
+// beside them).
+function restoredTabs(): { tabs: Tab[]; activeTabId: TabId } | null {
+  if (!restoreLastSession() || isRendererReload()) return null;
+  const saved = loadSession();
+  if (!saved) return null;
+  const tabs = saved.tabs.map((t) => hydrateTab(t, registerPendingRestore));
+  if (!tabs.length) return null;
+  return { tabs, activeTabId: (tabs[saved.activeTabIndex] ?? tabs[0]).id };
 }
 
-// Use createSignal instead of createStore for full object replacement
-const [state, setStateRaw] = createSignal<AppState>(initialState());
+// A window starts empty and is filled by initWindow() on mount.
+//
+// It used to be built here, at module load, so that nothing could render — and
+// therefore spawn a pty — before the restore had been decided. With more than
+// one window that decision is no longer the same for all of them: one is handed
+// a tab by a tear-off, one owns the saved session, the rest are plain new
+// windows. Starting empty keeps the same guarantee for a different reason —
+// there is nothing to render until the window knows what it is — and initWindow
+// is the single place that knows.
+const [state, setStateRaw] = createSignal<AppState>({
+  tabs: [],
+  activeTabId: "",
+  tabHistory: [],
+  sidebarView: "files",
+  renamingTabId: null,
+});
+
+// Only the window that restored the session writes it back. Every window shares
+// one localStorage, so without an owner the last one to touch a tab would
+// overwrite the snapshot with its own tabs — and the next launch would restore
+// whichever window happened to write last, not the session as a whole.
+let ownsSession = false;
 
 function update(fn: (s: AppState) => AppState) {
   setStateRaw(fn(state()));
@@ -186,8 +207,9 @@ function update(fn: (s: AppState) => AppState) {
 function scheduleSessionSave() {
   // Nothing reads the snapshot when restore is off, so don't build one. This is
   // the whole feature's cost for anyone who doesn't want it: a boolean check per
-  // store write, and no timer, no serialization, no storage write ever.
-  if (!restoreLastSession()) return;
+  // store write, and no timer, no serialization, no storage write ever. The same
+  // applies to a window that doesn't own the session — it never writes one.
+  if (!ownsSession || !restoreLastSession()) return;
 
   saveSession(() => {
     const s = state();
@@ -223,6 +245,41 @@ function killPanesInTree(root: SplitNode) {
       destroyTerminal(leaf.id);
     }
   }
+}
+
+// The tear-off counterpart of killPanesInTree: drop this window's terminals
+// without killing the shells behind them — another window is about to adopt them.
+function releasePanesInTree(root: SplitNode) {
+  for (const leaf of collectLeaves(root)) {
+    if (leaf.pane.kind === "terminal") {
+      releaseTerminal(leaf.id);
+    }
+  }
+}
+
+// The PTYs actually running under a subtree, in the order the panes appear.
+function livePtyIds(root: SplitNode): number[] {
+  const ids: number[] = [];
+  for (const leaf of collectLeaves(root)) {
+    if (leaf.pane.kind !== "terminal") continue;
+    const instance = getTerminalInstance(leaf.id);
+    if (instance && !instance.disposed && instance.ptyId !== null) {
+      ids.push(instance.ptyId);
+    }
+  }
+  return ids;
+}
+
+// What a torn-off pane's tab should be called in the window that receives it.
+function paneTitle(leaf: SplitNode): string {
+  if (leaf.type !== "leaf") return "Terminal";
+  if (leaf.pane.kind === "terminal") {
+    return getTerminalInstance(leaf.id)?.title || "Terminal";
+  }
+  return (
+    leaf.pane.filePath.split(/[\\/]/).pop() ||
+    (leaf.pane.kind === "markdown" ? "Markdown" : "Text")
+  );
 }
 
 // Recursive tree operations (return new objects for immutability)
@@ -331,6 +388,161 @@ export function useTabStore() {
         tabHistory: pushMru(s.tabHistory, s.activeTabId),
       }));
       return tab;
+    },
+
+    // Fill a freshly opened window, in the one place that knows what kind of
+    // window it is. Three cases, in the order they win:
+    //
+    //   - a tear-off handed it a tab, so it rebuilds that and nothing else;
+    //   - it owns the saved session (the first window of the launch), so it
+    //     restores it — and, from here on, is the only one that writes it back;
+    //   - anything else — a ⌘N window, a launch with nothing saved — opens one
+    //     plain terminal. A second window restoring the same session would
+    //     duplicate every tab and every shell in it.
+    //
+    // Idempotent: a renderer reload that finds tabs already there leaves them.
+    initWindow(transfer: TransferTab | null, sessionOwner = false) {
+      if (state().tabs.length > 0) return;
+
+      if (transfer) {
+        const tab = rebuildTab(transfer);
+        update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
+        return tab;
+      }
+
+      ownsSession = sessionOwner;
+      const restored = sessionOwner ? restoredTabs() : null;
+      if (restored) {
+        update((s) => ({ ...s, ...restored }));
+        return restored.tabs[0];
+      }
+
+      const tab = createTerminalTab();
+      update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
+      return tab;
+    },
+
+    // A tab another window tore off and dropped onto this one.
+    adoptTab(transfer: TransferTab) {
+      const tab = rebuildTab(transfer);
+      update((s) => ({
+        ...s,
+        tabs: [...s.tabs, tab],
+        activeTabId: tab.id,
+      }));
+      return tab;
+    },
+
+    // Hand a whole tab to another window.
+    //
+    // The PTYs are released *before* the snapshot is taken, and that order is
+    // the point: from the release on, the host buffers their output instead of
+    // sending it here, so everything printed up to that instant is in the
+    // snapshot and everything after is in the buffer — nothing is lost, nothing
+    // arrives twice. Then the terminals are dropped without killing the shells.
+    //
+    // Refuses on the window's only tab: that move would just rebuild this window
+    // somewhere else and leave an empty one behind.
+    async takeTab(tabId: TabId): Promise<TransferTab | null> {
+      const s = state();
+      if (s.tabs.length <= 1) return null;
+      const tab = s.tabs.find((t) => t.id === tabId);
+      if (!tab) return null;
+
+      await releasePty(livePtyIds(tab.root));
+      const transfer = await serializeTab(tab);
+      if (!transfer) return null;
+
+      releasePanesInTree(tab.root);
+
+      const current = state();
+      const idx = current.tabs.findIndex((t) => t.id === tabId);
+      if (idx === -1) return transfer; // closed under us mid-handover
+      const remaining = current.tabs.filter((t) => t.id !== tabId);
+      if (remaining.length === 0) {
+        const fresh = createTerminalTab();
+        update(() => ({
+          ...current,
+          tabs: [fresh],
+          activeTabId: fresh.id,
+          tabHistory: [],
+        }));
+        return transfer;
+      }
+      // The tab is gone from this window, so it comes out of the focus history
+      // too — leaving it there would hand focus to a tab that now lives
+      // somewhere else. Same fallback order as closeTab: most recent survivor
+      // first, position only when nothing survives.
+      //
+      // It deliberately does NOT go on the reopen-closed stack: it wasn't
+      // closed, it moved, and it is still open in another window. Offering to
+      // "reopen" it would build a second copy with new shells.
+      const alive = new Set(remaining.map((t) => t.id));
+      const history = current.tabHistory.filter((id) => alive.has(id));
+      const [recent, ...rest] = history;
+      const wasActive = current.activeTabId === tabId;
+      update(() => ({
+        ...current,
+        tabs: remaining,
+        activeTabId: wasActive
+          ? recent ?? remaining[Math.min(idx, remaining.length - 1)].id
+          : current.activeTabId,
+        tabHistory: wasActive && recent ? rest : history,
+      }));
+      return transfer;
+    },
+
+    // Hand a single pane to another window, where it lands as a one-pane tab.
+    // Same release-then-serialize ordering as takeTab. Refuses when it is the
+    // last pane of the window's only tab.
+    async takePane(paneId: PaneId): Promise<TransferTab | null> {
+      const s = state();
+      const tab = s.tabs.find((t) => findLeafNode(t.root, paneId));
+      if (!tab) return null;
+      const leaf = findLeafNode(tab.root, paneId);
+      if (!leaf) return null;
+      if (s.tabs.length <= 1 && tab.root.type === "leaf") return null;
+
+      await releasePty(livePtyIds(leaf));
+      const transfer = await serializeLeaf(leaf, paneTitle(leaf));
+      if (!transfer) return null;
+
+      releasePanesInTree(leaf);
+
+      const current = state();
+      const idx = current.tabs.findIndex((t) => t.id === tab.id);
+      if (idx === -1) return transfer; // closed under us mid-handover
+
+      const pruned = closePane(current.tabs[idx].root, paneId);
+      if (pruned === null) {
+        // That was the tab's only pane — the tab goes with it, and out of the
+        // focus history along with it.
+        const remaining = current.tabs.filter((_, i) => i !== idx);
+        const fallback = remaining.length
+          ? remaining[Math.min(idx, remaining.length - 1)]
+          : createTerminalTab();
+        const alive = new Set(remaining.map((t) => t.id));
+        update(() => ({
+          ...current,
+          tabs: remaining.length ? remaining : [fallback],
+          activeTabId:
+            current.activeTabId === tab.id ? fallback.id : current.activeTabId,
+          tabHistory: current.tabHistory.filter((id) => alive.has(id)),
+        }));
+        return transfer;
+      }
+
+      // reseatFocus prunes the pane out of this tab's focus history and, if it
+      // held focus, hands it to the most recent pane still here — the same path
+      // closing a pane takes, because from this window's side that is what
+      // happened.
+      update(() => ({
+        ...current,
+        tabs: current.tabs.map((t, i) =>
+          i === idx ? reseatFocus(t, pruned, paneId) : t
+        ),
+      }));
+      return transfer;
     },
 
     createMarkdownTab(filePath: string) {

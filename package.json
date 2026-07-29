@@ -24,6 +24,7 @@
     "install:mac:only": "node scripts/install-mac.cjs",
     "preview": "vite preview",
     "test:e2e": "vite build && node test/e2e.mjs",
+    "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -38,6 +39,7 @@
     "@tauri-apps/plugin-shell": "^2.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",
+    "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",

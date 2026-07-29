@@ -10,6 +10,9 @@ import {
   setTabDropTarget,
 } from "../stores/tab-drag";
 import { draggingPaneId, dropTabId } from "../stores/pane-drag";
+import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
+import { paneAttention, type AttentionKind } from "../stores/attention";
+import { collectLeaves } from "../lib/split-tree";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -26,6 +29,9 @@ interface TabBarProps {
   onCommitRename: (tabId: string, title: string) => void;
   onCancelRename: () => void;
   onReorder: (sourceId: string, targetId: string, before: boolean) => void;
+  // Released outside the window: hand this tab off to another window (or a new
+  // one). See src/stores/tear-off.ts.
+  onTearOff: (tabId: string) => void;
   settingsOpen: boolean;
 }
 
@@ -33,6 +39,27 @@ interface TabBarProps {
 // a click. Tabs have no dedicated drag handle (unlike panes' title-bar), so a
 // plain click must not trigger a reorder.
 const DRAG_THRESHOLD = 4;
+
+// Is anything in this tab waiting on the user, and if so what's the most urgent
+// of it? A tab is only ever a summary of its panes: the dot says "there is
+// something in here", the pane title-bars inside say which pane. A permission
+// prompt outranks a finished turn — one blocks until answered, the other waits
+// patiently — so with both open the chip shows the prompt.
+function tabAttention(tab: Tab): AttentionKind | undefined {
+  let found: AttentionKind | undefined;
+  for (const leaf of collectLeaves(tab.root)) {
+    const kind = paneAttention(leaf.id);
+    if (kind === "permission") return kind;
+    found ??= kind;
+  }
+  return found;
+}
+
+const ATTENTION_TITLE: Record<AttentionKind, string> = {
+  permission: "Waiting for your answer",
+  idle: "Finished — waiting for you",
+  bell: "Rang the terminal bell",
+};
 
 // Gear glyph as a single evenodd path (Material "settings"): the center circle
 // is a cut-out, so it reads as an outline when stroked (fill none) and as a
@@ -122,6 +149,13 @@ export default function TabBar(props: TabBarProps) {
         dragging = true;
         setDraggingTabId(tabId);
       }
+      // Dragged clear of the window: no reorder target can apply any more, and
+      // releasing here means "move this tab out".
+      setTearingOff(isOutsideWindow(ev));
+      if (tearingOff()) {
+        setTabDropTarget(null);
+        return;
+      }
       const target = document
         .elementFromPoint(ev.clientX, ev.clientY)
         ?.closest<HTMLElement>("[data-tab-id]");
@@ -147,9 +181,14 @@ export default function TabBar(props: TabBarProps) {
       teardown();
       if (dragging) {
         const dt = tabDropTarget();
+        const tearOff = tearingOff();
         setDraggingTabId(null);
         setTabDropTarget(null);
-        if (dt) {
+        setTearingOff(false);
+        if (tearOff) {
+          suppressClick = true;
+          props.onTearOff(tabId);
+        } else if (dt) {
           suppressClick = true;
           props.onReorder(tabId, dt.tabId, dt.before);
         }
@@ -160,6 +199,7 @@ export default function TabBar(props: TabBarProps) {
       teardown();
       setDraggingTabId(null);
       setTabDropTarget(null);
+      setTearingOff(false);
     }
 
     window.addEventListener("pointermove", onMove);
@@ -241,6 +281,8 @@ export default function TabBar(props: TabBarProps) {
               classList={{
                 active: tab.id === props.activeTabId,
                 dragging: draggingTabId() === tab.id,
+                // Cursor is outside the window — release moves this tab out.
+                "tearing-off": draggingTabId() === tab.id && tearingOff(),
                 // Highlighted while a dragged pane hovers this chip — release
                 // detaches the pane into this tab. Never the source tab (always
                 // the active one), where the drop would be a no-op.
@@ -265,6 +307,15 @@ export default function TabBar(props: TabBarProps) {
               }}
               onPointerDown={(e) => onTabPointerDown(e, tab.id)}
             >
+              <Show when={tabAttention(tab)} keyed>
+                {(kind) => (
+                  <span
+                    class="tab-attention"
+                    data-kind={kind}
+                    title={ATTENTION_TITLE[kind]}
+                  />
+                )}
+              </Show>
               <Show
                 when={props.renamingTabId === tab.id}
                 fallback={

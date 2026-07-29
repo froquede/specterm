@@ -15,6 +15,8 @@ import type {
   ProcessInfo,
   UnlistenFn,
   UpdaterEvent,
+  TransferTab,
+  WindowInit,
 } from "./types";
 
 interface PtyOutput {
@@ -39,6 +41,18 @@ export class TauriBackend implements Backend {
 
   async killPty(id: number): Promise<void> {
     return invoke("kill_pty", { id });
+  }
+
+  // PTY handover between windows is part of the multi-window support below,
+  // which this backend doesn't have — nothing ever releases or adopts here.
+  async releasePty(_ids: number[]): Promise<void> {}
+
+  async adoptPty(
+    _id: number,
+    _cols: number,
+    _rows: number
+  ): Promise<{ buffered: Uint8Array; exited: boolean }> {
+    return { buffered: new Uint8Array(), exited: false };
   }
 
   // No `pty_cwd` command on the Tauri side yet; reporting null degrades to the
@@ -172,11 +186,44 @@ export class TauriBackend implements Backend {
     });
   }
 
+  async setAttentionBadge(_count: number): Promise<void> {
+    // Tauri exposes no badge/attention API from JS (Electron's setBadgeCount
+    // and flashFrame have no counterpart), and Electron is the shipping target.
+    // The in-window indicators — the tab chip and the pane title-bar — are
+    // unaffected; only the outside-the-window signal is missing here.
+  }
+
   async setWindowOpacity(_value: number): Promise<void> {
     // Tauri's window API exposes no JS setOpacity; honoring this would need a
     // native `set_window_opacity` command. Electron is the shipping target, so
     // this is a no-op stub (matching listDrives/clipboardHasImage) — the window
     // stays opaque under Tauri.
+  }
+
+  // Multi-window (extra windows, tearing a tab off into its own) is Electron-only
+  // for now: it needs host-side window bookkeeping and PTY re-ownership that this
+  // backend has no counterpart for. These stubs keep the single window it does
+  // have working exactly as before — it just never gets a second one.
+  async takeWindowInit(): Promise<WindowInit> {
+    return { tab: null };
+  }
+
+  async newWindow(): Promise<void> {}
+
+  async dropTransfer(_tab: TransferTab): Promise<void> {}
+
+  async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
+  // With one window there is nobody to sync with, so a broadcast has no
+  // listeners and no receiver ever fires.
+  broadcast(_channel: string, _payload?: unknown): void {}
+
+  async onBroadcast(
+    _cb: (channel: string, payload?: unknown) => void
+  ): Promise<UnlistenFn> {
+    return () => {};
   }
 
   // Self-update isn't wired on the experimental Tauri backend; Electron is the

@@ -15,7 +15,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 const WIN = process.platform === "win32";
 const SEP = WIN ? "\\" : "/";
-const log = (...a) => console.log("[e2e]", ...a);
+// Every line carries how long the suite has been running, and each check also
+// carries how long it took. A run that gets slower is otherwise invisible until
+// it trips the deadline, at which point the log says only where it stopped —
+// never which step ate the budget.
+const started = Date.now();
+const elapsed = () => ((Date.now() - started) / 1000).toFixed(1).padStart(6);
+const log = (...a) => console.log(`[e2e ${elapsed()}s]`, ...a);
+let lastCheckAt = Date.now();
 
 // A directory that reliably exists to point the startup path at.
 const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
@@ -23,7 +30,11 @@ const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
 const results = [];
 const check = (name, pass, detail = "") => {
   results.push({ name, pass, skipped: false });
-  log(`${pass ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
+  const took = ((Date.now() - lastCheckAt) / 1000).toFixed(1);
+  lastCheckAt = Date.now();
+  log(
+    `${pass ? "PASS" : "FAIL"}  ${name}  (+${took}s)${detail ? "  — " + detail : ""}`
+  );
 };
 const skip = (name, why) => {
   results.push({ name, pass: true, skipped: true });
@@ -40,11 +51,21 @@ const joinPath = (base, name) => base.replace(/[\\/]+$/, "") + SEP + name;
 // budget. The suite was already finishing just under the old ceiling, so any
 // further check — and any slower machine — tipped it into a timeout that looks
 // like a failure but isn't one. Headroom here is cheap; a false red is not.
-const hard = setTimeout(() => {
+//
+// Measured at ~350s on the dev machine after the multi-window work landed, so
+// the old 330s left no headroom at all — a loaded machine tipped it into a
+// timeout that says nothing about the code. Overridable for the same reason
+// (E2E_TIMEOUT_MS=0 disables it entirely), and every line now carries its own
+// elapsed time so a slow run can be diagnosed instead of guessed at.
+const HARD_TIMEOUT_MS =
+  process.env.E2E_TIMEOUT_MS !== undefined
+    ? Number(process.env.E2E_TIMEOUT_MS)
+    : 480000;
+const hard = HARD_TIMEOUT_MS > 0 && setTimeout(() => {
   console.error("[e2e] HARD TIMEOUT");
   process.exit(2);
-}, 330000);
-hard.unref();
+}, HARD_TIMEOUT_MS);
+if (hard) hard.unref();
 
 // --- helpers ---------------------------------------------------------------
 const state = (win) =>
@@ -896,13 +917,18 @@ try {
       `printf '\\033]7;file://%s${OSC7_DIR}\\033\\\\' "$(hostname)"`
     );
     await win.keyboard.press("Enter");
-    // The sequence is applied as it's parsed, so there's no probe to outwait
-    // here — just let the shell echo the command and run it.
-    await win.waitForTimeout(700);
-
     // Where the shell actually is — must differ from what it reported, or the
-    // check would pass with the report ignored.
+    // check would pass with the report ignored. Read first, because it is also
+    // the proof that the shell has *run* the printf above: the value only lands
+    // once the shell has worked through both lines.
     const realCwd = await terminalCwd(win, "osc7_real");
+
+    // The shell having emitted the sequence isn't the same as the renderer
+    // having parsed it — xterm's write queue is asynchronous, and on a loaded
+    // machine the split can otherwise read the cwd from before the report. This
+    // settle is the difference between a check about OSC 7 and a check about
+    // how busy the machine was.
+    await win.waitForTimeout(1200);
     await win.keyboard.press(SPLIT_SIDE);
     await win.waitForTimeout(1500);
     const oscSpawn = await spawnCwd(win, "osc7_split");
@@ -987,7 +1013,15 @@ try {
   });
   await win.waitForTimeout(900);
   check("toast withheld during the debounce", !(await slot()).toast);
-  await win.waitForTimeout(1300);
+  // Wait for the toast rather than for a duration. The debounce is 1.5s, but a
+  // renderer Chromium is throttling clamps timers and paints rarely, so "it has
+  // appeared by now" is a claim about the machine — the same assumption that
+  // made the auto-hide and OSC 7 checks flaky. Bounded well above the debounce.
+  await win
+    .waitForSelector(".settings-saved-bar", { timeout: 10000 })
+    .catch(() => {
+      /* Let the check below report what it actually found. */
+    });
   check("toast appears once edits settle", (await slot()).toast);
   await win.waitForTimeout(2900);
   check("toast auto-dismisses", !(await slot()).toast);
@@ -1163,7 +1197,20 @@ try {
   await win.keyboard.press(SETTINGS_KEY);
   await win.waitForTimeout(400);
   await win.locator("#tab-bar-autohide").check();
-  await win.waitForTimeout(500);
+  // Wait for the slide to actually finish rather than assuming a duration for
+  // it. The bar moves on a CSS transition, so it lands a *frame* count later,
+  // not a wall-clock one — and a renderer Chromium is throttling (an occluded
+  // window, a loaded machine) paints at ~1fps, which turned a 0.15s transition
+  // into two seconds and a red that said nothing about the feature.
+  await win
+    .waitForFunction(
+      () => document.querySelector(".tab-bar").getBoundingClientRect().top < 0,
+      null,
+      { timeout: 10000 }
+    )
+    .catch(() => {
+      /* Leave it to the check below to report what it actually found. */
+    });
   const hidden = await layout();
   check(
     "auto-hide slides the tab bar off its edge",
@@ -1901,6 +1948,77 @@ try {
   await win.locator(".tab-settings").click();
   await win.waitForTimeout(400);
 
+  // 19c) A pane that has stopped and is waiting flags its tab.
+  //
+  // Driven through the exact route (the OSC the Claude Code hooks write), not
+  // the heuristic: the sequence is the contract, so a shell can stand in for
+  // claude and the assertion is about the wiring — parse, flag, draw, clear —
+  // rather than about timing. The heuristic's own transition needs a real
+  // session working for seconds and would test the constants, not the feature.
+  //
+  // The sequence is emitted from a background job a few seconds out, and the
+  // test walks away to another tab first: a pane the user is looking at is
+  // deliberately never flagged, so firing it in the foreground would prove
+  // nothing.
+  if (WIN) {
+    skip("a waiting pane flags its tab", "no printf / /dev/tty on Windows");
+  } else {
+    const tabIdOf = (sel) =>
+      win.evaluate((s) => document.querySelector(s)?.getAttribute("data-tab-id") ?? null, sel);
+    const attentionKind = (id) =>
+      win.evaluate(
+        (t) =>
+          document
+            .querySelector(`.tab[data-tab-id="${t}"] .tab-attention`)
+            ?.getAttribute("data-kind") ?? null,
+        id
+      );
+
+    await win.locator(".tab-new").click();
+    await win.waitForTimeout(1800);
+    const waitingTab = await tabIdOf(".tab.active");
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.type(
+      `(sleep 3; printf '\\033]1337;Attention;kind=permission\\007') &`
+    );
+    await win.keyboard.press("Enter");
+
+    // Leave for a new tab, so the sequence lands in a pane nobody is watching.
+    await win.locator(".tab-new").click();
+    const bystanderTab = await tabIdOf(".tab.active");
+    await win.waitForTimeout(4500);
+
+    const kind = await attentionKind(waitingTab);
+    check(
+      "a pane that stops and waits flags its tab",
+      kind === "permission",
+      `kind=${kind}`
+    );
+    check(
+      "only the waiting tab is flagged",
+      (await attentionKind(bystanderTab)) === null,
+      `bystander=${await attentionKind(bystanderTab)}`
+    );
+
+    // Going to the pane is the acknowledgement — nothing else to dismiss.
+    await win.locator(`.tab[data-tab-id="${waitingTab}"]`).click();
+    await win.waitForTimeout(600);
+    check(
+      "focusing the pane clears the flag",
+      (await attentionKind(waitingTab)) === null,
+      `kind=${await attentionKind(waitingTab)}`
+    );
+
+    // Leave the tab count as it was found, so the history checks below count
+    // from the same baseline they always did.
+    await win.keyboard.press(CLOSE_TAB_KEY);
+    await win.waitForTimeout(600);
+    await win.locator(`.tab[data-tab-id="${bystanderTab}"]`).click();
+    await win.waitForTimeout(400);
+    await win.keyboard.press(CLOSE_TAB_KEY);
+    await win.waitForTimeout(600);
+  }
+
   // 20) A pane running Claude Code remembers which session it was, so closing
   // the tab records how to pick it back up.
   //
@@ -2089,7 +2207,7 @@ try {
   log(`\n===== ${passed} passed, ${failed} failed, ${skipped} skipped (${process.platform}) =====`);
   fs.writeFileSync(path.join(root, "test", "e2e-result.json"), JSON.stringify({ platform: process.platform, results }, null, 2));
 
-  clearTimeout(hard);
+  if (hard) clearTimeout(hard);
   try { await Promise.race([app.close(), new Promise((r) => setTimeout(r, 3000))]); } catch {}
   try { app.process().kill("SIGKILL"); } catch {}
   try { fs.rmSync(userDataDir, { recursive: true, force: true }); } catch {}

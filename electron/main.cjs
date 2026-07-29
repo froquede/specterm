@@ -1,4 +1,14 @@
-const { app, BrowserWindow, ipcMain, shell, Menu, clipboard, session, net } = require("electron");
+const {
+  app,
+  BrowserWindow,
+  ipcMain,
+  shell,
+  Menu,
+  clipboard,
+  session,
+  net,
+  screen,
+} = require("electron");
 const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
@@ -55,11 +65,39 @@ function findPwsh() {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
+// PowerShell shell integration: make the shell report its working directory via
+// OSC 7 so a new pane/tab opens where this one is. Windows has no /proc and no
+// lsof, and reading another process's current directory needs an undocumented
+// native call whose struct layout shifts by Windows version and arch — so the
+// pty-cwd handler returns null there and inheritance would otherwise fall back
+// to the startup path. Instead we let the shell tell us, the same OSC 7 that zsh
+// and fish emit by default (see registerCwdHandler in src/lib/osc.ts); the
+// renderer already parses it. This is how Windows Terminal / VS Code do it too.
+//
+// The hook wraps whatever `prompt` the user's profile left in place (it runs
+// after the profile via -Command), calls the original so their prompt is
+// untouched, and appends a zero-width OSC 7. The path is emitted as a proper
+// file URI (file:///C:/...) with an empty host, so it's accepted as local
+// without needing the machine's hostname. No backslashes in the source (char 92
+// = "\\", 47 = "/", 27 = ESC, 7 = BEL) to keep the -Command string clean.
+const PS_CWD_OSC7 =
+  "$__spt=$function:prompt; function global:prompt { " +
+  "$o = if ($__spt) { & $__spt } else { \"PS $((Get-Location).Path)> \" }; " +
+  "try { $d=(Get-Location).ProviderPath; if ($d) { " +
+  "$u=([uri]('file:///'+$d.Replace([char]92,[char]47))).AbsoluteUri; " +
+  "$Host.UI.Write(\"$([char]27)]7;$u$([char]7)\") } } catch {}; $o }";
+
+// Force the legacy powershell.exe console to UTF-8 (pwsh 7+ already defaults to
+// it), then install the OSC 7 hook above.
+const PS_UTF8 =
+  "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding";
+
 // Pick the shell to spawn for each platform and any args it needs. On Windows
 // `process.env.SHELL` is normally unset, so the old `|| "/bin/bash"` fallback
 // spawned a binary that doesn't exist and the terminal died instantly. Prefer
 // pwsh 7+ (UTF-8 by default); if only the legacy powershell.exe is available,
-// force its console encoding to UTF-8 so accents survive.
+// force its console encoding to UTF-8 so accents survive. Both get the OSC 7
+// working-directory hook so splits/new tabs inherit the live directory.
 function resolveShell() {
   if (process.platform === "win32") {
     if (process.env.SPECTERM_SHELL) {
@@ -67,47 +105,114 @@ function resolveShell() {
     }
     const pwsh = findPwsh();
     if (pwsh) {
-      return { shell: pwsh, args: [] };
+      return { shell: pwsh, args: ["-NoExit", "-Command", PS_CWD_OSC7] };
     }
     return {
       shell: "powershell.exe",
-      args: [
-        "-NoExit",
-        "-Command",
-        "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
-      ],
+      args: ["-NoExit", "-Command", `${PS_UTF8}; ${PS_CWD_OSC7}`],
     };
   }
   return { shell: process.env.SHELL || "/bin/bash", args: [] };
 }
 
-// PTY instance management
+// PTY instance management. Each instance records which window owns it (`wc`),
+// so output routes to that window alone and closing a window kills only its own
+// terminals. A PTY in mid-transfer between windows has `wc === null` and buffers
+// its output into `pending` until the destination window adopts it.
 const ptyInstances = new Map();
 let nextPtyId = 1;
-let mainWindow = null;
-let fsWatcher = null;
+
+// Every open window. A Set — rather than a `mainWindow` singleton — is what lets
+// the rest of this file stay window-agnostic: outbound IPC either targets the
+// window resolved from a request's sender, or fans out across these.
+const windows = new Set();
+
+// Per-window filesystem watcher, keyed by webContents id: each window watches
+// for its own sidebar, and its watcher dies with it.
+const fsWatchers = new Map();
+
+// The torn-off tab a freshly created window was made to host, keyed by
+// webContents id. Consumed exactly once, via "take-window-init".
+//
+// Only the tab lives here. Everything else the window needs to know about
+// itself is a flag, and flags go in through `additionalArguments` (see
+// windowBootFlags below) so the renderer can read them with no round trip —
+// what it builds its first tab from must not wait on IPC.
+const windowInit = new Map();
+
+// Both are claimed by the first window of the process and never handed out
+// again: opening a second window must not re-hit the GitHub feed, and must not
+// restore the saved session a second time (which would duplicate every tab and
+// every shell in it).
+let updateCheckClaimed = false;
+let sessionClaimed = false;
+
+// The flags stamped into a window's launch arguments, read back by preload.cjs.
+//
+// Encoded as `key=0|1` pairs rather than as JSON: a switch value goes through
+// Chromium's command-line handling, and on Windows that has a long history of
+// mangling embedded quotes. There are no quotes here to mangle, and the result
+// is still legible in a process list.
+function windowBootArg(opts) {
+  const hasTab = Boolean(opts.tab);
+  const autoCheckUpdates = !updateCheckClaimed;
+  // A window created to host a torn-off tab is never the session owner: it has
+  // its tab already, and restoring on top of it would be nonsense.
+  const ownsSession = !sessionClaimed && !hasTab;
+
+  updateCheckClaimed = true;
+  if (ownsSession) sessionClaimed = true;
+
+  const bit = (b) => (b ? "1" : "0");
+  return (
+    `--specterm-boot=hasTab=${bit(hasTab)},` +
+    `autoCheckUpdates=${bit(autoCheckUpdates)},` +
+    `ownsSession=${bit(ownsSession)}`
+  );
+}
+
+// Windows whose renderer has finished loading and is listening for "open-path".
+const readyWindows = new WeakSet();
+
+function openWindows() {
+  return [...windows].filter((w) => !w.isDestroyed());
+}
+
+// The window a renderer request came from.
+function windowOf(event) {
+  return BrowserWindow.fromWebContents(event.sender);
+}
+
+// Where a window-less action (an OS "Open With", a second launch) should land:
+// whatever the user is looking at, falling back to the most recent window.
+function targetWindow() {
+  const focused = BrowserWindow.getFocusedWindow();
+  if (focused && windows.has(focused)) return focused;
+  const open = openWindows();
+  return open.length ? open[open.length - 1] : null;
+}
 
 // Files the OS asked us to open (Finder "Open With", double-click, or a CLI
-// path arg) that may arrive before the renderer has finished loading — macOS
-// fires `open-file` even before `app` is ready. Queue them and drain once the
-// renderer is up; while it's up, send straight through.
+// path arg) that may arrive before any renderer has finished loading — macOS
+// fires `open-file` even before `app` is ready. Queue them and drain into the
+// first window that comes up; once one is up, send straight through.
 const pendingOpenPaths = [];
-let rendererReady = false;
 
 function openPath(filePath) {
   if (!filePath) return;
-  if (rendererReady && mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("open-path", filePath);
+  const win = targetWindow();
+  if (win && readyWindows.has(win)) {
+    win.webContents.send("open-path", filePath);
   } else {
     pendingOpenPaths.push(filePath);
   }
 }
 
-function flushOpenPaths() {
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  rendererReady = true;
+function flushOpenPaths(win) {
+  if (!win || win.isDestroyed()) return;
+  readyWindows.add(win);
   while (pendingOpenPaths.length) {
-    mainWindow.webContents.send("open-path", pendingOpenPaths.shift());
+    win.webContents.send("open-path", pendingOpenPaths.shift());
   }
 }
 
@@ -150,14 +255,48 @@ if (!singleInstanceOk) {
   app.on("second-instance", (_event, argv) => {
     const p = markdownPathFromArgv(argv);
     if (p) openPath(p);
-    if (mainWindow) {
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+    const win = targetWindow();
+    if (win) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
     }
   });
 }
 
-function createWindow() {
+const WINDOW_WIDTH = 1200;
+const WINDOW_HEIGHT = 800;
+
+// Where a torn-off tab's new window should sit: centered on the drop point, but
+// nudged back inside the display it landed on so no window opens with its title
+// bar off-screen (which on macOS would leave it undraggable).
+function windowBoundsAt(point) {
+  const area = screen.getDisplayNearestPoint(point).workArea;
+  const x = Math.round(point.x - WINDOW_WIDTH / 2);
+  const y = Math.round(point.y - 20);
+  return {
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    x: Math.min(Math.max(x, area.x), area.x + area.width - WINDOW_WIDTH),
+    y: Math.min(Math.max(y, area.y), area.y + area.height - WINDOW_HEIGHT),
+  };
+}
+
+// Kill every PTY a window owned. Called when that window closes: its terminals
+// die with it, while PTYs belonging to other windows — and any mid-transfer
+// (`wc === null`, see the tear-off flow) — are left alone.
+function killPtysOwnedBy(wc) {
+  for (const [id, instance] of ptyInstances) {
+    if (instance.wc !== wc) continue;
+    clearTransitTimer(instance);
+    if (!instance.disposed) {
+      instance.process.kill();
+      instance.disposed = true;
+    }
+    ptyInstances.delete(id);
+  }
+}
+
+function createWindow(opts = {}) {
   const isMac = process.platform === "darwin";
 
   // Solid, opaque window on every platform — no transparency, blur or vibrancy.
@@ -172,9 +311,14 @@ function createWindow() {
       }
     : { backgroundColor: "#1a1b26" };
 
-  mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+  // Flags first: they go into the renderer's own launch arguments, so they have
+  // to be decided before the BrowserWindow exists.
+  const bootArg = windowBootArg(opts);
+
+  const win = new BrowserWindow({
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT,
+    ...(opts.bounds || {}),
     title: "Specterm",
     autoHideMenuBar: true,
     ...platformWindow,
@@ -182,30 +326,36 @@ function createWindow() {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
+      // Read synchronously by the preload (see preload.cjs). This is the whole
+      // point: the renderer knows what kind of window it is at module load, so
+      // the first terminal spawns without waiting on a round trip to us.
+      additionalArguments: [bootArg],
     },
   });
 
-  // Remove menu bar entirely
-  mainWindow.setMenuBarVisibility(false);
+  windows.add(win);
 
-  // Fresh window: the renderer hasn't attached its open-path listener yet, so
-  // any queued file waits until did-finish-load flushes it below.
-  rendererReady = false;
+  // The torn-off tab, if any — fetched separately because it carries a
+  // serialized screen and has no business on a command line.
+  if (opts.tab) windowInit.set(win.webContents.id, { tab: opts.tab });
+
+  // Remove menu bar entirely
+  win.setMenuBarVisibility(false);
 
   // In dev, connect to Vite dev server; in prod, load built files
   if (process.env.VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(process.env.VITE_DEV_SERVER_URL);
+    win.loadURL(process.env.VITE_DEV_SERVER_URL);
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"));
+    win.loadFile(path.join(__dirname, "../dist/index.html"));
   }
 
   // Once the renderer is loaded, hand it any files queued while it booted (and
   // mark it ready so later open-file events go straight through). Fires again on
   // reloads — harmless, the queue is empty by then.
-  mainWindow.webContents.on("did-finish-load", flushOpenPaths);
+  win.webContents.on("did-finish-load", () => flushOpenPaths(win));
 
   // Open external links in default browser
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
+  win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
     return { action: "deny" };
   });
@@ -217,11 +367,11 @@ function createWindow() {
   // preventing-then-reopening looped the browser and stalled the renderer.
   // Gate on origin instead: same-origin (and non-http, e.g. file://) stays in
   // the window; only a different http(s) origin goes out.
-  mainWindow.webContents.on("will-navigate", (event, url) => {
+  win.webContents.on("will-navigate", (event, url) => {
     let external = false;
     try {
       const target = new URL(url);
-      const current = new URL(mainWindow.webContents.getURL());
+      const current = new URL(win.webContents.getURL());
       external = /^https?:$/.test(target.protocol) && target.origin !== current.origin;
     } catch {
       external = false;
@@ -234,21 +384,98 @@ function createWindow() {
 
   // Notify the renderer when the OS fullscreen state changes (e.g. macOS green
   // button, F11, or our own toggle) so the tab-bar icon stays in sync.
-  mainWindow.on("enter-full-screen", () => {
-    mainWindow?.webContents.send("fullscreen-change", true);
+  win.on("enter-full-screen", () => {
+    if (!win.isDestroyed()) win.webContents.send("fullscreen-change", true);
   });
-  mainWindow.on("leave-full-screen", () => {
-    mainWindow?.webContents.send("fullscreen-change", false);
+  win.on("leave-full-screen", () => {
+    if (!win.isDestroyed()) win.webContents.send("fullscreen-change", false);
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
+  // The user is here now, so stop asking for them. The badge count itself is
+  // left alone — the renderer owns it and clears it as panes are visited; this
+  // only stops the taskbar flash, which on Windows would otherwise keep going
+  // after the window is already in front.
+  win.on("focus", () => {
+    if (!win.isDestroyed()) win.flashFrame(false);
   });
+
+  // Tear down everything this window owned. `closed` fires after the webContents
+  // is gone, so capture its id up front.
+  const wc = win.webContents;
+  const wcId = wc.id;
+  win.on("closed", () => {
+    windows.delete(win);
+    windowInit.delete(wcId);
+    killPtysOwnedBy(wc);
+    const watcher = fsWatchers.get(wcId);
+    if (watcher) {
+      watcher.close();
+      fsWatchers.delete(wcId);
+    }
+  });
+
+  return win;
 }
 
 // === IPC Handlers ===
 
-ipcMain.handle("spawn-pty", (_event, opts) => {
+// How much output to hold for a PTY in transit between windows (a tear-off).
+// Enough to cover the window-creation gap even for a chatty process; past that
+// the oldest bytes go, exactly as scrollback does.
+const TRANSIT_BUFFER_LIMIT = 1024 * 1024;
+
+// How long a released PTY may sit with no owner before it is killed.
+//
+// A tear-off releases the PTYs first and only then asks where the tab landed, so
+// there is always a window where a shell is running that no window is holding.
+// Normally it lasts as long as it takes the destination to boot. If the handover
+// never completes — the renderer threw between the two steps, the new window
+// failed to load, the process was killed mid-drag — nothing would ever claim it,
+// and a live shell would keep running (and keep filling a megabyte of buffer)
+// until the app quit. Reclaiming it is what makes the release safe to do first.
+//
+// Generous on purpose: this is a backstop for a broken handover, not a deadline
+// for a working one, and killing a shell someone is about to get back would be
+// far worse than holding a dead one for a few seconds too long.
+const TRANSIT_RECLAIM_MS = 30_000;
+
+const EMPTY_BYTES = Buffer.alloc(0);
+
+function clearTransitTimer(instance) {
+  if (instance.transitTimer) {
+    clearTimeout(instance.transitTimer);
+    instance.transitTimer = null;
+  }
+}
+
+// Route PTY output to the window that owns it. A PTY handed over by a tear-off
+// has no owner for the moment it takes the destination window to boot, so its
+// output is parked instead of dropped — otherwise a build running in the torn-off
+// tab would lose whatever it printed mid-flight.
+function deliverPtyOutput(instance, id, data) {
+  if (instance.wc === null) {
+    instance.pending.push(data);
+    instance.pendingBytes += data.length;
+    while (
+      instance.pendingBytes > TRANSIT_BUFFER_LIMIT &&
+      instance.pending.length > 1
+    ) {
+      instance.pendingBytes -= instance.pending.shift().length;
+    }
+    return;
+  }
+  if (!instance.wc.isDestroyed()) {
+    // The Buffer goes over as-is. Electron's structured clone carries a
+    // Uint8Array natively, so this is one length-prefixed copy of the bytes —
+    // whereas `Array.from(data)` (what this used to do) turned every single byte
+    // into a boxed JS number, then serialized that array element by element.
+    // This is the hottest path in the app: everything a shell prints comes
+    // through it, and a `cat` of anything sizeable made it the bottleneck.
+    instance.wc.send("pty-output", id, data);
+  }
+}
+
+ipcMain.handle("spawn-pty", (event, opts) => {
   const { shell, args } = resolveShell();
   const id = nextPtyId++;
 
@@ -284,29 +511,93 @@ ipcMain.handle("spawn-pty", (_event, opts) => {
     env,
   });
 
-  ptyInstances.set(id, { process: ptyProcess, disposed: false });
+  const instance = {
+    process: ptyProcess,
+    disposed: false,
+    // The window this terminal belongs to. Reassigned by adopt-pty when a
+    // tear-off moves the terminal to another window; null while in transit.
+    wc: event.sender,
+    pending: [],
+    pendingBytes: 0,
+    // Set only while this PTY is in transit between windows — see release-pty.
+    transitTimer: null,
+  };
+  ptyInstances.set(id, instance);
 
   ptyProcess.onData((data) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send(
-        "pty-output",
-        id,
-        Array.from(Buffer.from(data))
-      );
-    }
+    deliverPtyOutput(instance, id, Buffer.from(data));
   });
 
   ptyProcess.onExit(() => {
-    const instance = ptyInstances.get(id);
-    if (instance) {
-      instance.disposed = true;
-    }
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("pty-exit", id);
+    instance.disposed = true;
+    if (instance.wc && !instance.wc.isDestroyed()) {
+      instance.wc.send("pty-exit", id);
     }
   });
 
   return id;
+});
+
+// Hand a set of PTYs over: they keep running with no owner, buffering output,
+// until the destination window adopts them. The source window calls this before
+// it drops its terminals, so no output falls through the gap.
+ipcMain.handle("release-pty", (_event, ids) => {
+  for (const id of Array.isArray(ids) ? ids : [ids]) {
+    const instance = ptyInstances.get(id);
+    if (!instance) continue;
+    instance.wc = null;
+    instance.pending = [];
+    instance.pendingBytes = 0;
+    // Armed from here, disarmed by adopt-pty. If nobody claims this PTY the
+    // handover broke somewhere, and an unowned shell is not something to leave
+    // running for the rest of the session.
+    clearTransitTimer(instance);
+    instance.transitTimer = setTimeout(() => {
+      instance.transitTimer = null;
+      if (instance.wc !== null) return; // adopted after all
+      if (!instance.disposed) {
+        instance.process.kill();
+        instance.disposed = true;
+      }
+      instance.pending = [];
+      instance.pendingBytes = 0;
+      ptyInstances.delete(id);
+    }, TRANSIT_RECLAIM_MS);
+    // A reclaim that is the only thing left running must not hold the process
+    // open past its own window.
+    instance.transitTimer.unref?.();
+  }
+});
+
+// Take ownership of a released PTY. The buffered output comes back as the return
+// value rather than as an event, which is what fixes the ordering: the adopting
+// renderer writes the serialized scrollback first, then these bytes, and only
+// then does live output start flowing to it.
+ipcMain.handle("adopt-pty", (event, id, cols, rows) => {
+  const instance = ptyInstances.get(id);
+  if (!instance) return { buffered: EMPTY_BYTES, exited: true };
+
+  instance.wc = event.sender;
+  clearTransitTimer(instance);
+  // Concatenated once and sent as bytes, not as an array of numbers — this can
+  // be a megabyte of a build's output, and boxing every byte of it would stall
+  // the adopting window at exactly the moment it is trying to appear.
+  const buffered = instance.pending.length
+    ? Buffer.concat(instance.pending)
+    : EMPTY_BYTES;
+  instance.pending = [];
+  instance.pendingBytes = 0;
+
+  if (!instance.disposed && cols > 0 && rows > 0) {
+    try {
+      instance.process.resize(cols, rows);
+    } catch {
+      // The process died between the check and the resize. The adopting window
+      // learns that from `exited` below; failing the adopt instead would leave
+      // it with a pane and no terminal.
+    }
+  }
+  return { buffered, exited: instance.disposed };
 });
 
 ipcMain.handle("write-pty", (_event, id, data) => {
@@ -743,47 +1034,52 @@ ipcMain.handle("clipboard-write-text", (_event, text) => {
   clipboard.writeText(typeof text === "string" ? text : String(text));
 });
 
-ipcMain.handle("watch-dir", (_event, dirPath) => {
-  if (fsWatcher) {
-    fsWatcher.close();
-  }
+// One watcher per window: each has its own sidebar browsing its own directory,
+// and only that window is told when something under it changes.
+ipcMain.handle("watch-dir", (event, dirPath) => {
+  const wc = event.sender;
+  const previous = fsWatchers.get(wc.id);
+  if (previous) previous.close();
 
-  fsWatcher = watch(dirPath, {
+  const watcher = watch(dirPath, {
     ignored: /(^|[/\\])\.|node_modules|target|dist|build/,
     persistent: true,
     ignoreInitial: true,
     depth: 5,
     usePolling: false,
   });
+  fsWatchers.set(wc.id, watcher);
 
-  fsWatcher.on("all", (_eventType, changedPath) => {
+  watcher.on("all", (_eventType, changedPath) => {
     if (
       typeof changedPath === "string" &&
       changedPath.endsWith(".md") &&
-      mainWindow &&
-      !mainWindow.isDestroyed()
+      !wc.isDestroyed()
     ) {
-      mainWindow.webContents.send("fs-change");
+      wc.send("fs-change");
     }
   });
 });
 
-ipcMain.handle("unwatch-dir", () => {
-  if (fsWatcher) {
-    fsWatcher.close();
-    fsWatcher = null;
+ipcMain.handle("unwatch-dir", (event) => {
+  const watcher = fsWatchers.get(event.sender.id);
+  if (watcher) {
+    watcher.close();
+    fsWatchers.delete(event.sender.id);
   }
 });
 
 // === Window IPC ===
 
-ipcMain.handle("is-fullscreen", () => {
-  return mainWindow ? mainWindow.isFullScreen() : false;
+ipcMain.handle("is-fullscreen", (event) => {
+  const win = windowOf(event);
+  return win ? win.isFullScreen() : false;
 });
 
-ipcMain.handle("set-fullscreen", (_event, value) => {
-  if (mainWindow) {
-    mainWindow.setFullScreen(Boolean(value));
+ipcMain.handle("set-fullscreen", (event, value) => {
+  const win = windowOf(event);
+  if (win) {
+    win.setFullScreen(Boolean(value));
   }
 });
 
@@ -828,14 +1124,96 @@ function setX11WindowOpacity(win, opacity) {
   );
 }
 
-ipcMain.handle("set-window-opacity", (_event, value) => {
-  if (!mainWindow) return;
+ipcMain.handle("set-window-opacity", (event, value) => {
+  const win = windowOf(event);
+  if (!win) return;
   const n = Number(value);
   const opacity = Number.isFinite(n) ? Math.min(1, Math.max(0.3, n)) : 1;
-  mainWindow.setOpacity(opacity); // Windows/macOS
+  win.setOpacity(opacity); // Windows/macOS
   if (process.platform === "linux") {
-    setX11WindowOpacity(mainWindow, opacity);
+    setX11WindowOpacity(win, opacity);
   }
+});
+
+// === Multi-window IPC ===
+
+// The tab a tear-off handed this window. Read once, on mount, and only by a
+// window whose boot flags said one is waiting — everything else it needs to
+// know came in through its launch arguments.
+ipcMain.handle("take-window-init", (event) => {
+  const id = event.sender.id;
+  const init = windowInit.get(id) ?? { tab: null };
+  windowInit.delete(id);
+  return init;
+});
+
+ipcMain.handle("new-window", () => {
+  createWindow().focus();
+});
+
+// The landing half of a tear-off. The renderer has already released the tab's
+// PTYs; here we decide where it goes, using the OS cursor position rather than
+// anything the renderer measured — a drag that leaves the window may stop
+// delivering pointer events to it, but the real cursor is always knowable.
+//
+// Drop over another Specterm window and the tab moves into it; drop anywhere
+// else and it becomes a window of its own, centered on where it landed.
+ipcMain.handle("drop-transfer", (event, tab) => {
+  if (!tab) return;
+  const point = screen.getCursorScreenPoint();
+  const source = windowOf(event);
+
+  for (const win of openWindows()) {
+    if (win === source) continue;
+    const b = win.getBounds();
+    if (
+      point.x >= b.x &&
+      point.x < b.x + b.width &&
+      point.y >= b.y &&
+      point.y < b.y + b.height
+    ) {
+      win.webContents.send("adopt-tab", tab);
+      if (win.isMinimized()) win.restore();
+      win.focus();
+      return;
+    }
+  }
+
+  createWindow({ tab, bounds: windowBoundsAt(point) }).focus();
+});
+
+// Relay for state every window keeps its own copy of (settings, theme,
+// favorites). The writer persists to localStorage and fires this; everyone else
+// re-reads. Without it, changing the theme in one window would leave the others
+// on the old one until the next launch.
+ipcMain.on("broadcast", (event, channel, payload) => {
+  for (const win of openWindows()) {
+    if (win.webContents === event.sender) continue;
+    win.webContents.send("broadcast", channel, payload);
+  }
+});
+
+// How many panes are waiting on the user, shown outside the window — the point
+// of the badge is the case where the window isn't the one you're looking at.
+//
+// Two mechanisms, because no single one covers the three platforms:
+//   - setBadgeCount: the number on the macOS dock icon, and the Unity launcher
+//     count on the Linux desktops that implement it. Silently false elsewhere,
+//     which is why it isn't the only thing here.
+//   - flashFrame: the taskbar-entry highlight on Windows and most Linux WMs
+//     (macOS bounces the dock icon). Only ever raised while the window is
+//     unfocused — flashing the window someone is already typing in is noise —
+//     and always lowered when it isn't needed, since on Windows it otherwise
+//     keeps flashing until the window is activated.
+ipcMain.handle("set-attention-badge", (_event, count) => {
+  const n = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
+  try {
+    app.setBadgeCount(n);
+  } catch (_) {
+    /* No badge support on this desktop — the flash below still applies. */
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.flashFrame(n > 0 && !mainWindow.isFocused());
 });
 
 // === Application menu ===
@@ -863,7 +1241,20 @@ function buildAppMenu() {
       : []),
     {
       label: "Window",
-      submenu: [{ role: "minimize" }, { role: "zoom" }],
+      submenu: [
+        // The renderer's keymap owns ⌘N like it owns ⌘T/⌘W/⌘D, so this shows
+        // the shortcut without claiming it — registerAccelerator: false renders
+        // the hint but leaves the key to reach the page.
+        {
+          label: "New Window",
+          accelerator: isMac ? "Cmd+N" : "Ctrl+Shift+N",
+          registerAccelerator: false,
+          click: () => createWindow().focus(),
+        },
+        { type: "separator" },
+        { role: "minimize" },
+        { role: "zoom" },
+      ],
     },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
@@ -898,9 +1289,11 @@ let macUpdateFile = null;
 let macStagedAppPath = null;
 let macStagedWorkDir = null;
 
+// The update flow belongs to the app, not to one window: any window's Settings
+// panel can drive it, so every window hears every step.
 function sendUpdaterEvent(payload) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("updater:event", payload);
+  for (const win of openWindows()) {
+    win.webContents.send("updater:event", payload);
   }
 }
 
@@ -1327,17 +1720,22 @@ app.whenReady().then(() => {
   createWindow();
 });
 
+// Safety net. Each window already kills its own PTYs and closes its own watcher
+// on `closed`; what can still be here is a PTY caught mid-transfer between two
+// windows, which has no owner to clean it up.
 app.on("window-all-closed", () => {
   for (const [, instance] of ptyInstances) {
+    clearTransitTimer(instance);
     if (!instance.disposed) {
       instance.process.kill();
     }
   }
   ptyInstances.clear();
 
-  if (fsWatcher) {
-    fsWatcher.close();
+  for (const [, watcher] of fsWatchers) {
+    watcher.close();
   }
+  fsWatchers.clear();
 
   app.quit();
 });

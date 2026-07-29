@@ -28,6 +28,25 @@ export async function killPty(id: number): Promise<void> {
   return backend.killPty(id);
 }
 
+// Hand these PTYs over to another window: they keep running, unowned, buffering
+// their output until someone adopts them. See the tear-off flow in App.tsx.
+export async function releasePty(ids: number[]): Promise<void> {
+  const backend = await getBackend();
+  return backend.releasePty(ids);
+}
+
+// Take ownership of a released PTY, resized to this pane. Returns whatever the
+// process printed while it had no window, so the adopting terminal can replay it
+// after the scrollback and before live output resumes.
+export async function adoptPty(
+  id: number,
+  cols: number,
+  rows: number
+): Promise<{ buffered: Uint8Array; exited: boolean }> {
+  const backend = await getBackend();
+  return backend.adoptPty(id, cols, rows);
+}
+
 // Best-effort: null whenever the OS or backend can't answer, never a throw —
 // this is called opportunistically while the user types.
 export async function ptyCwd(id: number): Promise<string | null> {

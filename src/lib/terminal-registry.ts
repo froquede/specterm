@@ -5,13 +5,31 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
-import { spawnPty, writePty, resizePty, killPty, onPtyOutput, onPtyExit, ptyCwd } from "./pty";
+import { SerializeAddon } from "@xterm/addon-serialize";
+import {
+  spawnPty,
+  writePty,
+  resizePty,
+  killPty,
+  adoptPty,
+  onPtyOutput,
+  onPtyExit,
+  ptyCwd,
+} from "./pty";
 import { startupPath } from "../stores/settings";
 import { os } from "./platform";
-import { registerOscHandler, registerCwdHandler } from "./osc";
+import {
+  registerOscHandler,
+  registerCwdHandler,
+  registerAttentionHandler,
+} from "./osc";
+import { noteOutput, noteInput, forgetPane } from "./claude-attention";
+import { markAttention, clearAttention } from "../stores/attention";
+import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
+import { publishStoreChange, registerStoreSync } from "./store-sync";
 import { cancelPendingRestore, takePendingRestore } from "./session-restore";
 import type { UnlistenFn } from "../backends/types";
 import type { SessionMeta } from "../types";
@@ -46,6 +64,36 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
     term.scrollToBottom();
   } else {
     term.scrollToLine(viewportY);
+  }
+}
+
+// Re-sync the DOM scrollbar to xterm's logical scroll position after a re-attach.
+// Switching tabs disposes and recreates the pane (SplitContainer keys panes by
+// leaf id), so the terminal element is moved into a new container. That move
+// resets the `.xterm-viewport` element's scrollTop to 0, while xterm's own
+// viewportY (which drives what it renders) is preserved — leaving the scrollbar
+// pinned at the top over correctly-rendered bottom content, and the next scroll
+// snaps to the top. xterm's scrollToBottom/scrollToLine can't fix it: the delta
+// from the preserved viewportY is zero, so they no-op without touching the DOM.
+// Drive the DOM scrollTop directly instead; the resulting scroll event makes
+// xterm re-sync and repaint. Read from the live buffer (viewportY survives the
+// move), so there is no captured state to keep in step. Runs after the fit so
+// the moved element has been measured and scrollHeight is valid.
+function syncViewportScroll(instance: TerminalInstance) {
+  const viewport =
+    instance.container?.querySelector<HTMLElement>(".xterm-viewport");
+  if (!viewport) return;
+  const term = instance.term;
+  const buffer = term.buffer.active;
+  const totalRows = buffer.baseY + term.rows;
+  // At the bottom (or nothing to scroll): pin to the end so a live terminal
+  // keeps its prompt in view. Otherwise map the logical top row back to a pixel
+  // offset via the measured row height (scrollHeight covers baseY + rows).
+  if (buffer.viewportY >= buffer.baseY || totalRows <= term.rows) {
+    viewport.scrollTop = viewport.scrollHeight;
+  } else {
+    const cellHeight = viewport.scrollHeight / totalRows;
+    viewport.scrollTop = Math.round(buffer.viewportY * cellHeight);
   }
 }
 
@@ -194,14 +242,12 @@ function persistFontFamily() {
   } catch {
     // localStorage unavailable — selection just won't persist this session
   }
+  publishStoreChange("terminal-font");
 }
 
-// Swap the font on every open terminal and refit (glyph metrics change the
-// column/row count), mirroring applyFontSize. `family` is a bare family name
-// (e.g. "Menlo") or "" to restore the default.
-export function setTerminalFontFamily(family: string) {
-  setTerminalFontFamilySignal(family);
-  persistFontFamily();
+// Swap the font on every open terminal and refit — glyph metrics change the
+// column/row count — mirroring applyFontSize.
+function applyFontFamily() {
   const next = xtermFontFamily();
   for (const instance of instances.values()) {
     if (instance.disposed) continue;
@@ -216,8 +262,85 @@ export function setTerminalFontFamily(family: string) {
   }
 }
 
+// `family` is a bare family name (e.g. "Menlo") or "" to restore the default.
+export function setTerminalFontFamily(family: string) {
+  setTerminalFontFamilySignal(family);
+  persistFontFamily();
+  applyFontFamily();
+}
+
+// The font family is a preference, so it follows the user across windows.
+// Font *zoom* (⌘=/⌘-/⌘0) deliberately does not: it's a per-view control, like a
+// browser's zoom, and yanking every window's size because one was zoomed in
+// would be surprising.
+registerStoreSync("terminal-font", () => {
+  setTerminalFontFamilySignal(loadFontFamily());
+  applyFontFamily();
+});
+
 export function getTerminalInstance(paneId: string): TerminalInstance | undefined {
   return instances.get(paneId);
+}
+
+// --- moving a terminal between windows ------------------------------------
+// A terminal can't cross a process boundary, but its PTY can change owner and
+// its screen can be replayed. So a tear-off ships two things per pane — the PTY
+// id and a serialized copy of the buffer — and the destination window rebuilds
+// a terminal around them instead of spawning a shell.
+
+export interface TerminalAdoption {
+  ptyId: number;
+  scrollback: string;
+  title: string;
+}
+
+// Panes that will adopt a PTY the moment they mount, keyed by their (new) pane
+// id. Filled by the store while it rebuilds a transferred tab, drained by
+// attachTerminal below.
+const pendingAdoptions = new Map<string, TerminalAdoption>();
+
+export function registerAdoption(paneId: string, adoption: TerminalAdoption) {
+  pendingAdoptions.set(paneId, adoption);
+}
+
+function takeAdoption(paneId: string): TerminalAdoption | undefined {
+  const adoption = pendingAdoptions.get(paneId);
+  pendingAdoptions.delete(paneId);
+  return adoption;
+}
+
+// Snapshot a terminal's screen + scrollback as the escape sequences that
+// reproduce it, so the window adopting this PTY doesn't start from a blank
+// screen. Colors and attributes survive; the internal state of a full-screen
+// program does not — vim or htop redraw themselves on the adopting window's
+// first resize, which is the same thing that happens on any terminal resize.
+//
+// Async because of the flush. `term.write` is queued, not immediate: bytes that
+// have already arrived from the host may still be sitting unparsed when a
+// tear-off asks for the snapshot. Serializing then would miss exactly those —
+// and they'd be missing from the host's transit buffer too, since the host had
+// already sent them — so they'd be gone for good. Writing an empty chunk and
+// waiting for its callback drains everything queued ahead of it first.
+export async function serializeTerminal(paneId: string): Promise<string> {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed) return "";
+  try {
+    await new Promise<void>((resolve) => instance.term.write("", resolve));
+  } catch {
+    // Terminal disposed mid-flush — fall through and serialize what's there.
+  }
+  if (instance.disposed) return "";
+  const addon = new SerializeAddon();
+  try {
+    instance.term.loadAddon(addon);
+    return addon.serialize();
+  } catch {
+    // Serialization failed — hand over a live PTY with no history rather than
+    // failing the whole move.
+    return "";
+  } finally {
+    addon.dispose();
+  }
 }
 
 // Claude Code marks its composer input line with a ❯ (U+276F) caret glyph, then
@@ -322,6 +445,12 @@ export function selectComposerText(paneId: string): string | null {
 // The mirror resets on every Enter/Ctrl-C/Ctrl-U.
 
 const CD_FAV_RE = /^cd\s+fav-(\d+)$/;
+
+// A mouse report on its way to a program that grabbed the mouse — SGR
+// (`\x1b[<0;12;3M`) or the older X10 form (`\x1b[M...`). xterm sends these down
+// the same onData channel as typing, so anything that means "the user answered"
+// has to tell them apart.
+const MOUSE_REPORT = /^\x1b\[(<|M)/;
 
 // POSIX single-quote a path so spaces and shell metacharacters survive intact.
 function shellQuote(p: string): string {
@@ -515,6 +644,24 @@ export async function createTerminalInstance(
 
   instances.set(paneId, instance);
 
+  // The exact "I'm waiting on you" signal, written into this pane by the Claude
+  // Code hooks (lib/claude-hooks.ts) when they're installed. Always registered:
+  // the sequence only ever arrives if the user installed the hooks, and honoring
+  // it costs nothing until then. The mode check is here rather than at the hook,
+  // so switching the feature off stops the flags without touching ~/.claude.
+  registerAttentionHandler(term, (kind) => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, kind);
+  });
+
+  // The terminal bell — how a program of any kind asks to be looked at. Claude
+  // Code rings it when its notification channel is terminal_bell, and so does a
+  // long build that ends with `\a`; both are the same request.
+  term.onBell(() => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, "bell");
+  });
+
   // The shell's own report of its directory, when it sends one. Free and
   // instant where available; refreshCwd covers the shells that stay quiet.
   registerCwdHandler(term, (cwd) => {
@@ -564,6 +711,7 @@ export async function attachTerminal(
   if (instance.container === container) {
     instance.detachSelection ??= installClickVsDragSelection(term, container);
     safeFit(term, fitAddon);
+    syncViewportScroll(instance);
     term.focus();
     return;
   }
@@ -597,6 +745,7 @@ export async function attachTerminal(
     instance.resizeObserver.observe(container);
 
     safeFit(term, fitAddon);
+    syncViewportScroll(instance);
     term.focus();
     return;
   }
@@ -682,39 +831,67 @@ export async function attachTerminal(
 
   fitAddon.fit();
 
-  // Spawn PTY. instance.cwd is the directory inherited from the pane this one
-  // was split from, or the configured startup directory (Settings) for the boot
-  // terminal; blank → undefined, and the main process falls back to the OS
-  // home. A stale/deleted path is guarded main-side so spawning can't crash.
-  instance.ptyId = await spawnPty({
-    cols: term.cols,
-    rows: term.rows,
-    cwd: instance.cwd || undefined,
-  });
+  // A pane created by a tear-off adopts a PTY that is already running rather
+  // than spawning a shell. Three things have to reach the screen in order — the
+  // serialized buffer, then whatever the process printed while it had no window,
+  // then live output — so `gate` parks live chunks until the replay is done.
+  // Without it, output arriving during the adopt round-trip would land ahead of
+  // the bytes it came after.
+  const adoption = takeAdoption(paneId);
+  let gate: Uint8Array[] | null = adoption ? [] : null;
+
+  if (adoption) {
+    instance.ptyId = adoption.ptyId;
+    instance.title = adoption.title;
+    instance.onTitle?.(adoption.title);
+    if (adoption.scrollback) term.write(adoption.scrollback);
+  } else {
+    // Spawn PTY. instance.cwd is the directory inherited from the pane this one
+    // was split from, or the configured startup directory (Settings) for the
+    // boot terminal; blank → undefined, and the main process falls back to the
+    // OS home. A stale/deleted path is guarded main-side so spawning can't
+    // crash.
+    instance.ptyId = await spawnPty({
+      cols: term.cols,
+      rows: term.rows,
+      cwd: instance.cwd || undefined,
+    });
+  }
 
   // The spawn directory is only the starting point — from here the value has to
   // track the user's `cd`s, or a split taken an hour later would still inherit
   // where the shell began. Read it back once now so a shell rc that cds on
-  // startup is reflected too.
+  // startup is reflected too. An adopted shell needs it more than a spawned one:
+  // this window never saw where that shell has been, so its only directory is
+  // whatever the process itself reports.
   refreshCwd(instance);
 
   // Wire output. A restored pane owes its shell a resume command that can only
   // be sent once there's a prompt to send it to, so its first chunk of output
   // doubles as the "shell is ready" signal — but only that pane pays for the
-  // check. Every other pane (which is nearly all of them) gets the bare handler.
+  // check: the branch is resolved once, here, not per chunk. Every other pane
+  // (which is nearly all of them) gets the bare writer.
+  //
+  // Every chunk is also timed by the attention heuristic (lib/claude-attention),
+  // which reads nothing from the data — only when it arrived — to spot a pane
+  // that was working and has gone quiet.
   const onShellReady = takePendingRestore(paneId, instance.ptyId);
-  instance.unlistenOutput = await onPtyOutput(
-    onShellReady
-      ? (id, data) => {
-          if (id === instance!.ptyId) {
-            term.write(data);
-            onShellReady();
-          }
-        }
-      : (id, data) => {
-          if (id === instance!.ptyId) term.write(data);
-        }
-  );
+  const writeChunk = onShellReady
+    ? (data: Uint8Array) => {
+        term.write(data);
+        noteOutput(paneId);
+        onShellReady();
+      }
+    : (data: Uint8Array) => {
+        term.write(data);
+        noteOutput(paneId);
+      };
+
+  instance.unlistenOutput = await onPtyOutput((id, data) => {
+    if (id !== instance!.ptyId) return;
+    if (gate) gate.push(data);
+    else writeChunk(data);
+  });
 
   // Wire exit
   instance.unlistenExit = await onPtyExit((id) => {
@@ -724,6 +901,32 @@ export async function attachTerminal(
     }
   });
 
+  // Claim the adopted PTY now that this terminal can receive from it, then drain
+  // in order: buffered-while-orphaned, then anything held by the gate.
+  if (adoption) {
+    let exited = false;
+    try {
+      const result = await adoptPty(adoption.ptyId, term.cols, term.rows);
+      if (result.buffered.length) term.write(result.buffered);
+      exited = result.exited;
+    } catch (err) {
+      // The host couldn't hand the PTY over. Say so in the pane rather than
+      // leaving a terminal that silently swallows every keystroke.
+      console.warn("[terminal] adopting pty failed:", err);
+      exited = true;
+    } finally {
+      const held = gate ?? [];
+      gate = null;
+      for (const chunk of held) writeChunk(chunk);
+    }
+    // The process died mid-move: its exit event went to a window that had
+    // already let go, so nothing else will report it.
+    if (exited) {
+      term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
+      opts?.onExit?.();
+    }
+  }
+
   // Wire input. A mirrored line buffer lets us expand `cd fav-N` into a real
   // `cd <path>` at the moment Enter is pressed (see foldInput above).
   let lineBuffer = "";
@@ -731,6 +934,13 @@ export async function attachTerminal(
   term.onData((data) => {
     if (instance!.ptyId === null) return;
     const ptyId = instance!.ptyId;
+
+    // Typing into a waiting pane *is* the answer it was waiting for. Clearing
+    // here (rather than only on focus) covers answering a prompt in a split you
+    // never made active. Mouse reports come down this same channel from a pane
+    // whose program grabbed the mouse, and moving the pointer over a pane
+    // answers nothing — a real click focuses it, which clears it anyway.
+    if (!MOUSE_REPORT.test(data)) noteInput(paneId);
 
     // Enter — try to expand the line before it reaches the shell.
     if (data === "\r" || data === "\n") {
@@ -806,10 +1016,41 @@ export function detachTerminal(paneId: string) {
   instance.detachSelection = null;
 }
 
+// Tear down this window's side of a terminal while leaving its PTY running —
+// the departure half of a tear-off. Everything destroyTerminal does except the
+// kill: the shell survives, and the window that adopts the PTY builds a fresh
+// terminal around it.
+export function releaseTerminal(paneId: string) {
+  // Everything destroyTerminal drops for a pane that stops existing applies
+  // here too — this pane is leaving the window, and none of it means anything
+  // once it has. Only the kill is different: the shell is being handed on, and
+  // the pty id is what the destination window adopts.
+  cancelPendingRestore(paneId);
+  clearAttention(paneId);
+  forgetPane(paneId);
+
+  const instance = instances.get(paneId);
+  if (!instance) return;
+
+  instance.disposed = true;
+  instance.resizeObserver?.disconnect();
+  instance.detachSelection?.();
+  instance.detachSelection = null;
+  instance.unlistenOutput?.();
+  instance.unlistenExit?.();
+  instance.term.dispose();
+  instances.delete(paneId);
+}
+
 export function destroyTerminal(paneId: string) {
   // A pane closed before it ever mounted still has its resume command queued —
   // drop it, or the map holds entries for panes that no longer exist.
   cancelPendingRestore(paneId);
+
+  // A pane that was waiting on the user has just stopped existing — the flag
+  // and the timer behind it go with it.
+  clearAttention(paneId);
+  forgetPane(paneId);
 
   const instance = instances.get(paneId);
   if (!instance) return;
