@@ -49,6 +49,36 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
   }
 }
 
+// Re-sync the DOM scrollbar to xterm's logical scroll position after a re-attach.
+// Switching tabs disposes and recreates the pane (SplitContainer keys panes by
+// leaf id), so the terminal element is moved into a new container. That move
+// resets the `.xterm-viewport` element's scrollTop to 0, while xterm's own
+// viewportY (which drives what it renders) is preserved — leaving the scrollbar
+// pinned at the top over correctly-rendered bottom content, and the next scroll
+// snaps to the top. xterm's scrollToBottom/scrollToLine can't fix it: the delta
+// from the preserved viewportY is zero, so they no-op without touching the DOM.
+// Drive the DOM scrollTop directly instead; the resulting scroll event makes
+// xterm re-sync and repaint. Read from the live buffer (viewportY survives the
+// move), so there is no captured state to keep in step. Runs after the fit so
+// the moved element has been measured and scrollHeight is valid.
+function syncViewportScroll(instance: TerminalInstance) {
+  const viewport =
+    instance.container?.querySelector<HTMLElement>(".xterm-viewport");
+  if (!viewport) return;
+  const term = instance.term;
+  const buffer = term.buffer.active;
+  const totalRows = buffer.baseY + term.rows;
+  // At the bottom (or nothing to scroll): pin to the end so a live terminal
+  // keeps its prompt in view. Otherwise map the logical top row back to a pixel
+  // offset via the measured row height (scrollHeight covers baseY + rows).
+  if (buffer.viewportY >= buffer.baseY || totalRows <= term.rows) {
+    viewport.scrollTop = viewport.scrollHeight;
+  } else {
+    const cellHeight = viewport.scrollHeight / totalRows;
+    viewport.scrollTop = Math.round(buffer.viewportY * cellHeight);
+  }
+}
+
 export interface TerminalInstance {
   term: Terminal;
   fitAddon: FitAddon;
@@ -564,6 +594,7 @@ export async function attachTerminal(
   if (instance.container === container) {
     instance.detachSelection ??= installClickVsDragSelection(term, container);
     safeFit(term, fitAddon);
+    syncViewportScroll(instance);
     term.focus();
     return;
   }
@@ -597,6 +628,7 @@ export async function attachTerminal(
     instance.resizeObserver.observe(container);
 
     safeFit(term, fitAddon);
+    syncViewportScroll(instance);
     term.focus();
     return;
   }

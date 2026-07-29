@@ -55,11 +55,39 @@ function findPwsh() {
   return fs.existsSync(candidate) ? candidate : null;
 }
 
+// PowerShell shell integration: make the shell report its working directory via
+// OSC 7 so a new pane/tab opens where this one is. Windows has no /proc and no
+// lsof, and reading another process's current directory needs an undocumented
+// native call whose struct layout shifts by Windows version and arch — so the
+// pty-cwd handler returns null there and inheritance would otherwise fall back
+// to the startup path. Instead we let the shell tell us, the same OSC 7 that zsh
+// and fish emit by default (see registerCwdHandler in src/lib/osc.ts); the
+// renderer already parses it. This is how Windows Terminal / VS Code do it too.
+//
+// The hook wraps whatever `prompt` the user's profile left in place (it runs
+// after the profile via -Command), calls the original so their prompt is
+// untouched, and appends a zero-width OSC 7. The path is emitted as a proper
+// file URI (file:///C:/...) with an empty host, so it's accepted as local
+// without needing the machine's hostname. No backslashes in the source (char 92
+// = "\\", 47 = "/", 27 = ESC, 7 = BEL) to keep the -Command string clean.
+const PS_CWD_OSC7 =
+  "$__spt=$function:prompt; function global:prompt { " +
+  "$o = if ($__spt) { & $__spt } else { \"PS $((Get-Location).Path)> \" }; " +
+  "try { $d=(Get-Location).ProviderPath; if ($d) { " +
+  "$u=([uri]('file:///'+$d.Replace([char]92,[char]47))).AbsoluteUri; " +
+  "$Host.UI.Write(\"$([char]27)]7;$u$([char]7)\") } } catch {}; $o }";
+
+// Force the legacy powershell.exe console to UTF-8 (pwsh 7+ already defaults to
+// it), then install the OSC 7 hook above.
+const PS_UTF8 =
+  "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding";
+
 // Pick the shell to spawn for each platform and any args it needs. On Windows
 // `process.env.SHELL` is normally unset, so the old `|| "/bin/bash"` fallback
 // spawned a binary that doesn't exist and the terminal died instantly. Prefer
 // pwsh 7+ (UTF-8 by default); if only the legacy powershell.exe is available,
-// force its console encoding to UTF-8 so accents survive.
+// force its console encoding to UTF-8 so accents survive. Both get the OSC 7
+// working-directory hook so splits/new tabs inherit the live directory.
 function resolveShell() {
   if (process.platform === "win32") {
     if (process.env.SPECTERM_SHELL) {
@@ -67,15 +95,11 @@ function resolveShell() {
     }
     const pwsh = findPwsh();
     if (pwsh) {
-      return { shell: pwsh, args: [] };
+      return { shell: pwsh, args: ["-NoExit", "-Command", PS_CWD_OSC7] };
     }
     return {
       shell: "powershell.exe",
-      args: [
-        "-NoExit",
-        "-Command",
-        "[Console]::OutputEncoding=[Console]::InputEncoding=[System.Text.UTF8Encoding]::new($false); $OutputEncoding=[Console]::OutputEncoding",
-      ],
+      args: ["-NoExit", "-Command", `${PS_UTF8}; ${PS_CWD_OSC7}`],
     };
   }
   return { shell: process.env.SHELL || "/bin/bash", args: [] };
