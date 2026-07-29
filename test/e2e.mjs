@@ -1013,7 +1013,15 @@ try {
   });
   await win.waitForTimeout(900);
   check("toast withheld during the debounce", !(await slot()).toast);
-  await win.waitForTimeout(1300);
+  // Wait for the toast rather than for a duration. The debounce is 1.5s, but a
+  // renderer Chromium is throttling clamps timers and paints rarely, so "it has
+  // appeared by now" is a claim about the machine — the same assumption that
+  // made the auto-hide and OSC 7 checks flaky. Bounded well above the debounce.
+  await win
+    .waitForSelector(".settings-saved-bar", { timeout: 10000 })
+    .catch(() => {
+      /* Let the check below report what it actually found. */
+    });
   check("toast appears once edits settle", (await slot()).toast);
   await win.waitForTimeout(2900);
   check("toast auto-dismisses", !(await slot()).toast);
