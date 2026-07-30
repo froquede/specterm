@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.17.0 — 2026-07-29
 
 ### Added
 - **Closing a window no longer stops your shells.** Close one and it *detaches*:
