@@ -449,6 +449,9 @@ function reloadFromStorage() {
 export function setRestoreLastSession(v: boolean) {
   setRestoreLastSessionSignal(v);
   persist();
+  // The host decides how many windows to open at launch, before any renderer is
+  // there to ask, so it has to be told when this changes.
+  pushBackgroundSessions();
 }
 
 // --- Background sessions ---------------------------------------------------
@@ -465,7 +468,16 @@ export function setRestoreLastSession(v: boolean) {
 // stop a settings write.
 function pushBackgroundSessions() {
   void getBackend()
-    .then((backend) => backend.setBackgroundSessions(backgroundSessions()))
+    .then((backend) => {
+      backend.setBackgroundSessions(backgroundSessions());
+      // The host also needs both of these *before any window exists* — how many
+      // windows to reopen at launch, and whether closing one detaches it — so it
+      // keeps its own mirror of them, refreshed from here.
+      backend.pushSessionPrefs({
+        restoreLastSession: restoreLastSession(),
+        backgroundSessions: backgroundSessions(),
+      });
+    })
     .catch(() => {
       /* Host doesn't do detaching — closing a window just closes it. */
     });

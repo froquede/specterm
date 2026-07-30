@@ -106,12 +106,31 @@ export interface TransferTab {
 // (async) takeWindowInit fetches it — a round trip nobody can perceive, since
 // that window exists only because a drag just ended.
 export interface WindowBoot {
-  hasTab: boolean;
+  // Tabs are waiting in takeWindowInit() — handed over with their PTYs still
+  // running, from a tear-off or a background session being reattached. Fetched
+  // asynchronously: they can carry megabytes of serialized screen, and that window
+  // exists only because a drag just ended.
+  hasTabs: boolean;
+  // Whether a saved layout was collected for this window. `restore` below is it.
+  hasRestore: boolean;
+  // This window's saved layout, already here — collected synchronously by the
+  // preload before the renderer's first line ran, because the first tab is built
+  // from it and nothing may sit in front of the first shell.
+  restore: RestoreWindow | null;
   // Whether this window owns the single launch-time update check.
   autoCheckUpdates: boolean;
-  // Whether this window owns the saved session: it restores it on open, and is
-  // the only one that writes it back. Every other window opens a plain terminal.
-  ownsSession: boolean;
+  // This one window may look for a session left in localStorage by the version
+  // that kept it there, so an upgrade doesn't cost the user their tabs. Only ever
+  // true for the single window opened at launch when the host had nothing of its
+  // own to restore — two windows both migrating the same blob would duplicate it.
+  migrateLegacy: boolean;
+}
+
+// A window's tabs as the host saved them: no live processes behind them, unlike a
+// TransferTab. The renderer validates and hydrates this into fresh shells.
+export interface RestoreWindow {
+  tabs: unknown[];
+  activeTabIndex: number;
 }
 
 // State a window collects once, on mount — the half that needs a round trip.
@@ -242,6 +261,20 @@ export interface Backend {
   // Whether closing a window should detach it at all. The setting lives in the
   // renderer; the host has to decide in its close handler, so it's pushed.
   setBackgroundSessions(enabled: boolean): void;
+
+  // --- The saved session ----------------------------------------------------
+  //
+  // The host assembles one entry per window and writes the lot on quit, which is
+  // what makes quitting with three windows open bring three back. Each renderer
+  // only ever reports its own.
+
+  // This window's tabs, pushed on the renderer's existing save debounce.
+  pushLayout(layout: { tabs: unknown[]; activeTabIndex: number } | null): void;
+  // The two session settings the host needs before any window exists.
+  pushSessionPrefs(prefs: {
+    restoreLastSession: boolean;
+    backgroundSessions: boolean;
+  }): void;
   // Bring a parked session back into a window. False when nothing was parked.
   reattachSession(): Promise<boolean>;
 
@@ -259,10 +292,6 @@ export interface Backend {
   // How many sessions are currently parked, so the UI can offer the reattach only
   // when there is one.
   detachedSessionCount(): Promise<number>;
-  // The window that was writing the on-disk session snapshot has closed and this
-  // one has inherited the job. Fires at most once per handover, and only one
-  // window holds it at a time.
-  onSessionOwnership(cb: () => void): Promise<UnlistenFn>;
 
   // Cross-window sync for state each window keeps its own copy of (settings,
   // theme, favorites): the writer persists, then tells everyone else to re-read.

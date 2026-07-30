@@ -26,9 +26,18 @@ because both produce a green run that proves nothing:
 - **`perf-boot.mjs`** — the startup budget, for the *instant to open* pillar. Boots
   cold (nothing stored) against boots restoring a real 8-tab session with ~2MB of
   saved screens, and fails if the delta exceeds `PERF_MAX_DELTA_MS` (default
-  400ms). Measured at **+16ms** on the dev machine — the layout is a 2KB
-  synchronous localStorage read, the screens come from a file the host owns and are
-  fired without being awaited, and only the active tab's pane replays on boot.
+  400ms). Measured at **+3ms** on the dev machine, and that number is load-bearing:
+  it is only that small because of two deliberate choices the harness exists to
+  protect. The window's saved layout is collected *synchronously* by the preload, so
+  the first tab is built with nothing awaited in front of the first shell. The
+  screens are read *lazily* — nothing touches the file until a pane has mounted and
+  asks for its own, which is after its canvas exists.
+
+  Both were regressions this harness caught. Fetching the layout over an async IPC
+  cost ~25ms (a dynamic `import()` of the backend module, in front of the first tab —
+  the exact thing `windowBoot()` in `src/backends/index.ts` documents as the one
+  startup property worth protecting). Reading the screens during hydration cost
+  ~100ms more, two megabytes crossing IPC on the thread trying to paint.
 
   It logs what each boot actually saw (`layout=…B tabs=…`) on every run, because
   its first two versions silently measured a cold boot twice — seeding the layout

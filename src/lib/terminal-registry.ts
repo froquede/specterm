@@ -326,15 +326,18 @@ function takeAdoption(paneId: string): TerminalAdoption | undefined {
 
 export interface TerminalRevival {
   /**
-   * Serialized screen + scrollback, or "" for a pane whose screen wasn't kept.
+   * Fetches this pane's serialized screen + scrollback. Absent for a pane whose
+   * screen wasn't kept.
    *
-   * A promise, normally: the screens are read from a file the host owns (see
-   * lib/session-screens.ts), and boot fires that read without waiting on it. The
-   * replay is gated behind live output below, so the answer arriving a few
-   * milliseconds late costs nothing and keeps the read off the path to the first
-   * shell. A plain string is accepted for the callers that already have one.
+   * A *thunk*, not a promise, and that is load-bearing: the screens live in a file
+   * the host owns (see lib/session-screens.ts), and nothing reads it until a pane
+   * mounts and calls this. Handing out a promise instead started the read during
+   * hydration, where a couple of megabytes crossing IPC competed with the first
+   * paint — ~100ms of it, measured, on a restored 8-tab session. By the time this
+   * is called the terminal is open, its canvas exists and the shell has spawned;
+   * the replay is gated behind live output, so it can arrive late safely.
    */
-  screen: string | Promise<string>;
+  screen?: () => Promise<string>;
   /** The shell's last OSC title, if the snapshot had one. */
   title?: string;
 }
@@ -968,7 +971,7 @@ export async function attachTerminal(
   // Same gate as an adoption, for the same reason: the replayed screen has to land
   // *before* anything live, or the new shell's prompt ends up above the history it
   // came after.
-  const pendingScreen = revival?.screen ?? "";
+  const pendingScreen = revival?.screen;
   let gate: Uint8Array[] | null = adoption || pendingScreen ? [] : null;
 
   if (adoption) {
@@ -1062,7 +1065,7 @@ export async function attachTerminal(
     // because the shell underneath genuinely is new — the one that printed
     // everything above died with the app.
     try {
-      const screen = await pendingScreen;
+      const screen = await pendingScreen();
       if (screen) {
         term.write(screen);
         term.write(REVIVED_MARKER);

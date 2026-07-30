@@ -41,7 +41,19 @@
   asynchronous — which is *better* than what it replaced: boot fires the read and
   carries on, and each pane's replay is gated behind its own live output the way an
   adopted pane's already was. Measured cost to startup with a real 8-tab session and
-  ~2MB of screens: **+16ms** (`npm run test:perf`).
+  ~2MB of screens: **+3ms** (`npm run test:perf`).
+
+- **Every window comes back, where it was.** Quitting with three windows open used
+  to reopen one: the saved session was a single localStorage key, and every window
+  shares one origin, so exactly one was nominated to write it and the rest were
+  lost. It is now one entry per window, assembled by the main process — which also
+  means each window returns to the size and position it had, and a window that was
+  detached into the background is part of the saved session too (its shells died
+  with the quit, but you hadn't finished with it).
+
+  Nothing is nominated any more. Each window reports its own layout on the debounce
+  it already used, so the ownership handoff — and the two bugs that came with it —
+  is gone rather than fixed.
 
 ### Fixed
 - **You can always get out.** Closing a window now detaches it, which left Linux

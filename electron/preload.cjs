@@ -21,18 +21,51 @@ function readBootFlags() {
     }
     // Only trust a value that was actually there — a missing key means an older
     // host, or a shape we don't recognize, and the defaults below are safer.
-    if ("ownsSession" in flags) {
+    if ("hasTabs" in flags) {
       return {
-        hasTab: flags.hasTab === true,
+        hasTabs: flags.hasTabs === true,
+        hasRestore: flags.hasRestore === true,
         autoCheckUpdates: flags.autoCheckUpdates === true,
-        ownsSession: flags.ownsSession === true,
+        migrateLegacy: flags.migrateLegacy === true,
       };
     }
   }
-  return { hasTab: false, autoCheckUpdates: true, ownsSession: true };
+  return {
+    hasTabs: false,
+    hasRestore: false,
+    autoCheckUpdates: true,
+    migrateLegacy: false,
+  };
 }
 
-const windowBoot = readBootFlags();
+const flags = readBootFlags();
+
+// A saved layout for this window, collected here rather than asked for later.
+//
+// Synchronous, and that is the point: the renderer builds its first tab from this,
+// and the one startup property worth protecting is that nothing — not even a
+// microtask — sits in front of the first shell (see windowBoot in
+// src/backends/index.ts). So it is pulled over a blocking channel at preload time,
+// on exactly the launches that are restoring something, and handed to the renderer
+// as plain data alongside the flags.
+//
+// Handed-over *tabs* deliberately do not come this way: they can carry megabytes of
+// serialized screen, and the window receiving them exists only because a drag just
+// ended, so that one can afford a round trip.
+const windowBoot = {
+  ...flags,
+  restore: flags.hasRestore
+    ? (() => {
+        try {
+          return ipcRenderer.sendSync("window-restore-sync");
+        } catch (_) {
+          // Older host, or a channel that isn't there — fall back to a plain window
+          // rather than failing the launch.
+          return null;
+        }
+      })()
+    : null,
+};
 
 contextBridge.exposeInMainWorld("specterm", {
   // Plain data, not a function: there is nothing to ask anyone.
@@ -179,16 +212,18 @@ contextBridge.exposeInMainWorld("specterm", {
 
   detachedSessionCount: () => ipcRenderer.invoke("detached-session-count"),
 
-  // The window that was writing the on-disk session snapshot has gone away and
-  // this one has inherited the job. Only one window ever holds it.
-  onSessionOwnership: (cb) => {
-    const handler = () => cb();
-    ipcRenderer.on("session-ownership", handler);
-    return () => ipcRenderer.removeListener("session-ownership", handler);
-  },
 
   setBackgroundSessions: (enabled) =>
     ipcRenderer.send("set-background-sessions", enabled),
+
+  // The layout of this window's tabs, pushed on the renderer's own save debounce.
+  // The host assembles every window's into the saved session and writes it on quit
+  // — which is why quitting with three windows open now brings three back.
+  pushLayout: (layout) => ipcRenderer.send("session:layout", layout),
+
+  // The two session settings the host has to know before any window exists: how
+  // many windows to reopen at launch, and whether closing one detaches it.
+  pushSessionPrefs: (prefs) => ipcRenderer.send("session:prefs", prefs),
 
   // Cross-window state sync (settings, theme, favorites).
   broadcast: (channel, payload) =>

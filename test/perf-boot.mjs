@@ -66,15 +66,18 @@ async function boot(profile) {
   // "there is a pane in front of you".
   await win.waitForSelector(".xterm-screen canvas", { timeout: 30000 });
   const painted = Date.now() - t0;
+  // The same moment on the renderer's own clock, so renderer work can be compared
+  // without the host's startup (and Playwright's launch overhead) mixed in.
+  const paintedInPage = Math.round(await win.evaluate(() => performance.now()));
   const tabs = await win.evaluate(() => document.querySelectorAll(".tab").length);
   // Always logged, because it is what distinguishes "measured the restore" from
   // "measured a cold boot twice and reported a flattering delta" — which is how
   // this harness read on its first two attempts.
   const seen = await win.evaluate(() => ({
-    layoutBytes: localStorage.getItem("specterm.session")?.length ?? 0,
     nav: performance.getEntriesByType("navigation")[0]?.type,
+    restore: Boolean(window.specterm?.windowBoot?.restore),
   }));
-  log(`   boot saw layout=${seen.layoutBytes}B nav=${seen.nav} tabs=${tabs}`);
+  log(`   boot saw nav=${seen.nav} tabs=${tabs} restore=${seen.restore}`);
   try {
     await Promise.race([app.close(), sleep(10000)]);
   } catch (_) {
@@ -85,7 +88,7 @@ async function boot(profile) {
   } catch (_) {
     // already gone
   }
-  return { painted, tabs };
+  return { painted, paintedInPage, tabs };
 }
 
 // Inflate the screens the app just wrote, keeping its own keys.
@@ -115,17 +118,23 @@ const results = [];
 try {
   // --- cold ----------------------------------------------------------------
   const coldTimes = [];
+  const coldInPage = [];
   for (let i = 0; i < RUNS; i++) {
     const p = path.join(os.tmpdir(), `specterm-perf-cold-${Date.now()}-${i}`);
     fs.mkdirSync(p, { recursive: true });
     const r = await boot(p);
     coldTimes.push(r.painted);
+    coldInPage.push(r.paintedInPage);
     fs.rmSync(p, { recursive: true, force: true });
   }
-  log(`cold      painted: ${coldTimes.join(", ")} ms  median=${median(coldTimes)}ms`);
+  log(
+    `cold      painted: ${coldTimes.join(", ")} ms  median=${median(coldTimes)}ms  ` +
+      `| in-page median=${median(coldInPage)}ms`
+  );
 
   // --- restored ------------------------------------------------------------
   const restoredTimes = [];
+  const restoredInPage = [];
   let restoredTabs = 0;
   for (let i = 0; i < RUNS; i++) {
     const p = path.join(os.tmpdir(), `specterm-perf-warm-${Date.now()}-${i}`);
@@ -167,16 +176,21 @@ try {
     }
     const r = await boot(p);
     restoredTimes.push(r.painted);
+    restoredInPage.push(r.paintedInPage);
     restoredTabs = r.tabs;
     fs.rmSync(p, { recursive: true, force: true });
   }
   log(
     `restored  painted: ${restoredTimes.join(", ")} ms  median=${median(restoredTimes)}ms  ` +
-      `(tabs=${restoredTabs})`
+      `| in-page median=${median(restoredInPage)}ms  (tabs=${restoredTabs})`
   );
 
   const delta = median(restoredTimes) - median(coldTimes);
-  log(`delta: ${delta > 0 ? "+" : ""}${delta}ms  (budget ${MAX_DELTA_MS}ms)`);
+  const inPageDelta = median(restoredInPage) - median(coldInPage);
+  log(
+    `delta: ${delta > 0 ? "+" : ""}${delta}ms wall, ` +
+      `${inPageDelta > 0 ? "+" : ""}${inPageDelta}ms in-page  (budget ${MAX_DELTA_MS}ms)`
+  );
 
   const restoredOk = restoredTabs === TABS;
   if (!restoredOk) log(`WARN  expected ${TABS} restored tabs, saw ${restoredTabs}`);

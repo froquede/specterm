@@ -49,14 +49,14 @@ import {
 import { registerPendingRestore } from "../lib/session-restore";
 import {
   captureScreens,
-  loadScreens,
   saveScreens,
   screenKeyOf,
-  type ScreenStore,
+  screenThunk,
 } from "../lib/session-screens";
 import {
   flushSession,
-  loadSession,
+  takeLegacySession,
+  validateWindowSnapshot,
   popClosed,
   recordClosedPane,
   recordClosedTab,
@@ -185,35 +185,35 @@ function isRendererReload(): boolean {
 // and keeping a screen for each would cost more than the whole rest of the app's
 // storage. A reopened tab comes back named and in the right directory, with a
 // clean shell.
-function adoptSnapshotPanes(screens?: Promise<ScreenStore>) {
+function adoptSnapshotPanes(withScreens: boolean) {
   return (paneId: PaneId, pane: SnapshotPane) => {
     if (pane.kind !== "terminal") return;
     if (pane.session) registerPendingRestore(paneId, pane.session);
-    const key = screens ? screenKeyOf(pane) : "";
-    // A key with nothing behind it resolves to "" and the pane opens empty, which
-    // is what should happen for a snapshot written before screens existed, or one
-    // whose screen was dropped. Panes with neither a key nor a name get no entry
-    // at all rather than an empty one.
-    const screen = key
-      ? screens!.then((map) => map[key] ?? "")
-      : "";
+    // A thunk, so nothing is read until the pane mounts and asks. A key with
+    // nothing behind it resolves to "" and the pane opens empty, which is what
+    // should happen for a snapshot written before screens existed, or one whose
+    // screen was dropped. Panes with neither a key nor a name get no entry at all.
+    const screen = withScreens ? screenThunk(screenKeyOf(pane)) : undefined;
     if (screen || pane.title) {
       registerRevival(paneId, { screen, title: pane.title });
     }
   };
 }
 
-// The saved "what was open" session, hydrated — or null when there is nothing to
-// restore, restore is switched off, or this is a renderer reload (the previous
-// shells are still alive in that case, and restoring would spawn a second set
-// beside them).
-function restoredTabs(): { tabs: Tab[]; activeTabId: TabId } | null {
+// One window's saved tabs, hydrated — or null when there is nothing usable in
+// them, restore is switched off, or this is a renderer reload (the previous shells
+// are still alive in that case, and restoring would spawn a second set beside them).
+//
+// `raw` comes from the host, which holds one of these per window and hands each
+// window its own. It is validated here rather than trusted: it round-tripped
+// through a file that may have been written by an older version or edited by hand.
+function restoredTabs(
+  raw: { tabs?: unknown[]; activeTabIndex?: number } | null
+): { tabs: Tab[]; activeTabId: TabId } | null {
   if (!restoreLastSession() || isRendererReload()) return null;
-  const saved = loadSession();
+  const saved = validateWindowSnapshot(raw);
   if (!saved) return null;
-  // Started here and deliberately not awaited: one read for the whole session,
-  // running while the tabs are hydrated and the first shell spawns.
-  const adopt = adoptSnapshotPanes(loadScreens());
+  const adopt = adoptSnapshotPanes(true);
   const tabs = saved.tabs.map((t) => hydrateTab(t, adopt));
   if (!tabs.length) return null;
   return { tabs, activeTabId: (tabs[saved.activeTabIndex] ?? tabs[0]).id };
@@ -235,12 +235,6 @@ const [state, setStateRaw] = createSignal<AppState>({
   sidebarView: "files",
   renamingTabId: null,
 });
-
-// Only the window that restored the session writes it back. Every window shares
-// one localStorage, so without an owner the last one to touch a tab would
-// overwrite the snapshot with its own tabs — and the next launch would restore
-// whichever window happened to write last, not the session as a whole.
-let ownsSession = false;
 
 // Set once the snapshot written on the way out is final. Nothing may write after
 // that, and the reason is a race that quietly ruined the restore it was supposed
@@ -268,12 +262,12 @@ function update(fn: (s: AppState) => AppState) {
 }
 
 function scheduleSessionSave() {
-  // Nothing reads the snapshot when restore is off, so don't build one. This is
-  // the whole feature's cost for anyone who doesn't want it: a boolean check per
-  // store write, and no timer, no serialization, no storage write ever. The same
-  // applies to a window that doesn't own the session — it never writes one, and to
-  // one that has already written its last (see sessionFrozen).
-  if (sessionFrozen || !ownsSession || !restoreLastSession()) return;
+  // Nothing reads the snapshot when restore is off, so don't build one. This is the
+  // whole feature's cost for anyone who doesn't want it: a boolean check per store
+  // write, and no timer, no serialization, no IPC ever. Every window now reports its
+  // own layout — there is no longer one nominated writer — so the only other reason
+  // to stay quiet is having already written the last one (see sessionFrozen).
+  if (sessionFrozen || !restoreLastSession()) return;
 
   saveSession(() => {
     const s = state();
@@ -295,7 +289,7 @@ const SCREEN_CAPTURE_THROTTLE_MS = 2000;
 let lastScreenCapture = 0;
 
 function captureScreensNow() {
-  if (sessionFrozen || !ownsSession || !restoreLastSession()) return;
+  if (sessionFrozen || !restoreLastSession()) return;
   const now = Date.now();
   if (now - lastScreenCapture < SCREEN_CAPTURE_THROTTLE_MS) return;
   lastScreenCapture = now;
@@ -524,18 +518,24 @@ export function useTabStore() {
     //     duplicate every tab and every shell in it.
     //
     // Idempotent: a renderer reload that finds tabs already there leaves them.
-    // `handover` is what the host had waiting for this window: one tab for a
-    // tear-off, or every tab of a background session being reattached. Either way
-    // it wins over the saved session — those panes hold PTYs that are still
-    // running, and restoring on top of them would spawn a second set.
-    initWindow(handover: TransferTab[] | TransferTab | null, sessionOwner = false) {
+    /**
+     * Fill this window, once, with whatever it is for.
+     *
+     * Three kinds of window, in precedence order:
+     *
+     *   - `handover` — tabs whose PTYs are still running: one torn off another
+     *     window, or all of them for a background session being reattached. It wins
+     *     over anything saved, because restoring on top of live processes would
+     *     spawn a second set beside them.
+     *   - `restore` — one window's saved layout, handed over by the host. No
+     *     processes behind it; hydrated into fresh shells.
+     *   - neither — a plain new terminal.
+     */
+    initWindow(
+      handover: TransferTab[] | TransferTab | null,
+      restore: { tabs?: unknown[]; activeTabIndex?: number } | null = null
+    ) {
       if (state().tabs.length > 0) return;
-
-      // Set before the handover branch, not after it. Writing the snapshot and
-      // restoring from it are separate: a window handed its tabs must not restore
-      // on top of them, but it is still a perfectly good *writer* — and after a
-      // detach/reattach it is usually the only window there is.
-      ownsSession = sessionOwner;
 
       const transfers = Array.isArray(handover)
         ? handover
@@ -551,12 +551,29 @@ export function useTabStore() {
         return tabs[0];
       }
 
-      const restored = sessionOwner ? restoredTabs() : null;
+      const restored = restoredTabs(restore);
       if (restored) {
         update((s) => ({ ...s, ...restored }));
         return restored.tabs[0];
       }
 
+      const tab = createTerminalTab();
+      update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
+      return tab;
+    },
+
+    /**
+     * Fill this window from a session left in localStorage by the version that kept
+     * it there. Only the one window the host nominates may call this (see
+     * `migrateLegacy` in WindowBoot); the blob is consumed as it's read.
+     */
+    initWindowFromLegacy() {
+      if (state().tabs.length > 0) return;
+      const restored = restoredTabs(takeLegacySession());
+      if (restored) {
+        update((s) => ({ ...s, ...restored }));
+        return restored.tabs[0];
+      }
       const tab = createTerminalTab();
       update((s) => ({ ...s, tabs: [tab], activeTabId: tab.id }));
       return tab;
@@ -598,16 +615,6 @@ export function useTabStore() {
       for (const tab of ordered) releasePanesInTree(tab.root);
 
       return transfers;
-    },
-
-    // The window that was writing the on-disk snapshot has closed and this one has
-    // inherited the job. Snapshot immediately: the outgoing owner's last write
-    // described *its* tabs, and until this window writes one the saved session is
-    // a picture of a window that no longer exists.
-    claimSession() {
-      if (ownsSession) return;
-      ownsSession = true;
-      captureSessionNow();
     },
 
     // A tab another window tore off and dropped onto this one.
@@ -823,7 +830,7 @@ export function useTabStore() {
     reopenLastClosed() {
       const entry = popClosed();
       if (!entry) return;
-      const adopt = adoptSnapshotPanes();
+      const adopt = adoptSnapshotPanes(false);
 
       if (entry.kind === "tab") {
         const tab = hydrateTab(entry.snapshot, adopt);

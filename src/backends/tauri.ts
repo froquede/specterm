@@ -231,6 +231,14 @@ export class TauriBackend implements Backend {
 
   setBackgroundSessions(_enabled: boolean): void {}
 
+  // One window, and no host-side session storage — nothing to report to.
+  pushLayout(_layout: { tabs: unknown[]; activeTabIndex: number } | null): void {}
+
+  pushSessionPrefs(_prefs: {
+    restoreLastSession: boolean;
+    backgroundSessions: boolean;
+  }): void {}
+
   async reattachSession(): Promise<boolean> {
     return false;
   }
@@ -245,11 +253,6 @@ export class TauriBackend implements Backend {
 
   async detachedSessionCount(): Promise<number> {
     return 0;
-  }
-
-  // One window, which owns the session from the start and never hands it on.
-  async onSessionOwnership(_cb: () => void): Promise<UnlistenFn> {
-    return () => {};
   }
 
   // With one window there is nobody to sync with, so a broadcast has no

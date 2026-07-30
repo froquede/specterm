@@ -254,18 +254,29 @@ export default function App() {
     // torn-off tab has to go and fetch anything, and that one exists solely
     // because a drag just ended.
     const boot = windowBoot();
-    if (boot.hasTab) {
+    if (boot.restore) {
+      // A window being reopened at launch. Its layout is already here — the preload
+      // collected it synchronously — so the first tab is built in this same tick,
+      // with nothing awaited in front of the first shell.
+      store.initWindow(null, boot.restore);
+    } else if (boot.hasTabs) {
+      // Tabs handed over with their PTYs still running. This is the one case where a
+      // round trip is affordable: they can carry megabytes of serialized screen, and
+      // the window exists only because a drag just ended.
       void getBackend()
         .then((backend) => backend.takeWindowInit())
-        .then((init) => store.initWindow(init.tabs, boot.ownsSession))
+        .then((init) => store.initWindow(init.tabs))
         .catch((err) => {
           // Never leave a window empty because the handover failed: fall back
           // to the plain new-terminal boot.
-          console.warn("[window] adopting the handed-over tabs failed:", err);
-          store.initWindow(null, boot.ownsSession);
+          console.warn("[window] collecting this window's state failed:", err);
+          store.initWindow(null);
         });
+    } else if (boot.migrateLegacy) {
+      // First launch after the upgrade that moved the session out of localStorage.
+      store.initWindowFromLegacy();
     } else {
-      store.initWindow(null, boot.ownsSession);
+      store.initWindow(null);
     }
 
     // The host is closing this window and is holding the close open until we have
@@ -308,18 +319,6 @@ export default function App() {
         unlistenDetach = un;
       });
     onCleanup(() => unlistenDetach?.());
-
-    // The window that owned the on-disk session snapshot has closed and this one
-    // has inherited it. Without this the snapshot would simply stop being written
-    // for the rest of the process's life — which with detaching in play can be
-    // days, and would leave a restore describing a window that closed long ago.
-    let unlistenOwnership: UnlistenFn | undefined;
-    void getBackend()
-      .then((backend) => backend.onSessionOwnership(() => store.claimSession()))
-      .then((un) => {
-        unlistenOwnership = un;
-      });
-    onCleanup(() => unlistenOwnership?.());
 
     // A tab torn off another window and dropped onto this one.
     let unlistenAdopt: UnlistenFn | undefined;

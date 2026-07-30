@@ -39,7 +39,15 @@ export async function getBackend(): Promise<Backend> {
 export function windowBoot(): WindowBoot {
   const boot = (window as { specterm?: { windowBoot?: WindowBoot } }).specterm
     ?.windowBoot;
-  return boot ?? { hasTab: false, autoCheckUpdates: true, ownsSession: true };
+  return (
+    boot ?? {
+      hasTabs: false,
+      hasRestore: false,
+      restore: null,
+      autoCheckUpdates: true,
+      migrateLegacy: false,
+    }
+  );
 }
 
 export type { Backend, UnlistenFn } from "./types";

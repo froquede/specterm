@@ -281,32 +281,71 @@ try {
 
   const app2 = await launch();
   try {
-    const win2 = await app2.firstWindow();
-    win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
-    await win2.waitForSelector(".file-tree", { timeout: 20000 });
-    await win2.waitForTimeout(4000);
+    await app2.firstWindow();
+    await sleep(6000);
 
-    // Always logged. When one of the checks below fails, the interesting question
-    // is which of the two blobs is missing or stale — and answering it from a bare
-    // "FAIL" means running the whole 80-second suite again with a print in it.
-    const diag = await win2.evaluate(() => {
-      const sess = localStorage.getItem("specterm.session");
-      let parsed = null;
+    // More than one window can come back here, and that is correct: the phases
+    // above left a session parked, and a detached window is part of the saved
+    // session too — its shells died with the quit, but you hadn't finished with it.
+    // So the window carrying the renamed tab has to be *found* rather than assumed
+    // to be the first one.
+    const pages = await app2.windows();
+    let win2 = pages[0];
+    for (const page of pages) {
       try {
-        parsed = sess ? JSON.parse(sess) : null;
+        await page.waitForSelector(".file-tree", { timeout: 15000 });
+        const title = await page.locator(".tab").first().innerText();
+        if (title.includes(TAB_NAME)) {
+          win2 = page;
+          break;
+        }
       } catch (_) {
-        parsed = "unparseable";
+        // not this one
       }
-      return {
-        sessionBytes: sess?.length ?? 0,
-        tabs: Array.isArray(parsed?.tabs) ? parsed.tabs.length : null,
-        firstTab: parsed?.tabs?.[0] ? JSON.stringify(parsed.tabs[0]) : null,
-        navType: performance.getEntriesByType("navigation")[0]?.type,
-        ownsSession: window.specterm?.windowBoot?.ownsSession,
-        legacyScreensKey: localStorage.getItem("specterm.session.screens") !== null,
+    }
+    win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
+    await win2.waitForTimeout(2000);
+
+    // Always logged. When one of the checks below fails, the interesting question is
+    // which of the two blobs is missing or stale — and answering it from a bare
+    // "FAIL" means running the whole suite again with a print in it. The layout is a
+    // file the host owns now, so it is read from disk rather than localStorage.
+    let sessionFile = { present: false };
+    try {
+      const raw = fs.readFileSync(path.join(userDataDir, "session.json"), "utf8");
+      const parsed = JSON.parse(raw);
+      sessionFile = {
+        present: true,
+        bytes: raw.length,
+        windows: parsed.windows?.length ?? 0,
+        titles: (parsed.windows ?? []).map((wn) =>
+          (wn.tabs ?? []).map((t) => t.title).join("|")
+        ),
       };
-    });
-    log("restored-window state:", JSON.stringify(diag));
+    } catch (_) {
+      sessionFile = { present: false };
+    }
+    const diag = {
+      sessionFile,
+      restoredWindows: pages.length,
+      legacyScreensKey: await win2.evaluate(
+        () => localStorage.getItem("specterm.session.screens") !== null
+      ),
+      legacySessionKey: await win2.evaluate(
+        () => localStorage.getItem("specterm.session") !== null
+      ),
+    };
+    log("restored state:", JSON.stringify(diag));
+    check(
+      "the host wrote a session naming the windows it saved",
+      sessionFile.present && sessionFile.windows >= 1,
+      JSON.stringify(sessionFile)
+    );
+    check(
+      "nothing is left in the localStorage key the layout used to live in",
+      diag.legacySessionKey === false,
+      `legacyKey=${diag.legacySessionKey}`
+    );
 
     // The screens are a file the main process owns now, not a localStorage blob —
     // so this reads the file, which is also the check that it landed at all
@@ -353,6 +392,109 @@ try {
     await win2.screenshot({ path: path.join(root, "test", "shot-restored.png") });
   } finally {
     await kill(app2);
+  }
+
+  // ======================================================================
+  // Part 2b — every window comes back, where it was
+  // ======================================================================
+  // The saved session is one entry per window now, assembled by the host. Quitting
+  // with three windows open used to bring one back.
+  const multiDir = path.join(os.tmpdir(), `specterm-multi-${Date.now()}`);
+  fs.mkdirSync(multiDir, { recursive: true });
+  const multiLaunch = () =>
+    electron.launch({ args: [root, `--user-data-dir=${multiDir}`], cwd: root });
+
+  const appM = await multiLaunch();
+  let placed = [];
+  try {
+    const w = await appM.firstWindow();
+    await w.waitForSelector(".file-tree", { timeout: 20000 });
+    await w.waitForTimeout(2500);
+    // Three windows, each at a distinct position and size, and each with a
+    // different number of tabs so they can be told apart after the restart.
+    await w.evaluate(() => window.specterm.newWindow());
+    await sleep(4000);
+    await w.evaluate(() => window.specterm.newWindow());
+    await sleep(4000);
+    check(
+      "three windows are open",
+      (await appM.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) === 3,
+      ""
+    );
+
+    placed = await appM.evaluate(({ BrowserWindow }) => {
+      const wins = BrowserWindow.getAllWindows();
+      const boxes = [
+        { x: 60, y: 60, width: 900, height: 600 },
+        { x: 200, y: 140, width: 1000, height: 640 },
+        { x: 340, y: 220, width: 820, height: 560 },
+      ];
+      wins.forEach((win, i) => win.setBounds(boxes[i]));
+      return wins.map((win) => win.getBounds());
+    });
+    await sleep(1500);
+
+    // Give the middle window a second tab, so window identity is checkable.
+    const pages = await appM.windows();
+    await pages[1].keyboard.press("Control+Shift+T");
+    await sleep(2500);
+
+    // Let the layout debounce settle, then quit properly — the host writes the
+    // session on before-quit, while the windows are still open and measurable.
+    await sleep(2000);
+  } finally {
+    await kill(appM);
+  }
+
+  const appM2 = await multiLaunch();
+  try {
+    await appM2.firstWindow();
+    await sleep(6000);
+    const restored = await appM2.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map((w) => ({
+        bounds: w.getBounds(),
+      }))
+    );
+    check(
+      "quitting with three windows open reopens three",
+      restored.length === 3,
+      `windows=${restored.length}`
+    );
+
+    // Geometry: every saved rectangle should come back. Compared as a set, since
+    // the order windows are recreated in isn't part of the promise.
+    const key = (b) => `${b.width}x${b.height}+${b.x}+${b.y}`;
+    const want = new Set(placed.map(key));
+    const got = restored.map((r) => key(r.bounds));
+    const matched = got.filter((g) => want.has(g)).length;
+    check(
+      "each window comes back at the size and position it had",
+      matched === placed.length,
+      `matched ${matched}/${placed.length}: wanted ${[...want].join(" ")} got ${got.join(" ")}`
+    );
+
+    const tabCounts = [];
+    for (const page of await appM2.windows()) {
+      try {
+        await page.waitForSelector(".file-tree", { timeout: 15000 });
+        tabCounts.push(await page.evaluate(() => document.querySelectorAll(".tab").length));
+      } catch (_) {
+        tabCounts.push(-1);
+      }
+    }
+    tabCounts.sort((a, b) => a - b);
+    check(
+      "each window comes back with its own tabs",
+      tabCounts.join(",") === "1,1,2",
+      `tabs per window = ${tabCounts.join(",")}`
+    );
+  } finally {
+    await kill(appM2);
+    try {
+      fs.rmSync(multiDir, { recursive: true, force: true });
+    } catch (_) {
+      // temp dir
+    }
   }
 
   // ======================================================================
