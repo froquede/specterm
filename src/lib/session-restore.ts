@@ -18,6 +18,8 @@
 import type { SessionMeta } from "../types";
 import { sessionRestoreMode } from "../stores/settings";
 import { writePty } from "./pty";
+import { stillResumable } from "./session-providers/claude";
+import { getTerminalCwd } from "./terminal-registry";
 
 const pending = new Map<string, SessionMeta>();
 
@@ -80,10 +82,22 @@ export function takePendingRestore(
   const send = () => {
     if (sent) return;
     sent = true;
-    // "run" submits with a carriage return — the byte a real Enter sends, and
-    // the one ConPTY/PowerShell needs (a bare "\n" leaves the line sitting at
-    // the prompt on Windows). "type" writes the command and nothing else.
-    writePty(ptyId, mode === "run" ? `${meta.resumeCommand}\r` : meta.resumeCommand);
+    // Confirm the session is still there before putting its command on screen.
+    // A recorded id is a remembered fact, and a resume command for a session that
+    // has since been pruned — or that this pane's directory can't reach — looks
+    // authoritative and fails the moment it's run. Nothing is written in that
+    // case: the pane already has its transcript replayed above the prompt, which
+    // is the part that was worth keeping.
+    void stillResumable(meta, getTerminalCwd(paneId)).then((ok) => {
+      if (!ok) return;
+      // "run" submits with a carriage return — the byte a real Enter sends, and
+      // the one ConPTY/PowerShell needs (a bare "\n" leaves the line sitting at
+      // the prompt on Windows). "type" writes the command and nothing else.
+      writePty(
+        ptyId,
+        mode === "run" ? `${meta.resumeCommand}\r` : meta.resumeCommand
+      );
+    });
   };
 
   // A shell that never says anything (a silent `sh` with an empty prompt) would

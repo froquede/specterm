@@ -700,6 +700,7 @@ function createWindow(opts = {}) {
     reapUnparkedPtys(wcId);
 
     windowLayouts.delete(wcId);
+    attentionCounts.delete(wcId);
     killPtysOwnedBy(wc);
     const watcher = fsWatchers.get(wcId);
     if (watcher) {
@@ -1902,15 +1903,28 @@ ipcMain.on("broadcast", (event, channel, payload) => {
 //     unfocused — flashing the window someone is already typing in is noise —
 //     and always lowered when it isn't needed, since on Windows it otherwise
 //     keeps flashing until the window is activated.
-ipcMain.handle("set-attention-badge", (_event, count) => {
+// Each window reports its own count, so they're kept per window: the flash belongs
+// to the window whose panes are waiting, and the badge — which the OS has exactly
+// one of — is their total. Before this, both halves read a `mainWindow` singleton
+// that the multi-window work had already replaced with a Set, so every update threw
+// and the taskbar flash never fired at all.
+const attentionCounts = new Map();
+
+ipcMain.handle("set-attention-badge", (event, count) => {
   const n = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
+  attentionCounts.set(event.sender.id, n);
+
+  let total = 0;
+  for (const value of attentionCounts.values()) total += value;
   try {
-    app.setBadgeCount(n);
+    app.setBadgeCount(total);
   } catch (_) {
     /* No badge support on this desktop — the flash below still applies. */
   }
-  if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.flashFrame(n > 0 && !mainWindow.isFocused());
+
+  const win = windowOf(event);
+  if (!win || win.isDestroyed()) return;
+  win.flashFrame(n > 0 && !win.isFocused());
 });
 
 // === Application menu ===

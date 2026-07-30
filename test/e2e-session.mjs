@@ -625,6 +625,120 @@ try {
   }
 
   // ======================================================================
+  // Part 3b — a resume command is only offered when it would work
+  // ======================================================================
+  // A recorded session id is a *remembered* fact: Claude Code prunes transcripts,
+  // directories move, `~/.claude` gets cleared. Offering `claude --resume <id>` for
+  // a session that has gone produces a command that looks authoritative and fails
+  // the moment it runs — which is worse than offering nothing, now that a restored
+  // pane already has its transcript replayed above the prompt.
+  //
+  // Both directions are checked, and the positive one is the important half: a bug
+  // in the existence check would silently disable the whole feature rather than
+  // breaking loudly.
+  //
+  // Driven by writing the host's own session file rather than by running claude, so
+  // it needs nothing installed and the id under test is known exactly.
+  const resumeDir = path.join(os.tmpdir(), `specterm-resume-${Date.now()}`);
+  const workDir = path.join(resumeDir, "work");
+  fs.mkdirSync(workDir, { recursive: true });
+  const SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+  const projectDir = path.join(
+    os.homedir(),
+    ".claude",
+    "projects",
+    workDir.replace(/[/\\]/g, "-")
+  );
+  const transcript = path.join(projectDir, `${SESSION_ID}.jsonl`);
+
+  const writeResumeSession = () => {
+    fs.writeFileSync(
+      path.join(resumeDir, "session.json"),
+      JSON.stringify({
+        version: 2,
+        savedAt: 1,
+        windows: [
+          {
+            activeTabIndex: 0,
+            tabs: [
+              {
+                title: "resume-me",
+                manualTitle: true,
+                activePaneIndex: 0,
+                root: {
+                  type: "leaf",
+                  pane: {
+                    kind: "terminal",
+                    cwd: workDir,
+                    title: "resume-me",
+                    session: {
+                      provider: "claude",
+                      id: SESSION_ID,
+                      resumeCommand: `claude --resume ${SESSION_ID}`,
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        ],
+      }),
+      "utf8"
+    );
+  };
+
+  // Does the restored pane have the command sitting at its prompt? Probed through
+  // the find bar, the same way every other buffer check here works.
+  const resumeOffered = async () => {
+    const app = await electron.launch({
+      args: [root, `--user-data-dir=${resumeDir}`],
+      cwd: root,
+    });
+    try {
+      const w = await app.firstWindow();
+      await w.waitForSelector(".file-tree", { timeout: 20000 });
+      // The command is delivered after the shell's first output plus a beat, and
+      // the existence check adds a filesystem round trip on top.
+      await sleep(7000);
+      return foundSomething(await findCount(w, "--resume"));
+    } finally {
+      await kill(app);
+    }
+  };
+
+  try {
+    fs.mkdirSync(projectDir, { recursive: true });
+    fs.writeFileSync(transcript, JSON.stringify({ sessionId: SESSION_ID }) + "\n");
+    writeResumeSession();
+    check(
+      "a session that still exists gets its resume command offered",
+      await resumeOffered(),
+      ""
+    );
+
+    // Now take the transcript away — the case that produced a command which
+    // errored at the prompt.
+    fs.rmSync(transcript, { force: true });
+    writeResumeSession();
+    check(
+      "a session that has since been pruned offers nothing",
+      (await resumeOffered()) === false,
+      ""
+    );
+  } finally {
+    try {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    } catch (_) {
+      // may not exist
+    }
+    try {
+      fs.rmSync(resumeDir, { recursive: true, force: true });
+    } catch (_) {
+      // temp dir
+    }
+  }
+
+  // ======================================================================
   // Part 4 — window chrome: the tab bar standing in for the title bar
   // ======================================================================
   // Lives in this suite rather than the main one because the interesting half needs

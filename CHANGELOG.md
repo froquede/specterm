@@ -69,6 +69,21 @@
   is gone rather than fixed.
 
 ### Fixed
+- **A resume command is only offered when it would actually work.** A recorded
+  session id is a *remembered* fact, and by the time it is read back the session may
+  be gone — Claude Code prunes old transcripts, a project directory moves, someone
+  clears `~/.claude`. The restored pane offered `claude --resume <id>` anyway, and
+  pressing Enter got you `No conversation found with session ID`. Directory matters
+  too: transcripts are namespaced per directory, so a session that still exists is
+  unresumable from the wrong one. Both are now checked before anything is written,
+  and nothing is written when the answer is no — the pane already has its transcript
+  replayed above the prompt, which is the part worth keeping.
+- **The waiting-pane taskbar flash never fired.** The multi-window work replaced the
+  `mainWindow` singleton with a set of windows and missed one call site, so every
+  attention-badge update threw `mainWindow is not defined` — for the whole of
+  0.16.0. Counts are now kept per window: the flash belongs to the window whose
+  panes are waiting, and the dock badge (of which the OS has exactly one) is their
+  total.
 - **You can always get out.** Closing a window now detaches it, which left Linux
   and Windows with no keyboard route to *quit*: the menu bar is hidden,
   `Ctrl+Shift+Q` is already Close Tab, and on a desktop with no tray to put an
