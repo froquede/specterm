@@ -41,7 +41,20 @@
   asynchronous — which is *better* than what it replaced: boot fires the read and
   carries on, and each pane's replay is gated behind its own live output the way an
   adopted pane's already was. Measured cost to startup with a real 8-tab session and
-  ~2MB of screens: **+3ms** (`npm run test:perf`).
+  ~2MB of screens: **+34ms** (`npm run test:perf`).
+
+- **The tab bar is the title bar.** The system title bar comes off and the window
+  controls move into the tab bar, so the panes get the space back. macOS has always
+  worked this way; Windows and Linux now do too. They hide in fullscreen, where
+  there is no window to minimise and the OS has taken the chrome away anyway.
+
+  Two mechanisms, because the platforms don't offer the same one: Windows hides the
+  title bar while keeping the frame, so native snapping and edge-resizing are
+  untouched. Linux has no equivalent, so the frame comes off entirely — and since a
+  frameless window there depends on the compositor for resizing and snapping, and
+  there are setups where that is worse than the decorations it replaced, Settings →
+  *Tab bar replaces the title bar* turns it off. It applies to the next window: a
+  frame can't be added to or taken off one that's already open.
 
 - **Every window comes back, where it was.** Quitting with three windows open used
   to reopen one: the saved session was a single localStorage key, and every window

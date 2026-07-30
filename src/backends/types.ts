@@ -215,6 +215,25 @@ export interface Backend {
   // Whole-window alpha (0–1); values below 1 let the desktop show through.
   // A no-op on backends/platforms that can't honor it.
   setWindowOpacity(value: number): Promise<void>;
+
+  // --- Window controls ------------------------------------------------------
+  //
+  // The tab bar acts as the title bar, so on platforms where that means the window
+  // has no frame of its own, it also draws the minimise/maximise/close buttons —
+  // and they need somewhere to go. `drawsOwnWindowControls` is what decides whether
+  // to draw them: it is a question about *this window*, not about the setting, since
+  // macOS keeps its native traffic lights and a window created before the setting
+  // changed still has whatever frame it was born with.
+  drawsOwnWindowControls(): Promise<boolean>;
+  minimizeWindow(): Promise<void>;
+  /** Toggles, and resolves to whether the window ended up maximized. */
+  toggleMaximizeWindow(): Promise<boolean>;
+  /** The same gesture as the X on a native frame — so it detaches like any close. */
+  closeWindow(): Promise<void>;
+  isMaximized(): Promise<boolean>;
+  // Fires when the window is maximized or restored, including from outside the app
+  // (a WM keybinding, snapping).
+  onMaximizedChange(cb: (maximized: boolean) => void): Promise<UnlistenFn>;
   // How many panes are waiting on the user (see stores/attention). Surfaced on
   // whatever the OS gives us to say so from outside the window — a dock badge,
   // a flashing taskbar entry — because a pane can be waiting while the whole
@@ -274,6 +293,7 @@ export interface Backend {
   pushSessionPrefs(prefs: {
     restoreLastSession: boolean;
     backgroundSessions: boolean;
+    customTitleBar: boolean;
   }): void;
   // Bring a parked session back into a window. False when nothing was parked.
   reattachSession(): Promise<boolean>;

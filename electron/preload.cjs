@@ -168,6 +168,19 @@ contextBridge.exposeInMainWorld("specterm", {
 
   setWindowOpacity: (value) => ipcRenderer.invoke("set-window-opacity", value),
 
+  // Window controls, for the frameless layout where the tab bar is the title bar.
+  minimizeWindow: () => ipcRenderer.invoke("window-minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window-toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("window-close"),
+  isMaximized: () => ipcRenderer.invoke("window-is-maximized"),
+  drawsOwnWindowControls: () => ipcRenderer.invoke("window-draws-own-controls"),
+
+  onMaximizedChange: (cb) => {
+    const handler = (_event, value) => cb(value);
+    ipcRenderer.on("window-maximized", handler);
+    return () => ipcRenderer.removeListener("window-maximized", handler);
+  },
+
   // Multi-window
   takeWindowInit: () => ipcRenderer.invoke("take-window-init"),
 

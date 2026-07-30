@@ -117,6 +117,44 @@ body,
 .tab-bar[data-side="left"] .tab-clock { order: 3; }
 .tab-bar[data-side="right"] .tab-clock { order: -1; }
 
+/* Window controls — only present when the tab bar is standing in for a title bar
+   (Windows/Linux with the custom chrome; macOS keeps its traffic lights). Always at
+   the trailing edge, whichever corner the tabs hug: these are the one part of the
+   bar whose position people expect to be fixed by the platform, not by a
+   preference. */
+.tab-window-controls {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  flex-shrink: 0;
+  margin-left: auto;
+  order: 99;
+  -webkit-app-region: no-drag;
+}
+
+.tab-window-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.tab-window-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+/* Red on hover, the way every platform marks the one irreversible button here. */
+.tab-window-close:hover {
+  background: #e81123;
+  color: #fff;
+}
+
 /* Auto-hide: lift the bar out of the flow (the panes take the whole window) and
    slide it off its edge, leaving --tab-bar-peek behind as the hover target.
    The element keeps its full height, so the moment the pointer touches the peek

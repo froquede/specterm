@@ -624,6 +624,78 @@ try {
     }
   }
 
+  // ======================================================================
+  // Part 4 — window chrome: the tab bar standing in for the title bar
+  // ======================================================================
+  // Lives in this suite rather than the main one because the interesting half needs
+  // a *relaunch*: a frame can't be added to or taken off a window that is already
+  // open, so the setting only shows up on the next window.
+  const chromeDir = path.join(os.tmpdir(), `specterm-chrome-${Date.now()}`);
+  fs.mkdirSync(chromeDir, { recursive: true });
+  const chromeLaunch = () =>
+    electron.launch({ args: [root, `--user-data-dir=${chromeDir}`], cwd: root });
+
+  const appC = await chromeLaunch();
+  try {
+    const w = await appC.firstWindow();
+    await w.waitForSelector(".file-tree", { timeout: 20000 });
+    await w.waitForTimeout(2500);
+
+    check(
+      "the tab bar draws the window controls",
+      (await w.locator(".tab-window-btn").count()) === 3,
+      `buttons=${await w.locator(".tab-window-btn").count()}`
+    );
+
+    // Fullscreen: there is no window to minimise or restore, and the OS has taken
+    // the chrome away anyway.
+    await appC.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setFullScreen(true)
+    );
+    await sleep(2500);
+    check(
+      "the controls hide in fullscreen",
+      (await w.locator(".tab-window-btn").count()) === 0,
+      `buttons=${await w.locator(".tab-window-btn").count()}`
+    );
+    await appC.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0].setFullScreen(false)
+    );
+    await sleep(2500);
+    check(
+      "and come back on the way out",
+      (await w.locator(".tab-window-btn").count()) === 3,
+      `buttons=${await w.locator(".tab-window-btn").count()}`
+    );
+
+    // Turn it off the way a user would, through Settings.
+    await w.keyboard.press("Control+Shift+,");
+    await w.waitForSelector("#custom-title-bar", { timeout: 8000 });
+    await w.locator("#custom-title-bar").uncheck();
+    await sleep(1500);
+  } finally {
+    await kill(appC);
+  }
+
+  const appC2 = await chromeLaunch();
+  try {
+    const w = await appC2.firstWindow();
+    await w.waitForSelector(".file-tree", { timeout: 20000 });
+    await w.waitForTimeout(2500);
+    check(
+      "turning it off gives the system title bar back on the next window",
+      (await w.locator(".tab-window-btn").count()) === 0,
+      `buttons=${await w.locator(".tab-window-btn").count()}`
+    );
+  } finally {
+    await kill(appC2);
+    try {
+      fs.rmSync(chromeDir, { recursive: true, force: true });
+    } catch (_) {
+      // temp dir
+    }
+  }
+
   const failed = results.filter((r) => !r.pass).length;
   const skipped = results.filter((r) => r.skipped).length;
   const passed = results.length - failed - skipped;

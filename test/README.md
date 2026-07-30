@@ -11,7 +11,11 @@ on observable behavior.
   its time budget). Covers the two independent mechanisms: **detaching** (closing a
   window parks its shells instead of killing them; reattaching adopts the same
   PTYs) and the **on-disk snapshot** (layout, directories, names and each pane's
-  serialized screen, replayed into fresh shells after a real quit).
+  serialized screen, replayed into fresh shells after a real quit), that every window
+  comes back at the bounds it had, that a wedged renderer can't orphan shells, that
+  Alt+F4 quits rather than detaching, and the custom title bar — which lives here
+  rather than in the main suite because turning it off only takes effect on the
+  *next* window.
 
 Two traps `e2e-session.mjs` documents in its header and exists to stay out of,
 because both produce a green run that proves nothing:
@@ -26,7 +30,7 @@ because both produce a green run that proves nothing:
 - **`perf-boot.mjs`** — the startup budget, for the *instant to open* pillar. Boots
   cold (nothing stored) against boots restoring a real 8-tab session with ~2MB of
   saved screens, and fails if the delta exceeds `PERF_MAX_DELTA_MS` (default
-  400ms). Measured at **+3ms** on the dev machine, and that number is load-bearing:
+  400ms). Measured at **+34ms** on the dev machine, and that number is load-bearing:
   it is only that small because of two deliberate choices the harness exists to
   protect. The window's saved layout is collected *synchronously* by the preload, so
   the first tab is built with nothing awaited in front of the first shell. The

@@ -45,6 +45,12 @@ interface SpectermAPI {
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
   setWindowOpacity(value: number): Promise<void>;
+  drawsOwnWindowControls(): Promise<boolean>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<boolean>;
+  closeWindow(): Promise<void>;
+  isMaximized(): Promise<boolean>;
+  onMaximizedChange(cb: (maximized: boolean) => void): () => void;
   // Plain data read from the window's launch arguments by the preload — no IPC.
   // Consumed by windowBoot() in backends/index.ts, not through this class.
   windowBoot: unknown;
@@ -61,6 +67,7 @@ interface SpectermAPI {
   pushSessionPrefs(prefs: {
     restoreLastSession: boolean;
     backgroundSessions: boolean;
+    customTitleBar: boolean;
   }): void;
   reattachSession(): Promise<boolean>;
   detachedSessionCount(): Promise<number>;
@@ -218,6 +225,30 @@ export class ElectronBackend implements Backend {
     return this.api.setWindowOpacity(value);
   }
 
+  async drawsOwnWindowControls(): Promise<boolean> {
+    return this.api.drawsOwnWindowControls();
+  }
+
+  async minimizeWindow(): Promise<void> {
+    return this.api.minimizeWindow();
+  }
+
+  async toggleMaximizeWindow(): Promise<boolean> {
+    return this.api.toggleMaximizeWindow();
+  }
+
+  async closeWindow(): Promise<void> {
+    return this.api.closeWindow();
+  }
+
+  async isMaximized(): Promise<boolean> {
+    return this.api.isMaximized();
+  }
+
+  async onMaximizedChange(cb: (maximized: boolean) => void): Promise<UnlistenFn> {
+    return this.api.onMaximizedChange(cb);
+  }
+
   async takeWindowInit(): Promise<WindowInit> {
     return this.api.takeWindowInit();
   }
@@ -261,6 +292,7 @@ export class ElectronBackend implements Backend {
   pushSessionPrefs(prefs: {
     restoreLastSession: boolean;
     backgroundSessions: boolean;
+    customTitleBar: boolean;
   }): void {
     this.api.pushSessionPrefs(prefs);
   }

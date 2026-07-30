@@ -200,6 +200,27 @@ export class TauriBackend implements Backend {
     // stays opaque under Tauri.
   }
 
+  // Native decorations here, so there is nothing for the tab bar to draw.
+  async drawsOwnWindowControls(): Promise<boolean> {
+    return false;
+  }
+
+  async minimizeWindow(): Promise<void> {}
+
+  async toggleMaximizeWindow(): Promise<boolean> {
+    return false;
+  }
+
+  async closeWindow(): Promise<void> {}
+
+  async isMaximized(): Promise<boolean> {
+    return false;
+  }
+
+  async onMaximizedChange(_cb: (maximized: boolean) => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
   // Multi-window (extra windows, tearing a tab off into its own) is Electron-only
   // for now: it needs host-side window bookkeeping and PTY re-ownership that this
   // backend has no counterpart for. These stubs keep the single window it does
@@ -237,6 +258,7 @@ export class TauriBackend implements Backend {
   pushSessionPrefs(_prefs: {
     restoreLastSession: boolean;
     backgroundSessions: boolean;
+    customTitleBar: boolean;
   }): void {}
 
   async reattachSession(): Promise<boolean> {

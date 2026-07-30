@@ -145,6 +145,7 @@ interface Persisted {
   restoreLastSession: boolean;
   sessionRestoreMode: SessionRestoreMode;
   backgroundSessions: boolean;
+  customTitleBar: boolean;
   claudeAttentionMode: ClaudeAttentionMode;
   clockEnabled: boolean;
   clockFormat: string;
@@ -161,6 +162,7 @@ const DEFAULTS: Persisted = {
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   restoreLastSession: true,
   backgroundSessions: true,
+  customTitleBar: true,
   sessionRestoreMode: SESSION_RESTORE_MODE_DEFAULT,
   claudeAttentionMode: CLAUDE_ATTENTION_MODE_DEFAULT,
   clockEnabled: false,
@@ -218,6 +220,10 @@ function load(): Persisted {
         typeof p.backgroundSessions === "boolean"
           ? p.backgroundSessions
           : DEFAULTS.backgroundSessions,
+      customTitleBar:
+        typeof p.customTitleBar === "boolean"
+          ? p.customTitleBar
+          : DEFAULTS.customTitleBar,
       sessionRestoreMode: SESSION_RESTORE_MODES.includes(p.sessionRestoreMode)
         ? p.sessionRestoreMode
         : DEFAULTS.sessionRestoreMode,
@@ -265,6 +271,9 @@ const [restoreLastSession, setRestoreLastSessionSignal] = createSignal(
 const [backgroundSessions, setBackgroundSessionsSignal] = createSignal(
   initial.backgroundSessions
 );
+const [customTitleBar, setCustomTitleBarSignal] = createSignal(
+  initial.customTitleBar
+);
 const [sessionRestoreMode, setSessionRestoreModeSignal] =
   createSignal<SessionRestoreMode>(initial.sessionRestoreMode);
 const [claudeAttentionMode, setClaudeAttentionModeSignal] =
@@ -283,6 +292,7 @@ export {
   sidebarWidth,
   restoreLastSession,
   backgroundSessions,
+  customTitleBar,
   sessionRestoreMode,
   claudeAttentionMode,
   clockEnabled,
@@ -333,6 +343,7 @@ function persist() {
         sidebarWidth: sidebarWidth(),
         restoreLastSession: restoreLastSession(),
         backgroundSessions: backgroundSessions(),
+        customTitleBar: customTitleBar(),
         sessionRestoreMode: sessionRestoreMode(),
         claudeAttentionMode: claudeAttentionMode(),
         clockEnabled: clockEnabled(),
@@ -432,6 +443,7 @@ function reloadFromStorage() {
   setSidebarWidthSignal(p.sidebarWidth);
   setRestoreLastSessionSignal(p.restoreLastSession);
   setBackgroundSessionsSignal(p.backgroundSessions);
+  setCustomTitleBarSignal(p.customTitleBar);
   pushBackgroundSessions();
   setSessionRestoreModeSignal(p.sessionRestoreMode);
   setClaudeAttentionModeSignal(p.claudeAttentionMode);
@@ -476,11 +488,32 @@ function pushBackgroundSessions() {
       backend.pushSessionPrefs({
         restoreLastSession: restoreLastSession(),
         backgroundSessions: backgroundSessions(),
+        customTitleBar: customTitleBar(),
       });
     })
     .catch(() => {
       /* Host doesn't do detaching — closing a window just closes it. */
     });
+}
+
+// --- Custom title bar ------------------------------------------------------
+//
+// Whether the tab bar stands in for the window's title bar, with the window
+// controls drawn in it. macOS has always worked this way and ignores this; on
+// Windows the title bar is hidden while the frame stays, so native snapping and
+// edge-resizing are untouched; on Linux there is no equivalent, so the frame comes
+// off entirely.
+//
+// That last case is why this is a setting rather than simply how the app looks.
+// A frameless window on Linux depends on the compositor for resizing and snapping,
+// and there are setups where that is worse than the decorations it replaced — so
+// there has to be a way back to them. Read by the host at window-creation time
+// (a frame can't be added to or taken off a live window), so a change applies to
+// the next window rather than the current one.
+export function setCustomTitleBar(v: boolean) {
+  setCustomTitleBarSignal(v);
+  persist();
+  pushBackgroundSessions();
 }
 
 export function setBackgroundSessions(v: boolean) {

@@ -522,16 +522,32 @@ function createWindow(opts = {}) {
   const isMac = process.platform === "darwin";
 
   // Solid, opaque window on every platform — no transparency, blur or vibrancy.
-  // macOS keeps the inset titlebar so the custom tab bar can host the traffic
-  // lights (drag handled by `.tab-drag-region`); other platforms use their
-  // native title bar.
+  //
+  // The tab bar *is* the title bar. macOS has always worked that way (an inset
+  // titlebar, with the traffic lights overlapping the tab bar and the drag handled
+  // by `.tab-drag-region`); Windows and Linux now do too, with the window controls
+  // drawn in the tab bar by TabBar.tsx.
+  //
+  // Two different mechanisms, because the platforms don't offer the same one:
+  // Windows can hide the title bar and keep the frame, which is what preserves
+  // native snapping and edge-resizing. Linux has no equivalent, so the frame comes
+  // off entirely — see the note on the setting in stores/settings.ts for why this is
+  // switchable rather than unconditional.
+  const custom = sessionPrefs.customTitleBar;
   const platformWindow = isMac
     ? {
         backgroundColor: "#1a1b26",
         titleBarStyle: "hiddenInset",
         trafficLightPosition: { x: 14, y: 11 },
       }
-    : { backgroundColor: "#1a1b26" };
+    : custom
+      ? {
+          backgroundColor: "#1a1b26",
+          ...(process.platform === "win32"
+            ? { titleBarStyle: "hidden" }
+            : { frame: false }),
+        }
+      : { backgroundColor: "#1a1b26" };
 
   // Flags first: they go into the renderer's own launch arguments, so they have
   // to be decided before the BrowserWindow exists.
@@ -612,6 +628,16 @@ function createWindow(opts = {}) {
 
   // Notify the renderer when the OS fullscreen state changes (e.g. macOS green
   // button, F11, or our own toggle) so the tab-bar icon stays in sync.
+  // The tab bar's maximise button reflects the real state, which the user can also
+  // change from outside the app (a WM keybinding, a double-click on the drag
+  // region, snapping).
+  win.on("maximize", () => {
+    if (!win.isDestroyed()) win.webContents.send("window-maximized", true);
+  });
+  win.on("unmaximize", () => {
+    if (!win.isDestroyed()) win.webContents.send("window-maximized", false);
+  });
+
   win.on("enter-full-screen", () => {
     if (!win.isDestroyed()) win.webContents.send("fullscreen-change", true);
   });
@@ -1441,6 +1467,45 @@ ipcMain.handle("quit-app", () => {
   app.quit();
 });
 
+// === Window controls =======================================================
+// With the tab bar acting as the title bar there is no frame to click, so the
+// minimise/maximise/close buttons it draws come back here.
+
+ipcMain.handle("window-minimize", (event) => {
+  windowOf(event)?.minimize();
+});
+
+ipcMain.handle("window-toggle-maximize", (event) => {
+  const win = windowOf(event);
+  if (!win) return false;
+  if (win.isMaximized()) win.unmaximize();
+  else win.maximize();
+  // The state as it actually is, not as it was asked to be. Maximising goes through
+  // the window manager and it is entitled to refuse (or not exist — a bare X server
+  // with no WM simply ignores it), and reporting the request back would leave the
+  // button saying "Restore" over a window that never moved. The maximize/unmaximize
+  // events are the real authority; this is just the immediate answer.
+  return win.isMaximized();
+});
+
+// Deliberately `close()`, not `destroy()`: this is the same gesture as the X on a
+// native frame, so it goes through the detach path like any other close.
+ipcMain.handle("window-close", (event) => {
+  windowOf(event)?.close();
+});
+
+ipcMain.handle("window-is-maximized", (event) => {
+  return windowOf(event)?.isMaximized() ?? false;
+});
+
+// Whether this window has no frame of its own, so the renderer knows to draw the
+// controls. Not the same question as the setting: macOS keeps its traffic lights,
+// and a window created before the setting changed still has whatever it was born
+// with.
+ipcMain.handle("window-draws-own-controls", () => {
+  return process.platform !== "darwin" && sessionPrefs.customTitleBar;
+});
+
 // === Saved screens (the picture half of session restore) ====================
 //
 // The *layout* of a saved session — tabs, splits, directories, names — stays in
@@ -1480,7 +1545,7 @@ function prefsPath() {
   return path.join(app.getPath("userData"), "session-prefs.json");
 }
 
-let sessionPrefs = { restoreLastSession: true };
+let sessionPrefs = { restoreLastSession: true, customTitleBar: true };
 
 function loadSessionPrefs() {
   try {
@@ -1490,6 +1555,9 @@ function loadSessionPrefs() {
     }
     if (typeof parsed?.backgroundSessions === "boolean") {
       backgroundSessions = parsed.backgroundSessions;
+    }
+    if (typeof parsed?.customTitleBar === "boolean") {
+      sessionPrefs.customTitleBar = parsed.customTitleBar;
     }
   } catch (_) {
     // No file yet, or unreadable — the defaults above are the right answer.
@@ -1503,6 +1571,7 @@ function saveSessionPrefs() {
       JSON.stringify({
         restoreLastSession: sessionPrefs.restoreLastSession,
         backgroundSessions,
+        customTitleBar: sessionPrefs.customTitleBar,
       }),
       "utf8"
     );
@@ -1635,6 +1704,12 @@ ipcMain.on("session:layout", (event, payload) => {
 ipcMain.on("session:prefs", (_event, prefs) => {
   if (typeof prefs?.restoreLastSession === "boolean") {
     sessionPrefs.restoreLastSession = prefs.restoreLastSession;
+  }
+  // Read at window-creation time, so a change takes effect on the next window
+  // rather than the current one — a frame can't be added to or taken off a live
+  // BrowserWindow.
+  if (typeof prefs?.customTitleBar === "boolean") {
+    sessionPrefs.customTitleBar = prefs.customTitleBar;
   }
   if (typeof prefs?.backgroundSessions === "boolean") {
     backgroundSessions = prefs.backgroundSessions;

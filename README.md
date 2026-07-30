@@ -12,11 +12,14 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Markdown preview & editor** -- render `.md` files inline with Mermaid diagram support, or toggle (`⌘E`) into a live-preview CodeMirror editor and save (`⌘S`) back to disk; installed builds also register as a `.md` handler, so you can *Open With → Specterm* (or double-click) a markdown file to open it in a new tab
 - **Text & code viewer** -- open any other text file from the sidebar in a read-only, syntax-highlighted view with line numbers and find; binaries are declined and huge files are capped, so it never stalls the terminal
 - **Themes** -- five built-ins plus a 325-scheme base16 gallery (and paste/file/drag import); recolors the terminal and the whole app at once
+- **The tab bar is the title bar** -- the system title bar comes off and the window controls move into the tab bar, so the panes get the space back; they hide in fullscreen. Switchable in Settings (on Linux the frame comes off entirely, so resizing falls to your compositor)
 - **Configurable chrome** -- put the tab bar in any of the window's four corners, size it and the sidebar, or auto-hide the bar so the panes take the whole window
 - **Find in terminal** -- search the scrollback of the active pane
 - **WebGL rendering** -- GPU-accelerated terminal via xterm.js WebGL addon, with automatic recovery from a lost context
 - **Splits inherit the directory** -- a new pane or tab opens where the pane you split from is, not back at the startup path. The shell's directory is read from its own process, so it works without configuring your shell; `OSC 7` (which zsh and fish send by default) is used as a faster signal when it's there
 - **OSC protocol** -- captures title sequences and working directory updates
+- **Sessions survive closing the window** -- closing a window *detaches* it: the shells keep running and a tray icon (or *Window -> Reattach Detached Session*) brings the window back on the same live processes, nothing restarted. **Quit** -- from the tray, the app menu, `⌘Q` or `Alt+F4` -- is what actually ends them. This is the tmux-server half of the idea, with the same limit: an explicit quit, a crash or a reboot takes the processes with it, and what survives that is the saved session below
+- **Restore picks up the whole session, screens and all** -- every window that was open comes back, at the size and position it had, with its tabs, splits, directories, names *and* each pane's screen and scrollback replayed under a dim `restored` rule. The shells are new -- the rule is there because the ones that printed everything above it died with the app
 - **Session history** -- reopen the last closed tab or pane (`⌘⇧T` / `Ctrl+Shift+R`), repeatedly, walking back through what you closed; and pick your tabs, splits and directories back up where you left them after a restart. A pane that was running Claude Code remembers *which session*, so the restored terminal comes back with `claude --resume <id>` waiting at the prompt (or runs it, or ignores it -- your choice in Settings)
 - **Panes tell you when they're waiting** -- a dot on the tab and the pane's title-bar (plus the dock/taskbar) when Claude Code finishes a turn or stops to ask permission, so a session can run in a tab you're not looking at. It clears when you focus the pane or type into it. Settings picks between detecting it with no setup at all (a Claude session that's working is never silent, so a pane that goes quiet has stopped for you) and installing two Claude Code hooks that say so exactly; a terminal bell flags a pane either way (see [Waiting panes](#waiting-panes))
 - **Optional tab-bar clock** -- off by default; when on, its format is a token string (`HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`, `[at] HH:mm`) with a live preview in Settings. It wakes only when the displayed text would actually change -- once a minute unless the format shows seconds -- aligned to the boundary, and stops entirely while the window is hidden
@@ -47,6 +50,7 @@ free for terminal control codes).
 | Find in terminal | `⌘F` | `Ctrl+Shift+F` |
 | Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
 | Quit Specterm (ends detached sessions) | `⌘Q` | `Alt+F4` |
+| Reattach a detached session | Window menu / tray | Window menu / tray |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
 | Increase / decrease font size | `⌘=` / `⌘-` | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
 | Reset font size | `⌘0` | `Ctrl+Shift+0` |
