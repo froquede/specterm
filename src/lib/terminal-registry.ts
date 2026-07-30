@@ -325,8 +325,16 @@ function takeAdoption(paneId: string): TerminalAdoption | undefined {
 // session (stores/tabs.ts), claimed on the pane's first attach.
 
 export interface TerminalRevival {
-  /** Serialized screen + scrollback, or "" for a pane whose screen wasn't kept. */
-  screen: string;
+  /**
+   * Serialized screen + scrollback, or "" for a pane whose screen wasn't kept.
+   *
+   * A promise, normally: the screens are read from a file the host owns (see
+   * lib/session-screens.ts), and boot fires that read without waiting on it. The
+   * replay is gated behind live output below, so the answer arriving a few
+   * milliseconds late costs nothing and keeps the read off the path to the first
+   * shell. A plain string is accepted for the callers that already have one.
+   */
+  screen: string | Promise<string>;
   /** The shell's last OSC title, if the snapshot had one. */
   title?: string;
 }
@@ -955,7 +963,13 @@ export async function attachTerminal(
   // Without it, output arriving during the adopt round-trip would land ahead of
   // the bytes it came after.
   const adoption = takeAdoption(paneId);
-  let gate: Uint8Array[] | null = adoption ? [] : null;
+  // A revived pane is filled in from a file the host is still reading, so its
+  // shell can be spawned and its prompt can arrive before the replay is in hand.
+  // Same gate as an adoption, for the same reason: the replayed screen has to land
+  // *before* anything live, or the new shell's prompt ends up above the history it
+  // came after.
+  const pendingScreen = revival?.screen ?? "";
+  let gate: Uint8Array[] | null = adoption || pendingScreen ? [] : null;
 
   if (adoption) {
     instance.ptyId = adoption.ptyId;
@@ -963,16 +977,6 @@ export async function attachTerminal(
     instance.onTitle?.(adoption.title);
     if (adoption.scrollback) term.write(adoption.scrollback);
   } else {
-    // Replay the screen this pane had when the app closed, before the new shell
-    // has printed anything, so it opens looking as it was left. No gate is needed
-    // the way the adoption path above needs one: `spawnPty` is awaited and the
-    // output listener is wired after it, so there is no live output yet to race
-    // the replay. The write is queued ahead of every chunk that follows.
-    if (revival?.screen) {
-      term.write(revival.screen);
-      term.write(REVIVED_MARKER);
-    }
-
     // Spawn PTY. instance.cwd is the directory inherited from the pane this one
     // was split from, or the configured startup directory (Settings) for the
     // boot terminal; blank → undefined, and the main process falls back to the
@@ -1051,6 +1055,24 @@ export async function attachTerminal(
     if (exited) {
       term.write("\r\n\x1b[90m[Process exited]\x1b[0m\r\n");
       opts?.onExit?.();
+    }
+  } else if (pendingScreen) {
+    // Replay the screen this pane had when the app last closed, then let the new
+    // shell's own output through behind it. The marker sits between the two
+    // because the shell underneath genuinely is new — the one that printed
+    // everything above died with the app.
+    try {
+      const screen = await pendingScreen;
+      if (screen) {
+        term.write(screen);
+        term.write(REVIVED_MARKER);
+      }
+    } catch {
+      // No screen to be had — the pane just opens on a fresh prompt.
+    } finally {
+      const held = gate ?? [];
+      gate = null;
+      for (const chunk of held) writeChunk(chunk);
     }
   }
 

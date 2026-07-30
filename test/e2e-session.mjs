@@ -291,7 +291,6 @@ try {
     // "FAIL" means running the whole 80-second suite again with a print in it.
     const diag = await win2.evaluate(() => {
       const sess = localStorage.getItem("specterm.session");
-      const scr = localStorage.getItem("specterm.session.screens");
       let parsed = null;
       try {
         parsed = sess ? JSON.parse(sess) : null;
@@ -300,24 +299,35 @@ try {
       }
       return {
         sessionBytes: sess?.length ?? 0,
-        screenBytes: scr?.length ?? 0,
         tabs: Array.isArray(parsed?.tabs) ? parsed.tabs.length : null,
         firstTab: parsed?.tabs?.[0] ? JSON.stringify(parsed.tabs[0]) : null,
         navType: performance.getEntriesByType("navigation")[0]?.type,
         ownsSession: window.specterm?.windowBoot?.ownsSession,
+        legacyScreensKey: localStorage.getItem("specterm.session.screens") !== null,
       };
     });
     log("restored-window state:", JSON.stringify(diag));
 
-    const stored = await win2.evaluate((marker) => {
-      const raw = localStorage.getItem("specterm.session.screens");
-      if (!raw) return { present: false };
-      return { present: true, bytes: raw.length, hasMarker: raw.includes(marker) };
-    }, MARKER);
+    // The screens are a file the main process owns now, not a localStorage blob —
+    // so this reads the file, which is also the check that it landed at all
+    // (the write is fired as the window goes away and completed host-side).
+    const screensFile = path.join(userDataDir, "session-screens.json");
+    let onDisk = { present: false };
+    try {
+      const raw = fs.readFileSync(screensFile, "utf8");
+      onDisk = { present: true, bytes: raw.length, hasMarker: raw.includes(MARKER) };
+    } catch (_) {
+      onDisk = { present: false };
+    }
     check(
-      "the screens were written on quit and hold the marker",
-      stored.present && stored.hasMarker,
-      JSON.stringify(stored)
+      "the screens were written to disk on quit and hold the marker",
+      onDisk.present && onDisk.hasMarker,
+      JSON.stringify(onDisk)
+    );
+    check(
+      "nothing is left in the localStorage key screens used to live in",
+      diag.legacyScreensKey === false,
+      `legacyKey=${diag.legacyScreensKey}`
     );
 
     check(

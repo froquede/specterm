@@ -244,6 +244,18 @@ export interface Backend {
   setBackgroundSessions(enabled: boolean): void;
   // Bring a parked session back into a window. False when nothing was parked.
   reattachSession(): Promise<boolean>;
+
+  // --- Saved screens --------------------------------------------------------
+  //
+  // A restored session's scrollback, held by the host rather than in the
+  // renderer's localStorage (see lib/session-screens.ts for the three reasons).
+  // Backends with nowhere to put it no-op the write and return nothing to read,
+  // and a session then restores its layout without its screens.
+
+  // Fire-and-forget: the one caller runs as the window is being torn down, where
+  // an awaited round trip has no guarantee of finishing. `null` clears them.
+  writeScreens(screens: Record<string, string> | null): Promise<void>;
+  readScreens(): Promise<Record<string, string>>;
   // How many sessions are currently parked, so the UI can offer the reattach only
   // when there is one.
   detachedSessionCount(): Promise<number>;

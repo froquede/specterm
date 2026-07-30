@@ -32,9 +32,16 @@
   running Claude Code comes back showing the transcript *and* with
   `claude --resume <id>` typed at the prompt under it.
 
-  Bounded on purpose — a quarter of a megabyte per pane, two megabytes in total,
-  active tab first — so a pane that ran a huge build log can't spend the whole
-  budget or crowd out settings and themes in the same storage.
+  The screens live in a file the main process owns, not in localStorage. That
+  matters for three reasons localStorage couldn't answer: it is synchronous, on the
+  thread that draws the terminal; its quota is ~5MB for the *whole* origin, shared
+  with settings, themes, favourites and markdown drafts; and it bills UTF-16 code
+  units, so a "2MB" string could cost 4MB of that shared budget. On disk the write
+  is off the renderer's thread, there is no shared quota, and the read can be
+  asynchronous — which is *better* than what it replaced: boot fires the read and
+  carries on, and each pane's replay is gated behind its own live output the way an
+  adopted pane's already was. Measured cost to startup with a real 8-tab session and
+  ~2MB of screens: **+16ms** (`npm run test:perf`).
 
 ### Fixed
 - **You can always get out.** Closing a window now detaches it, which left Linux

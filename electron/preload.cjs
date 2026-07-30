@@ -144,6 +144,15 @@ contextBridge.exposeInMainWorld("specterm", {
   // stores/keymap.ts for why this needs a keyboard route.
   quitApp: () => ipcRenderer.invoke("quit-app"),
 
+  // Saved screens live on disk, written by the main process — see the block in
+  // main.cjs for why localStorage was the wrong home for megabytes captured at
+  // teardown. `send`, not `invoke`: the write is fired as the window is going
+  // away, and there is nobody left to await a reply. The main process outlives
+  // the window, so it finishes the write on its own.
+  writeScreens: (screens) => ipcRenderer.send("session:write-screens-async", screens),
+
+  readScreens: () => ipcRenderer.invoke("session:read-screens"),
+
   // Hand a serialized tab to wherever the cursor let go: another Specterm
   // window if one is under it, otherwise a new window of its own.
   dropTransfer: (tab) => ipcRenderer.invoke("drop-transfer", tab),

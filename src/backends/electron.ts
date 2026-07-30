@@ -59,6 +59,8 @@ interface SpectermAPI {
   setBackgroundSessions(enabled: boolean): void;
   reattachSession(): Promise<boolean>;
   detachedSessionCount(): Promise<number>;
+  writeScreens(screens: Record<string, string> | null): void;
+  readScreens(): Promise<Record<string, string>>;
   onSessionOwnership(cb: () => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
@@ -250,6 +252,16 @@ export class ElectronBackend implements Backend {
 
   async reattachSession(): Promise<boolean> {
     return this.api.reattachSession();
+  }
+
+  async writeScreens(screens: Record<string, string> | null): Promise<void> {
+    // The preload's channel is a `send`, so this resolves as soon as the payload
+    // is handed over — which is the point. The host finishes the write.
+    this.api.writeScreens(screens);
+  }
+
+  async readScreens(): Promise<Record<string, string>> {
+    return this.api.readScreens();
   }
 
   async detachedSessionCount(): Promise<number> {

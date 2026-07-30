@@ -23,11 +23,25 @@ because both produce a green run that proves nothing:
   skipping the `close` event the whole detach path hangs off. Closes are driven
   through `BrowserWindow.close()`, the X button's path.
 
+- **`perf-boot.mjs`** — the startup budget, for the *instant to open* pillar. Boots
+  cold (nothing stored) against boots restoring a real 8-tab session with ~2MB of
+  saved screens, and fails if the delta exceeds `PERF_MAX_DELTA_MS` (default
+  400ms). Measured at **+16ms** on the dev machine — the layout is a 2KB
+  synchronous localStorage read, the screens come from a file the host owns and are
+  fired without being awaited, and only the active tab's pane replays on boot.
+
+  It logs what each boot actually saw (`layout=…B tabs=…`) on every run, because
+  its first two versions silently measured a cold boot twice — seeding the layout
+  and killing the app loses Chromium's LocalStorage flush, and closing the app
+  gracefully runs the exit save, which overwrites the seeded layout. The session is
+  now built by the app through the UI, and only the screens file is inflated.
+
 ## Run
 
 ```bash
 npm run test:e2e            # vite build + node test/e2e.mjs
 npm run test:e2e:session    # vite build + node test/e2e-session.mjs
+npm run test:perf           # vite build + node test/perf-boot.mjs
 ```
 
 Exit code `0` = all checks passed, `1` = a check failed, `2` = hard timeout,

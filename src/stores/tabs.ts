@@ -51,7 +51,7 @@ import {
   captureScreens,
   loadScreens,
   saveScreens,
-  screenFor,
+  screenKeyOf,
   type ScreenStore,
 } from "../lib/session-screens";
 import {
@@ -174,18 +174,29 @@ function isRendererReload(): boolean {
 // minted the pane id all three are keyed by, and the pane has not mounted yet, so
 // this is the one window in which they can be registered.
 //
-// `screens` is empty for the reopen-closed-tab path: the closed stack is 25 tabs
-// deep and keeping a screen for each would cost more storage than the whole rest
-// of the app. A reopened tab comes back named and in the right directory, with a
+// `screens` is a *promise* on the boot path. The screens are read from a file the
+// host owns, and firing that read without waiting on it is the whole point: each
+// pane's replay is gated behind its own live output (see attachTerminal), so the
+// answer can arrive a few milliseconds after the shell has already spawned. That
+// keeps a multi-megabyte read off the path to the first prompt — which the old
+// localStorage version could not do, being synchronous by construction.
+//
+// Reopen-closed-tab passes no screens at all: the closed stack is 25 entries deep
+// and keeping a screen for each would cost more than the whole rest of the app's
+// storage. A reopened tab comes back named and in the right directory, with a
 // clean shell.
-function adoptSnapshotPanes(screens: ScreenStore) {
+function adoptSnapshotPanes(screens?: Promise<ScreenStore>) {
   return (paneId: PaneId, pane: SnapshotPane) => {
     if (pane.kind !== "terminal") return;
     if (pane.session) registerPendingRestore(paneId, pane.session);
-    const screen = screenFor(pane, screens);
-    // Nothing to revive with — don't put an empty entry in the registry for the
-    // panes (markdown-only sessions, a snapshot from before this existed) that
-    // have neither.
+    const key = screens ? screenKeyOf(pane) : "";
+    // A key with nothing behind it resolves to "" and the pane opens empty, which
+    // is what should happen for a snapshot written before screens existed, or one
+    // whose screen was dropped. Panes with neither a key nor a name get no entry
+    // at all rather than an empty one.
+    const screen = key
+      ? screens!.then((map) => map[key] ?? "")
+      : "";
     if (screen || pane.title) {
       registerRevival(paneId, { screen, title: pane.title });
     }
@@ -200,8 +211,8 @@ function restoredTabs(): { tabs: Tab[]; activeTabId: TabId } | null {
   if (!restoreLastSession() || isRendererReload()) return null;
   const saved = loadSession();
   if (!saved) return null;
-  // Read once for the whole session rather than per pane: it's one JSON.parse of
-  // up to a couple of megabytes, and every pane about to be hydrated looks in it.
+  // Started here and deliberately not awaited: one read for the whole session,
+  // running while the tabs are hydrated and the first shell spawns.
   const adopt = adoptSnapshotPanes(loadScreens());
   const tabs = saved.tabs.map((t) => hydrateTab(t, adopt));
   if (!tabs.length) return null;
@@ -812,7 +823,7 @@ export function useTabStore() {
     reopenLastClosed() {
       const entry = popClosed();
       if (!entry) return;
-      const adopt = adoptSnapshotPanes({});
+      const adopt = adoptSnapshotPanes();
 
       if (entry.kind === "tab") {
         const tab = hydrateTab(entry.snapshot, adopt);

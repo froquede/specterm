@@ -1,40 +1,58 @@
 // The screen half of session restore.
 //
 // The layout snapshot (stores/history.ts) records what was open — tabs, splits,
-// working directories. This records what was *on* it: each terminal's screen and
-// scrollback, serialized as the escape sequences that reproduce it. Together
-// they're the difference between reopening the same panes and finding the
-// session as it was left, which is the thing a tmux user means by "restore".
+// working directories, names. This records what was *on* it: each terminal's
+// screen and scrollback, serialized as the escape sequences that reproduce it.
+// Together they're the difference between reopening the same panes and finding
+// the session as it was left, which is the thing a tmux user means by "restore".
 //
-// It lives in its own storage key, written on its own schedule, for one reason:
-// size. A layout snapshot is a couple of kilobytes and is rewritten on every
-// store change (a divider drag, a tab switch). A screen is up to a quarter of a
-// megabyte per pane. Folding them together would put a megabyte-scale synchronous
-// localStorage write on the path of every mousemove during a resize.
+// **Where this lives, and why not with the layout.** The layout stays in
+// localStorage because it must be read *synchronously* at boot, before anything
+// renders and therefore before the first shell spawns — the same reason the window
+// kind is stamped into launch arguments instead of asked for over IPC. It is two
+// kilobytes; that read is free.
 //
-// So screens are captured at exactly one moment — the window going away (see
-// captureSessionNow in stores/tabs.ts) — and the capture is deliberately
-// synchronous, because that moment is `beforeunload` and nothing asynchronous is
-// guaranteed to finish there. The cost of that choice is that a hard kill loses
-// the screens; the layout still survives on its own debounce.
+// The screens are megabytes, and localStorage was the wrong home for them:
+//
+//   - It is synchronous, on the thread that draws the terminal. The read sat in
+//     front of the first paint of every restored launch.
+//   - Its quota is ~5MB for the whole origin, shared with settings, themes,
+//     favourites, the closed-tab stack and markdown drafts — so screens could
+//     never have a real budget, and the code had to cap them hard and shed
+//     entries when a write was rejected.
+//   - It bills UTF-16 code units, so a "2MB" string could cost 4MB of that shared
+//     quota. A cap counted in characters was quietly wrong.
+//
+// So they go to a file, written by the main process (see the block in
+// electron/main.cjs). That fixes all three: the write is off this thread, there is
+// no shared quota, and bytes are bytes. It also means the read can be async, which
+// is *better* than what it replaced — boot fires the request and moves on, and by
+// the time a pane has spawned its shell the answer has long since arrived.
+//
+// Capture is still synchronous and still happens at exactly one moment — the
+// window going away — because that moment is `beforeunload`, where nothing
+// asynchronous is guaranteed to finish. The cost of that is a hard kill losing the
+// screens; the layout survives on its own debounce.
 
 import type { SnapshotPane } from "../types";
+import { getBackend } from "../backends";
 import { serializeTerminalSync } from "./terminal-registry";
 
-const STORAGE_KEY = "specterm.session.screens";
-const SCHEMA_VERSION = 1;
+// Superseded by the file the main process now owns. Read once on the next launch
+// after an upgrade, purely so an old blob doesn't sit in a 5MB quota forever.
+const LEGACY_STORAGE_KEY = "specterm.session.screens";
 
-// Budgets. localStorage gives the whole origin about 5MB, shared with settings,
-// themes, the closed-tab stack and markdown drafts — so screens get a fraction of
-// it, not all of it. The per-pane ceiling stops one pane that ran a huge build
-// log from spending the entire budget before the others are even looked at.
-const MAX_PANE_CHARS = 256_000;
-const MAX_TOTAL_CHARS = 2_000_000;
+// Ceilings, now that the storage isn't fighting us. The renderer's own
+// serialization is already bounded by xterm's scrollback (1000 rows per pane), so
+// in practice these are never reached — they exist so a pathological buffer can't
+// spend unbounded time being serialized or fill someone's disk.
+const MAX_PANE_CHARS = 2_000_000;
+const MAX_TOTAL_CHARS = 24_000_000;
 
 // Scrollback depths tried, in order, until one fits under MAX_PANE_CHARS. The
-// first is xterm's default scrollback (the whole buffer); the last is 0, which
-// still serializes the viewport — the screen you were actually looking at, which
-// is the part worth keeping if only part can be.
+// first is xterm's whole buffer; the last is 0, which still serializes the
+// viewport — the screen you were actually looking at, which is the part worth
+// keeping if only part can be.
 const SCROLLBACK_STEPS = [1000, 250, 60, 0];
 
 export type ScreenStore = Record<string, string>;
@@ -42,8 +60,8 @@ export type ScreenStore = Record<string, string>;
 // --- Capture ---------------------------------------------------------------
 
 // Serialize one pane at the deepest scrollback that fits the per-pane budget.
-// Returns "" when even the bare viewport is over it (a very wide terminal full of
-// per-cell color changes), which just means that pane restores empty.
+// Returns "" when even the bare viewport is over it, which just means that pane
+// restores empty.
 function serializeCapped(paneId: string): string {
   for (const scrollback of SCROLLBACK_STEPS) {
     const text = serializeTerminalSync(paneId, scrollback);
@@ -56,10 +74,9 @@ function serializeCapped(paneId: string): string {
 /**
  * Serialize the screens of `paneIds`, in order, until the total budget runs out.
  *
- * Order is the caller's priority, not the tree's: stores/tabs.ts passes the
- * active tab's panes first, so when the budget is spent it's the panes the user
- * was actually looking at that survive and a background tab that was left with a
- * huge log open that doesn't.
+ * Order is the caller's priority, not the tree's: stores/tabs.ts passes the active
+ * tab's panes first, so if the budget ever were reached it's the panes the user
+ * was looking at that survive.
  */
 export function captureScreens(paneIds: string[]): ScreenStore {
   const screens: ScreenStore = {};
@@ -83,63 +100,40 @@ export function captureScreens(paneIds: string[]): ScreenStore {
 
 // --- Persistence -----------------------------------------------------------
 
-interface StoredScreens {
-  version: number;
-  screens: ScreenStore;
-}
-
 /**
- * Write the screens out, shedding entries until they fit.
+ * Hand the screens to the host to write.
  *
- * The budgets above are an estimate of what localStorage will accept; the quota
- * is the real answer, and it depends on what everything else in the app has
- * already stored. So a rejected write isn't given up on — the last (lowest
- * priority) entry is dropped and it's tried again. Insertion order is the caller's
- * priority order, and `Object.keys` preserves it for string keys, so what gets
- * shed is what mattered least.
+ * Fire-and-forget, and it has to be: the one caller runs as the window is being
+ * torn down, where an awaited round trip has no guarantee of completing. The host
+ * outlives the window and finishes the write on its own (and writes to a temp file
+ * then renames, so a crash mid-write leaves the previous screens intact rather
+ * than a truncated file).
  */
 export function saveScreens(screens: ScreenStore) {
-  const keys = Object.keys(screens);
-  let remaining = { ...screens };
-  for (let i = keys.length; i >= 0; i--) {
-    try {
-      localStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          version: SCHEMA_VERSION,
-          screens: remaining,
-        } satisfies StoredScreens)
-      );
-      return;
-    } catch (_) {
-      // Over quota (or storage unavailable). Drop the least important entry and
-      // try again; if that empties the map, the next pass writes `{}` and the one
-      // after gives up entirely.
-      const last = Object.keys(remaining).pop();
-      if (last === undefined) break;
-      const { [last]: _dropped, ...rest } = remaining;
-      remaining = rest;
-    }
-  }
-  // Even an empty payload wouldn't go in. Clear the key so a boot doesn't replay
-  // screens from some older, unrelated session onto this layout.
-  clearScreens();
+  void getBackend()
+    .then((backend) => backend.writeScreens(screens))
+    .catch(() => {
+      /* No host-side screen storage (Tauri) — the layout still restores. */
+    });
+  // An upgrade from the version that kept screens in localStorage leaves a blob
+  // that will never be read again, in a quota shared with settings and themes.
+  clearLegacyScreens();
 }
 
 /**
- * Read the saved screens back. Everything here is untrusted — it round-tripped
- * through localStorage and may have been written by an older version or edited by
- * hand — and it is about to be written straight into a terminal, so a value that
- * isn't a plain string, or is longer than anything we would ever have written, is
- * dropped rather than replayed.
+ * Read the saved screens back.
+ *
+ * Started once at boot and awaited later, per pane, by the time it attaches — so
+ * it costs nothing on the path to the first shell. Everything in it is untrusted:
+ * it round-tripped through a file that may have been written by an older version
+ * or edited by hand, and it is about to be written straight into a terminal, so a
+ * value that isn't a plain string, or is longer than anything we would have
+ * written, is dropped rather than replayed.
  */
-export function loadScreens(): ScreenStore {
+export async function loadScreens(): Promise<ScreenStore> {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as StoredScreens | null;
-    if (!parsed || parsed.version !== SCHEMA_VERSION) return {};
-    const source = parsed.screens;
+    const backend = await getBackend();
+    const source = await backend.readScreens();
     if (!source || typeof source !== "object") return {};
     const screens: ScreenStore = {};
     for (const [key, value] of Object.entries(source)) {
@@ -154,16 +148,23 @@ export function loadScreens(): ScreenStore {
 }
 
 export function clearScreens() {
+  void getBackend()
+    .then((backend) => backend.writeScreens(null))
+    .catch(() => {
+      /* nothing to clear */
+    });
+  clearLegacyScreens();
+}
+
+function clearLegacyScreens() {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch (_) {
-    // Storage unavailable — a stale blob is harmless, it's only read on boot and
-    // only for keys the restored layout actually names.
+    // Storage unavailable — a stale blob is harmless, nothing reads that key.
   }
 }
 
-/** The screen saved for a snapshot pane, or "" when it has none. */
-export function screenFor(pane: SnapshotPane, screens: ScreenStore): string {
-  if (pane.kind !== "terminal" || !pane.screenKey) return "";
-  return screens[pane.screenKey] ?? "";
+/** The key naming a snapshot pane's screen, or "" when it has none. */
+export function screenKeyOf(pane: SnapshotPane): string {
+  return pane.kind === "terminal" ? (pane.screenKey ?? "") : "";
 }

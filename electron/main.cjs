@@ -1411,6 +1411,79 @@ ipcMain.handle("quit-app", () => {
   app.quit();
 });
 
+// === Saved screens (the picture half of session restore) ====================
+//
+// The *layout* of a saved session — tabs, splits, directories, names — stays in
+// the renderer's localStorage, because it has to be read synchronously at boot,
+// before anything renders and therefore before the first shell spawns. Asking us
+// for it would put a round trip in front of every launch, which is the cost this
+// app deliberately doesn't pay (see WindowBoot in backends/types.ts).
+//
+// The *screens* belong here instead, and localStorage was the wrong home for
+// them on three counts:
+//
+//   - It is synchronous, on the thread that draws the terminal. Reading a couple
+//     of megabytes back sat squarely in front of the first paint.
+//   - The quota is ~5MB for the whole origin, shared with settings, themes,
+//     favourites, the closed-tab stack and markdown drafts. Screens could never
+//     have a real budget there, which is why the renderer had to cap them hard
+//     and shed entries on a failed write.
+//   - It bills UTF-16 code units, so a "2MB" string could cost 4MB of that
+//     shared quota — a cap counted in characters was quietly wrong.
+//
+// On disk none of that applies: no shared quota, bytes are bytes, and the write
+// is off the renderer's thread entirely.
+function screensPath() {
+  return path.join(app.getPath("userData"), "session-screens.json");
+}
+
+// Generous rather than absent. The renderer's own serialization is bounded by
+// xterm's scrollback (1000 rows a pane), so these are a backstop against a
+// pathological blob filling someone's disk, not a budget anyone should feel.
+const MAX_SCREEN_FILE_BYTES = 32 * 1024 * 1024;
+
+async function writeScreensToDisk(screens) {
+  try {
+    if (!screens || typeof screens !== "object") {
+      await fs.promises.rm(screensPath(), { force: true });
+      return;
+    }
+    const body = JSON.stringify({ version: 1, screens });
+    if (body.length > MAX_SCREEN_FILE_BYTES) return;
+    // Write-then-rename, so a crash mid-write leaves the previous screens intact
+    // rather than a truncated file that parses to nothing.
+    const target = screensPath();
+    const tmp = `${target}.tmp`;
+    await fs.promises.writeFile(tmp, body, "utf8");
+    await fs.promises.rename(tmp, target);
+  } catch (err) {
+    // Disk full, permissions, a userData dir that vanished. The layout snapshot
+    // is unaffected, so the session still restores — without its scrollback.
+    console.warn("[session] writing screens failed:", err?.message ?? err);
+  }
+}
+
+// Fired by a window on its way out, which is why it is `on` and not `handle`:
+// there is no renderer left to receive a reply, and this process is still here to
+// finish the job.
+ipcMain.on("session:write-screens-async", (_event, screens) => {
+  void writeScreensToDisk(screens);
+});
+
+ipcMain.handle("session:read-screens", async () => {
+  try {
+    const raw = await fs.promises.readFile(screensPath(), "utf8");
+    const parsed = JSON.parse(raw);
+    if (!parsed || parsed.version !== 1 || typeof parsed.screens !== "object") {
+      return {};
+    }
+    return parsed.screens ?? {};
+  } catch (_) {
+    // No file yet (the common case on a first run), or an unreadable one.
+    return {};
+  }
+});
+
 // Whether closing a window should detach it. The renderer owns the setting; this
 // is the push that keeps the close handler in step with it.
 ipcMain.on("set-background-sessions", (_event, enabled) => {

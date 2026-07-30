@@ -235,6 +235,14 @@ export class TauriBackend implements Backend {
     return false;
   }
 
+  // No host-side screen storage yet — a restored session comes back with its
+  // layout and directories, and its panes start empty.
+  async writeScreens(_screens: Record<string, string> | null): Promise<void> {}
+
+  async readScreens(): Promise<Record<string, string>> {
+    return {};
+  }
+
   async detachedSessionCount(): Promise<number> {
     return 0;
   }
