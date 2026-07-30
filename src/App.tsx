@@ -1,6 +1,9 @@
 import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
-import { captureSessionNow, useTabStore } from "./stores/tabs";
-import { flushSession } from "./stores/history";
+import {
+  captureSessionNow,
+  captureSessionOnExit,
+  useTabStore,
+} from "./stores/tabs";
 import {
   startSessionProviders,
   stopSessionProviders,
@@ -36,6 +39,7 @@ import type { UnlistenFn } from "./backends";
 
 export default function App() {
   const store = useTabStore();
+
 
   // The file tree and the settings panel share one slot in .app-body, so the
   // store models it as a single `sidebarView` — there's no state in which both
@@ -250,19 +254,71 @@ export default function App() {
     // torn-off tab has to go and fetch anything, and that one exists solely
     // because a drag just ended.
     const boot = windowBoot();
-    if (boot.hasTab) {
+    if (boot.restore) {
+      // A window being reopened at launch. Its layout is already here — the preload
+      // collected it synchronously — so the first tab is built in this same tick,
+      // with nothing awaited in front of the first shell.
+      store.initWindow(null, boot.restore);
+    } else if (boot.hasTabs) {
+      // Tabs handed over with their PTYs still running. This is the one case where a
+      // round trip is affordable: they can carry megabytes of serialized screen, and
+      // the window exists only because a drag just ended.
       void getBackend()
         .then((backend) => backend.takeWindowInit())
-        .then((init) => store.initWindow(init.tab, false))
+        .then((init) => store.initWindow(init.tabs))
         .catch((err) => {
           // Never leave a window empty because the handover failed: fall back
           // to the plain new-terminal boot.
-          console.warn("[window] adopting the torn-off tab failed:", err);
-          store.initWindow(null, false);
+          console.warn("[window] collecting this window's state failed:", err);
+          store.initWindow(null);
         });
+    } else if (boot.migrateLegacy) {
+      // First launch after the upgrade that moved the session out of localStorage.
+      store.initWindowFromLegacy();
     } else {
-      store.initWindow(null, boot.ownsSession);
+      store.initWindow(null);
     }
+
+    // The host is closing this window and is holding the close open until we have
+    // handed our shells over (see the detached-session block in
+    // electron/main.cjs). Two things have to happen here, in this order:
+    //
+    //   1. Write the on-disk snapshot *first*, while the terminals still exist.
+    //      Detaching disposes them, and a screen capture taken afterwards would
+    //      be empty — and would overwrite a perfectly good one. The disk snapshot
+    //      is what covers the case where this process later dies without ever
+    //      being reattached (a crash, a reboot), so it has to be the last honest
+    //      picture of the window.
+    //   2. Hand the tabs over, and answer — always, even with nothing to park, or
+    //      the window sits there until the host's timeout gives up on us.
+    let unlistenDetach: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) =>
+        backend.onDetachRequest(() => {
+          // The snapshot goes out *first*, while the terminals still exist:
+          // detaching disposes them, and a screen captured afterwards would be
+          // empty — and would overwrite a good one. It is also the last one this
+          // window writes (captureSessionOnExit freezes it), which is what has to
+          // be true: from here the truth is the live shells the host is holding,
+          // and if this process later dies without ever being reattached, that
+          // snapshot is the picture the next launch restores.
+          captureSessionOnExit();
+          void store
+            .detachWindow()
+            .catch((err) => {
+              console.warn("[window] detaching failed:", err);
+              return [];
+            })
+            .then((tabs) => backend.parkSession(tabs))
+            .catch(() => {
+              /* Host is gone; nothing left that could close this window. */
+            });
+        })
+      )
+      .then((un) => {
+        unlistenDetach = un;
+      });
+    onCleanup(() => unlistenDetach?.());
 
     // A tab torn off another window and dropped onto this one.
     let unlistenAdopt: UnlistenFn | undefined;
@@ -296,15 +352,20 @@ export default function App() {
     // where each shell ended up, and what it was running — live on the terminal
     // registry and change without any store write. Re-capture, then force the
     // debounced write out before the window goes.
-    const saveOnExit = () => {
-      captureSessionNow();
-      flushSession();
-    };
+    // Unloading is real teardown, so this snapshot is the final one and the
+    // session is frozen behind it (see captureSessionOnExit). Everything after it
+    // is the window coming apart — the host kills the shells, the panes see their
+    // processes exit and close themselves, and the last one closing spawns a
+    // replacement — none of which is a session anyone asked to save.
+    const saveOnExit = () => captureSessionOnExit();
     window.addEventListener("beforeunload", saveOnExit);
-    // beforeunload isn't guaranteed on every platform's quit path; "hidden" is
-    // the event that reliably precedes teardown. Both are idempotent.
+
+    // A checkpoint, not a teardown: "hidden" also fires on a minimize, so this
+    // deliberately does *not* freeze. It exists because beforeunload isn't
+    // guaranteed on every platform's quit path, and because a snapshot taken when
+    // the window was last put away is worth having if the app is killed outright.
     const onHidden = () => {
-      if (document.visibilityState === "hidden") saveOnExit();
+      if (document.visibilityState === "hidden") captureSessionNow();
     };
     document.addEventListener("visibilitychange", onHidden);
     onCleanup(() => {

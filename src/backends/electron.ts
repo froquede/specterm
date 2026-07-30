@@ -45,13 +45,34 @@ interface SpectermAPI {
   setFullscreen(value: boolean): Promise<void>;
   onFullscreenChange(cb: (value: boolean) => void): () => void;
   setWindowOpacity(value: number): Promise<void>;
+  drawsOwnWindowControls(): Promise<boolean>;
+  minimizeWindow(): Promise<void>;
+  toggleMaximizeWindow(): Promise<boolean>;
+  closeWindow(): Promise<void>;
+  isMaximized(): Promise<boolean>;
+  onMaximizedChange(cb: (maximized: boolean) => void): () => void;
   // Plain data read from the window's launch arguments by the preload — no IPC.
   // Consumed by windowBoot() in backends/index.ts, not through this class.
   windowBoot: unknown;
   takeWindowInit(): Promise<WindowInit>;
   newWindow(): Promise<void>;
+  quitApp(): Promise<void>;
   dropTransfer(tab: TransferTab): Promise<void>;
   onAdoptTab(cb: (tab: TransferTab) => void): () => void;
+  detachPtys(ids: number[]): Promise<void>;
+  onDetachRequest(cb: () => void): () => void;
+  parkSession(tabs: TransferTab[]): Promise<void>;
+  setBackgroundSessions(enabled: boolean): void;
+  pushLayout(layout: { tabs: unknown[]; activeTabIndex: number } | null): void;
+  pushSessionPrefs(prefs: {
+    restoreLastSession: boolean;
+    backgroundSessions: boolean;
+    customTitleBar: boolean;
+  }): void;
+  reattachSession(): Promise<boolean>;
+  detachedSessionCount(): Promise<number>;
+  writeScreens(screens: Record<string, string> | null): void;
+  readScreens(): Promise<Record<string, string>>;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
@@ -204,6 +225,30 @@ export class ElectronBackend implements Backend {
     return this.api.setWindowOpacity(value);
   }
 
+  async drawsOwnWindowControls(): Promise<boolean> {
+    return this.api.drawsOwnWindowControls();
+  }
+
+  async minimizeWindow(): Promise<void> {
+    return this.api.minimizeWindow();
+  }
+
+  async toggleMaximizeWindow(): Promise<boolean> {
+    return this.api.toggleMaximizeWindow();
+  }
+
+  async closeWindow(): Promise<void> {
+    return this.api.closeWindow();
+  }
+
+  async isMaximized(): Promise<boolean> {
+    return this.api.isMaximized();
+  }
+
+  async onMaximizedChange(cb: (maximized: boolean) => void): Promise<UnlistenFn> {
+    return this.api.onMaximizedChange(cb);
+  }
+
   async takeWindowInit(): Promise<WindowInit> {
     return this.api.takeWindowInit();
   }
@@ -212,12 +257,62 @@ export class ElectronBackend implements Backend {
     return this.api.newWindow();
   }
 
+  async quitApp(): Promise<void> {
+    return this.api.quitApp();
+  }
+
   async dropTransfer(tab: TransferTab): Promise<void> {
     return this.api.dropTransfer(tab);
   }
 
   async onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
     return this.api.onAdoptTab(cb);
+  }
+
+  async detachPtys(ids: number[]): Promise<void> {
+    return this.api.detachPtys(ids);
+  }
+
+  async onDetachRequest(cb: () => void): Promise<UnlistenFn> {
+    return this.api.onDetachRequest(cb);
+  }
+
+  async parkSession(tabs: TransferTab[]): Promise<void> {
+    return this.api.parkSession(tabs);
+  }
+
+  setBackgroundSessions(enabled: boolean): void {
+    this.api.setBackgroundSessions(enabled);
+  }
+
+  pushLayout(layout: { tabs: unknown[]; activeTabIndex: number } | null): void {
+    this.api.pushLayout(layout);
+  }
+
+  pushSessionPrefs(prefs: {
+    restoreLastSession: boolean;
+    backgroundSessions: boolean;
+    customTitleBar: boolean;
+  }): void {
+    this.api.pushSessionPrefs(prefs);
+  }
+
+  async reattachSession(): Promise<boolean> {
+    return this.api.reattachSession();
+  }
+
+  async writeScreens(screens: Record<string, string> | null): Promise<void> {
+    // The preload's channel is a `send`, so this resolves as soon as the payload
+    // is handed over — which is the point. The host finishes the write.
+    this.api.writeScreens(screens);
+  }
+
+  async readScreens(): Promise<Record<string, string>> {
+    return this.api.readScreens();
+  }
+
+  async detachedSessionCount(): Promise<number> {
+    return this.api.detachedSessionCount();
   }
 
   broadcast(channel: string, payload?: unknown): void {

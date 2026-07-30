@@ -200,20 +200,81 @@ export class TauriBackend implements Backend {
     // stays opaque under Tauri.
   }
 
+  // Native decorations here, so there is nothing for the tab bar to draw.
+  async drawsOwnWindowControls(): Promise<boolean> {
+    return false;
+  }
+
+  async minimizeWindow(): Promise<void> {}
+
+  async toggleMaximizeWindow(): Promise<boolean> {
+    return false;
+  }
+
+  async closeWindow(): Promise<void> {}
+
+  async isMaximized(): Promise<boolean> {
+    return false;
+  }
+
+  async onMaximizedChange(_cb: (maximized: boolean) => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
   // Multi-window (extra windows, tearing a tab off into its own) is Electron-only
   // for now: it needs host-side window bookkeeping and PTY re-ownership that this
   // backend has no counterpart for. These stubs keep the single window it does
   // have working exactly as before — it just never gets a second one.
   async takeWindowInit(): Promise<WindowInit> {
-    return { tab: null };
+    return { tabs: [] };
   }
 
   async newWindow(): Promise<void> {}
+
+  // Nothing outlives the window here, so closing it is already quitting.
+  async quitApp(): Promise<void> {}
 
   async dropTransfer(_tab: TransferTab): Promise<void> {}
 
   async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
     return () => {};
+  }
+
+  // Nothing here can outlive the window, so a close is a close: the detach
+  // request never fires and the rest are inert.
+  async detachPtys(_ids: number[]): Promise<void> {}
+
+  async onDetachRequest(_cb: () => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
+  async parkSession(_tabs: TransferTab[]): Promise<void> {}
+
+  setBackgroundSessions(_enabled: boolean): void {}
+
+  // One window, and no host-side session storage — nothing to report to.
+  pushLayout(_layout: { tabs: unknown[]; activeTabIndex: number } | null): void {}
+
+  pushSessionPrefs(_prefs: {
+    restoreLastSession: boolean;
+    backgroundSessions: boolean;
+    customTitleBar: boolean;
+  }): void {}
+
+  async reattachSession(): Promise<boolean> {
+    return false;
+  }
+
+  // No host-side screen storage yet — a restored session comes back with its
+  // layout and directories, and its panes start empty.
+  async writeScreens(_screens: Record<string, string> | null): Promise<void> {}
+
+  async readScreens(): Promise<Record<string, string>> {
+    return {};
+  }
+
+  async detachedSessionCount(): Promise<number> {
+    return 0;
   }
 
   // With one window there is nobody to sync with, so a broadcast has no

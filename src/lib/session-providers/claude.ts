@@ -171,6 +171,39 @@ async function heuristicFromTranscripts(cwd: string): Promise<string | null> {
 }
 
 /**
+ * Is this session still there to be resumed?
+ *
+ * A recorded id is a *remembered* fact, and by the time it is read back the
+ * session may be gone: Claude Code prunes old transcripts, a project directory
+ * gets moved or deleted, someone clears `~/.claude`. Offering
+ * `claude --resume <id>` then produces a command that looks authoritative and
+ * fails — which is worse than offering nothing, especially now that a restored
+ * pane already has the transcript replayed on screen to read.
+ *
+ * `cwd` matters as much as the id: transcripts are namespaced per directory, so a
+ * session that exists is still unresumable from the wrong one. Checking the pane's
+ * own directory covers both failure modes in a single stat.
+ */
+export async function stillResumable(
+  meta: SessionMeta,
+  cwd: string
+): Promise<boolean> {
+  if (!cwd) return false;
+  try {
+    const backend = await getBackend();
+    const home = await backend.getHomePath();
+    const dir = `${home}/.claude/projects/${projectDirName(cwd)}`;
+    const entries = await backend.readDirStats(dir);
+    const wanted = `${meta.id}${TRANSCRIPT_EXT}`;
+    return entries.some((e) => !e.isDirectory && e.name === wanted);
+  } catch (_) {
+    // No project directory, or no filesystem access. Can't confirm it, so don't
+    // offer it — a silent no-op beats a command that errors at the prompt.
+    return false;
+  }
+}
+
+/**
  * Inspect one pane's processes and report the session running in it, if any.
  *
  * `known` is what was already recorded for this pane: an exact id is kept as-is

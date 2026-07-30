@@ -112,6 +112,12 @@ function TabTitleInput(props: {
 
 export default function TabBar(props: TabBarProps) {
   const [isFullscreen, setIsFullscreen] = createSignal(false);
+  // Whether this window has no frame of its own and must draw its own controls.
+  // Asked of the host rather than derived from the platform: macOS keeps its native
+  // traffic lights, and a window created before the setting changed still has
+  // whatever frame it was born with.
+  const [ownControls, setOwnControls] = createSignal(false);
+  const [isMaximized, setIsMaximized] = createSignal(false);
   // Set right before a completed drag's reorder call, so the click event that
   // follows pointerup doesn't also re-select a tab out from under the drag.
   let suppressClick = false;
@@ -217,14 +223,21 @@ export default function TabBar(props: TabBarProps) {
   onMount(async () => {
     const backend = await getBackend();
     setIsFullscreen(await backend.isFullscreen());
+    setOwnControls(await backend.drawsOwnWindowControls());
+    setIsMaximized(await backend.isMaximized());
     let unlisten: UnlistenFn | undefined;
+    let unlistenMax: UnlistenFn | undefined;
     try {
       unlisten = await backend.onFullscreenChange(setIsFullscreen);
+      unlistenMax = await backend.onMaximizedChange(setIsMaximized);
     } catch (_) {
-      // Backend without a fullscreen-change signal — the icon still flips on
-      // our own toggle, just not on OS-driven changes.
+      // Backend without those signals — the icons still flip on our own toggles,
+      // just not on OS-driven changes.
     }
-    onCleanup(() => unlisten?.());
+    onCleanup(() => {
+      unlisten?.();
+      unlistenMax?.();
+    });
   });
 
   const sidebarKey = () => shortcutLabel("B");
@@ -364,6 +377,81 @@ export default function TabBar(props: TabBarProps) {
       {/* Flexible draggable strip: fills the empty space so the window can be
           moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
       <div class="tab-drag-region" />
+      {/* Window controls, for the platforms where the tab bar *is* the title bar and
+          there is no frame left to click. Hidden in fullscreen: there is no window
+          to minimise or restore up there, and the OS has taken the chrome away
+          anyway — the ⊞ icon above is how you come back. macOS never shows these;
+          it keeps its own traffic lights, which the tab bar leaves room for. */}
+      <Show when={ownControls() && !isFullscreen()}>
+        <div class="tab-window-controls">
+          <button
+            class="tab-window-btn"
+            onClick={() => void getBackend().then((b) => b.minimizeWindow())}
+            title="Minimise"
+            aria-label="Minimise"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <rect x="0" y="4.5" width="10" height="1" fill="currentColor" />
+            </svg>
+          </button>
+          <button
+            class="tab-window-btn"
+            onClick={() =>
+              void getBackend()
+                .then((b) => b.toggleMaximizeWindow())
+                .then(setIsMaximized)
+            }
+            title={isMaximized() ? "Restore" : "Maximise"}
+            aria-label={isMaximized() ? "Restore" : "Maximise"}
+          >
+            <Show
+              when={isMaximized()}
+              fallback={
+                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                  <rect
+                    x="0.5"
+                    y="0.5"
+                    width="9"
+                    height="9"
+                    fill="none"
+                    stroke="currentColor"
+                  />
+                </svg>
+              }
+            >
+              {/* Two offset outlines: the conventional "restore down" glyph. */}
+              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+                <rect
+                  x="2.5"
+                  y="0.5"
+                  width="7"
+                  height="7"
+                  fill="none"
+                  stroke="currentColor"
+                />
+                <rect
+                  x="0.5"
+                  y="2.5"
+                  width="7"
+                  height="7"
+                  fill="var(--bg-chrome)"
+                  stroke="currentColor"
+                />
+              </svg>
+            </Show>
+          </button>
+          <button
+            class="tab-window-btn tab-window-close"
+            onClick={() => void getBackend().then((b) => b.closeWindow())}
+            title="Close window"
+            aria-label="Close window"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
+              <path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" fill="none" />
+            </svg>
+          </button>
+        </div>
+      </Show>
       {/* Optional clock, at the far end from the tabs. Mounted only when it's
           switched on, so when it's off there is no timer running at all. */}
       <Show when={clockEnabled()}>

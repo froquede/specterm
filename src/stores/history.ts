@@ -18,7 +18,9 @@
 import { createSignal } from "solid-js";
 import type { SnapshotNode, TabSnapshot } from "../types";
 import { isSnapshotNode, isTabSnapshot } from "../lib/session-snapshot";
+import { clearScreens } from "../lib/session-screens";
 import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
+import { getBackend } from "../backends";
 
 // A closed tab, with where it sat so reopening puts it back in place rather
 // than at the end of the strip.
@@ -48,7 +50,13 @@ export type ClosedEntry = ClosedTabEntry | ClosedPaneEntry;
 const CLOSED_LIMIT = 25;
 
 const CLOSED_KEY = "specterm.history.closed";
-const SESSION_KEY = "specterm.session";
+
+// Where the saved session used to live. It belongs to the host now — one entry per
+// window, assembled and written there (see the session block in electron/main.cjs)
+// — because a single localStorage key shared by every window could only ever hold
+// one of them. Read once more on the first launch after an upgrade so nobody loses
+// the tabs they had, then dropped.
+const LEGACY_SESSION_KEY = "specterm.session";
 
 // Bumped when a stored shape stops being readable by this code. Blobs at any
 // other version are dropped rather than migrated: the cost of guessing wrong is
@@ -60,12 +68,7 @@ interface StoredClosed {
   entries: ClosedEntry[];
 }
 
-export interface SessionSnapshot {
-  version: number;
-  savedAt: number;
-  tabs: TabSnapshot[];
-  activeTabIndex: number;
-}
+
 
 // --- Closed stack ----------------------------------------------------------
 
@@ -210,27 +213,21 @@ let lastWritten = "";
 function writeSession(source: () => SessionSource) {
   try {
     const { tabs, activeTabIndex } = source();
-    const body = JSON.stringify({
-      version: SCHEMA_VERSION,
-      tabs,
-      activeTabIndex,
-    });
+    const body = JSON.stringify({ tabs, activeTabIndex });
+    // Unchanged layout, so there is nothing to tell anyone. Most of what wakes this
+    // up — a divider drag settling, the sidebar opening — leaves the tabs identical,
+    // and those now cost a string compare instead of an IPC.
     if (body === lastWritten) return;
 
-    localStorage.setItem(
-      SESSION_KEY,
-      JSON.stringify({
-        version: SCHEMA_VERSION,
-        savedAt: Date.now(),
-        tabs,
-        activeTabIndex,
-      } satisfies SessionSnapshot)
-    );
+    void getBackend()
+      .then((backend) => backend.pushLayout({ tabs, activeTabIndex }))
+      .catch(() => {
+        /* No host-side session storage — this session won't be restorable. */
+      });
     lastWritten = body;
   } catch (_) {
-    // Storage full/unavailable, or the snapshot threw on a half-torn-down pane.
-    // Either way this session just won't be restorable — never worth breaking
-    // the action that triggered the save.
+    // The snapshot threw on a half-torn-down pane. Never worth breaking the action
+    // that triggered the save.
   }
 }
 
@@ -256,35 +253,68 @@ export function flushSession() {
   }
 }
 
-export function loadSession(): SessionSnapshot | null {
+/**
+ * Validate a window's saved tabs, whatever the source.
+ *
+ * Everything reaching this is untrusted — it round-tripped through a file, or a
+ * localStorage key, and may have been written by an older version or edited by
+ * hand. A malformed tree would throw inside the render, and a boot that can't
+ * render is a boot that can't be fixed from the UI. Bad tabs are filtered rather
+ * than rejected wholesale: one won't cost you the others.
+ */
+export function validateWindowSnapshot(
+  raw: { tabs?: unknown[]; activeTabIndex?: number } | null | undefined
+): { tabs: TabSnapshot[]; activeTabIndex: number } | null {
+  if (!raw || !Array.isArray(raw.tabs)) return null;
+  const tabs = raw.tabs.filter(isTabSnapshot);
+  if (tabs.length === 0) return null;
+  const index = raw.activeTabIndex;
+  return {
+    tabs,
+    activeTabIndex:
+      typeof index === "number" && index >= 0 && index < tabs.length ? index : 0,
+  };
+}
+
+/**
+ * The session left behind by the version that kept it in localStorage.
+ *
+ * Read once, by the single window the host says may migrate, and cleared as soon
+ * as it's read — so an upgrade costs nobody their tabs and nothing looks here
+ * again. Its screens went with it and are already on disk under the same keys.
+ */
+export function takeLegacySession():
+  | { tabs: TabSnapshot[]; activeTabIndex: number }
+  | null {
   try {
-    const raw = localStorage.getItem(SESSION_KEY);
+    const raw = localStorage.getItem(LEGACY_SESSION_KEY);
     if (!raw) return null;
-    const parsed = JSON.parse(raw) as SessionSnapshot | null;
+    localStorage.removeItem(LEGACY_SESSION_KEY);
+    const parsed = JSON.parse(raw) as {
+      version?: number;
+      tabs?: unknown[];
+      activeTabIndex?: number;
+    } | null;
     if (!parsed || parsed.version !== SCHEMA_VERSION) return null;
-    if (!Array.isArray(parsed.tabs)) return null;
-    const tabs = parsed.tabs.filter(isTabSnapshot);
-    if (tabs.length === 0) return null;
-    return {
-      version: parsed.version,
-      savedAt: typeof parsed.savedAt === "number" ? parsed.savedAt : 0,
-      tabs,
-      activeTabIndex:
-        typeof parsed.activeTabIndex === "number" &&
-        parsed.activeTabIndex >= 0 &&
-        parsed.activeTabIndex < tabs.length
-          ? parsed.activeTabIndex
-          : 0,
-    };
+    return validateWindowSnapshot(parsed);
   } catch (_) {
     return null;
   }
 }
 
 export function clearSession() {
+  void getBackend()
+    .then((backend) => backend.pushLayout(null))
+    .catch(() => {
+      /* nothing to clear */
+    });
   try {
-    localStorage.removeItem(SESSION_KEY);
+    localStorage.removeItem(LEGACY_SESSION_KEY);
   } catch (_) {
-    // Nothing to do — a stale snapshot is harmless, it's only read on boot.
+    // Nothing reads that key any more.
   }
+  // The screens are the other half of the same session (lib/session-screens.ts)
+  // and they're the expensive half to leave lying around — dropping the layout
+  // without them would strand megabytes nothing can ever read.
+  clearScreens();
 }

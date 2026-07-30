@@ -21,18 +21,51 @@ function readBootFlags() {
     }
     // Only trust a value that was actually there — a missing key means an older
     // host, or a shape we don't recognize, and the defaults below are safer.
-    if ("ownsSession" in flags) {
+    if ("hasTabs" in flags) {
       return {
-        hasTab: flags.hasTab === true,
+        hasTabs: flags.hasTabs === true,
+        hasRestore: flags.hasRestore === true,
         autoCheckUpdates: flags.autoCheckUpdates === true,
-        ownsSession: flags.ownsSession === true,
+        migrateLegacy: flags.migrateLegacy === true,
       };
     }
   }
-  return { hasTab: false, autoCheckUpdates: true, ownsSession: true };
+  return {
+    hasTabs: false,
+    hasRestore: false,
+    autoCheckUpdates: true,
+    migrateLegacy: false,
+  };
 }
 
-const windowBoot = readBootFlags();
+const flags = readBootFlags();
+
+// A saved layout for this window, collected here rather than asked for later.
+//
+// Synchronous, and that is the point: the renderer builds its first tab from this,
+// and the one startup property worth protecting is that nothing — not even a
+// microtask — sits in front of the first shell (see windowBoot in
+// src/backends/index.ts). So it is pulled over a blocking channel at preload time,
+// on exactly the launches that are restoring something, and handed to the renderer
+// as plain data alongside the flags.
+//
+// Handed-over *tabs* deliberately do not come this way: they can carry megabytes of
+// serialized screen, and the window receiving them exists only because a drag just
+// ended, so that one can afford a round trip.
+const windowBoot = {
+  ...flags,
+  restore: flags.hasRestore
+    ? (() => {
+        try {
+          return ipcRenderer.sendSync("window-restore-sync");
+        } catch (_) {
+          // Older host, or a channel that isn't there — fall back to a plain window
+          // rather than failing the launch.
+          return null;
+        }
+      })()
+    : null,
+};
 
 contextBridge.exposeInMainWorld("specterm", {
   // Plain data, not a function: there is nothing to ask anyone.
@@ -53,6 +86,11 @@ contextBridge.exposeInMainWorld("specterm", {
   releasePty: (ids) => ipcRenderer.invoke("release-pty", ids),
 
   adoptPty: (id, cols, rows) => ipcRenderer.invoke("adopt-pty", id, cols, rows),
+
+  // Detach handover: like releasePty, but with no reclaim deadline — a detached
+  // shell is waiting for the user to come back, not for a window that is already
+  // booting. See the "detach-ptys" handler in main.cjs.
+  detachPtys: (ids) => ipcRenderer.invoke("detach-ptys", ids),
   ptyCwd: (id) => ipcRenderer.invoke("pty-cwd", id),
 
   // What's running inside each pane, and named env vars off a process, for the
@@ -130,10 +168,36 @@ contextBridge.exposeInMainWorld("specterm", {
 
   setWindowOpacity: (value) => ipcRenderer.invoke("set-window-opacity", value),
 
+  // Window controls, for the frameless layout where the tab bar is the title bar.
+  minimizeWindow: () => ipcRenderer.invoke("window-minimize"),
+  toggleMaximizeWindow: () => ipcRenderer.invoke("window-toggle-maximize"),
+  closeWindow: () => ipcRenderer.invoke("window-close"),
+  isMaximized: () => ipcRenderer.invoke("window-is-maximized"),
+  drawsOwnWindowControls: () => ipcRenderer.invoke("window-draws-own-controls"),
+
+  onMaximizedChange: (cb) => {
+    const handler = (_event, value) => cb(value);
+    ipcRenderer.on("window-maximized", handler);
+    return () => ipcRenderer.removeListener("window-maximized", handler);
+  },
+
   // Multi-window
   takeWindowInit: () => ipcRenderer.invoke("take-window-init"),
 
   newWindow: () => ipcRenderer.invoke("new-window"),
+
+  // Ends the app and every detached session with it — see the Alt+F4 binding in
+  // stores/keymap.ts for why this needs a keyboard route.
+  quitApp: () => ipcRenderer.invoke("quit-app"),
+
+  // Saved screens live on disk, written by the main process — see the block in
+  // main.cjs for why localStorage was the wrong home for megabytes captured at
+  // teardown. `send`, not `invoke`: the write is fired as the window is going
+  // away, and there is nobody left to await a reply. The main process outlives
+  // the window, so it finishes the write on its own.
+  writeScreens: (screens) => ipcRenderer.send("session:write-screens-async", screens),
+
+  readScreens: () => ipcRenderer.invoke("session:read-screens"),
 
   // Hand a serialized tab to wherever the cursor let go: another Specterm
   // window if one is under it, otherwise a new window of its own.
@@ -144,6 +208,35 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.on("adopt-tab", handler);
     return () => ipcRenderer.removeListener("adopt-tab", handler);
   },
+
+  // The host is closing this window and is holding the close until we hand our
+  // shells over. Answer with parkSession — always, even with nothing to park, or
+  // the window waits out the host's timeout before it disappears.
+  onDetachRequest: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("detach-window", handler);
+    return () => ipcRenderer.removeListener("detach-window", handler);
+  },
+
+  parkSession: (tabs) => ipcRenderer.invoke("park-session", { tabs }),
+
+  // Bring a parked session back into a window. False when nothing was parked.
+  reattachSession: () => ipcRenderer.invoke("reattach-session"),
+
+  detachedSessionCount: () => ipcRenderer.invoke("detached-session-count"),
+
+
+  setBackgroundSessions: (enabled) =>
+    ipcRenderer.send("set-background-sessions", enabled),
+
+  // The layout of this window's tabs, pushed on the renderer's own save debounce.
+  // The host assembles every window's into the saved session and writes it on quit
+  // — which is why quitting with three windows open now brings three back.
+  pushLayout: (layout) => ipcRenderer.send("session:layout", layout),
+
+  // The two session settings the host has to know before any window exists: how
+  // many windows to reopen at launch, and whether closing one detaches it.
+  pushSessionPrefs: (prefs) => ipcRenderer.send("session:prefs", prefs),
 
   // Cross-window state sync (settings, theme, favorites).
   broadcast: (channel, payload) =>

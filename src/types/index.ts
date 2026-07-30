@@ -58,7 +58,20 @@ export interface SessionMeta {
 }
 
 export type SnapshotPane =
-  | { kind: "terminal"; cwd: string; title?: string; session?: SessionMeta }
+  | {
+      kind: "terminal";
+      cwd: string;
+      title?: string;
+      session?: SessionMeta;
+      // Where to find this pane's screen in the screen store (lib/session-
+      // screens.ts). It's the live pane id at capture time — stable for a pane's
+      // whole life, so the layout snapshot can be rewritten on every store change
+      // while the screens themselves are only written when the window closes, and
+      // the two still line up. Absent for a pane whose screen wasn't kept: a
+      // snapshot older than this field, one that never mounted, or one dropped to
+      // stay inside the storage budget.
+      screenKey?: string;
+    }
   | { kind: "markdown"; filePath: string }
   | { kind: "text"; filePath: string };
 

@@ -1,21 +1,66 @@
 # E2E test suite
 
-`e2e.mjs` is a Playwright-driven end-to-end suite. It builds the app, launches
-the **real** Electron binary, and drives the actual UI (clicks, keyboard,
-settings), asserting on observable behavior. It covers the file sidebar, pane
-splits and drag-and-drop, the clipboard, the settings sidebar, and the tab-bar
-layout.
+Two Playwright-driven end-to-end suites. Both build the app, launch the **real**
+Electron binary, and drive the actual UI (clicks, keyboard, settings), asserting
+on observable behavior.
+
+- **`e2e.mjs`** — one long-lived launch. Covers the file sidebar, pane splits and
+  drag-and-drop, the clipboard, the settings sidebar, and the tab-bar layout.
+- **`e2e-session.mjs`** — session continuity, which needs the app closed and
+  reopened repeatedly and so can't live in the suite above (it is already close to
+  its time budget). Covers the two independent mechanisms: **detaching** (closing a
+  window parks its shells instead of killing them; reattaching adopts the same
+  PTYs) and the **on-disk snapshot** (layout, directories, names and each pane's
+  serialized screen, replayed into fresh shells after a real quit), that every window
+  comes back at the bounds it had, that a wedged renderer can't orphan shells, that
+  Alt+F4 quits rather than detaching, and the custom title bar — which lives here
+  rather than in the main suite because turning it off only takes effect on the
+  *next* window.
+
+Two traps `e2e-session.mjs` documents in its header and exists to stay out of,
+because both produce a green run that proves nothing:
+
+- A *backgrounded* probe (`( … ) &`) outlives the shell that started it, so it
+  keeps running even when detaching is completely broken. Probes run in the
+  foreground.
+- A renderer-side `window.close()` goes through CDP and *destroys* the window,
+  skipping the `close` event the whole detach path hangs off. Closes are driven
+  through `BrowserWindow.close()`, the X button's path.
+
+- **`perf-boot.mjs`** — the startup budget, for the *instant to open* pillar. Boots
+  cold (nothing stored) against boots restoring a real 8-tab session with ~2MB of
+  saved screens, and fails if the delta exceeds `PERF_MAX_DELTA_MS` (default
+  400ms). Measured at **+34ms** on the dev machine, and that number is load-bearing:
+  it is only that small because of two deliberate choices the harness exists to
+  protect. The window's saved layout is collected *synchronously* by the preload, so
+  the first tab is built with nothing awaited in front of the first shell. The
+  screens are read *lazily* — nothing touches the file until a pane has mounted and
+  asks for its own, which is after its canvas exists.
+
+  Both were regressions this harness caught. Fetching the layout over an async IPC
+  cost ~25ms (a dynamic `import()` of the backend module, in front of the first tab —
+  the exact thing `windowBoot()` in `src/backends/index.ts` documents as the one
+  startup property worth protecting). Reading the screens during hydration cost
+  ~100ms more, two megabytes crossing IPC on the thread trying to paint.
+
+  It logs what each boot actually saw (`layout=…B tabs=…`) on every run, because
+  its first two versions silently measured a cold boot twice — seeding the layout
+  and killing the app loses Chromium's LocalStorage flush, and closing the app
+  gracefully runs the exit save, which overwrites the seeded layout. The session is
+  now built by the app through the UI, and only the screens file is inflated.
 
 ## Run
 
 ```bash
-npm run test:e2e        # vite build + node test/e2e.mjs
+npm run test:e2e            # vite build + node test/e2e.mjs
+npm run test:e2e:session    # vite build + node test/e2e-session.mjs
+npm run test:perf           # vite build + node test/perf-boot.mjs
 ```
 
 Exit code `0` = all checks passed, `1` = a check failed, `2` = hard timeout,
 `3` = harness error. A summary line reports `N passed, N failed, N skipped` and
-the platform. Screenshots (`shot-drives.png`, `shot-final.png`) are written
-alongside for eyeballing.
+the platform. Screenshots (`shot-drives.png`, `shot-final.png`,
+`shot-restored.png`) are written alongside for eyeballing.
 
 ## Cross-platform
 

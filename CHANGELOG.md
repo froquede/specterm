@@ -1,5 +1,129 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Closing a window no longer stops your shells.** Close one and it *detaches*:
+  the shells keep running, and a tray icon (or *Window → Reattach Detached
+  Session*) brings the window back with every pane on the same live process —
+  nothing restarted, nothing replayed, a build that kept going picks up
+  mid-line. The app stays running with no windows open for exactly as long as
+  something is parked, and relaunching it reattaches too, which is the way back
+  on desktops that give us no tray to put an icon in. **Quit** — from the tray
+  menu or the app menu — is the one thing that ends them, and it says so.
+
+  This is the tmux-server half of the analogy, and it is worth being precise
+  about which half: tmux keeps sessions across days because its shells are
+  children of a daemon that never died, not because anything is restored. Same
+  here, with the same limit — an explicit Quit, a crash or a reboot takes the
+  processes with it, and what survives that is the snapshot below.
+
+  Settings → *Keep shells running when a window closes* turns it off, and then
+  closing a window closes it for good.
+- **Restore brings the screen back, not just the layout.** Each pane's screen and
+  scrollback is serialized when the window closes and replayed on the next
+  launch, under a dim `──── restored ────` rule with the new shell's prompt
+  below it. The rule is there because the shell underneath genuinely is new —
+  the one that printed everything above died with the app — and without a line
+  saying so a restored pane reads as a live session you could Ctrl-C.
+
+  This is what tmux-resurrect does with `@resurrect-capture-pane-contents`, and
+  it composes with the resumable-session support already here: a pane that was
+  running Claude Code comes back showing the transcript *and* with
+  `claude --resume <id>` typed at the prompt under it.
+
+  The screens live in a file the main process owns, not in localStorage. That
+  matters for three reasons localStorage couldn't answer: it is synchronous, on the
+  thread that draws the terminal; its quota is ~5MB for the *whole* origin, shared
+  with settings, themes, favourites and markdown drafts; and it bills UTF-16 code
+  units, so a "2MB" string could cost 4MB of that shared budget. On disk the write
+  is off the renderer's thread, there is no shared quota, and the read can be
+  asynchronous — which is *better* than what it replaced: boot fires the read and
+  carries on, and each pane's replay is gated behind its own live output the way an
+  adopted pane's already was. Measured cost to startup with a real 8-tab session and
+  ~2MB of screens: **+34ms** (`npm run test:perf`).
+
+- **The tab bar is the title bar.** The system title bar comes off and the window
+  controls move into the tab bar, so the panes get the space back. macOS has always
+  worked this way; Windows and Linux now do too. They hide in fullscreen, where
+  there is no window to minimise and the OS has taken the chrome away anyway.
+
+  Two mechanisms, because the platforms don't offer the same one: Windows hides the
+  title bar while keeping the frame, so native snapping and edge-resizing are
+  untouched. Linux has no equivalent, so the frame comes off entirely — and since a
+  frameless window there depends on the compositor for resizing and snapping, and
+  there are setups where that is worse than the decorations it replaced, Settings →
+  *Tab bar replaces the title bar* turns it off. It applies to the next window: a
+  frame can't be added to or taken off one that's already open.
+
+- **Every window comes back, where it was.** Quitting with three windows open used
+  to reopen one: the saved session was a single localStorage key, and every window
+  shares one origin, so exactly one was nominated to write it and the rest were
+  lost. It is now one entry per window, assembled by the main process — which also
+  means each window returns to the size and position it had, and a window that was
+  detached into the background is part of the saved session too (its shells died
+  with the quit, but you hadn't finished with it).
+
+  Nothing is nominated any more. Each window reports its own layout on the debounce
+  it already used, so the ownership handoff — and the two bugs that came with it —
+  is gone rather than fixed.
+
+### Fixed
+- **A resume command is only offered when it would actually work.** A recorded
+  session id is a *remembered* fact, and by the time it is read back the session may
+  be gone — Claude Code prunes old transcripts, a project directory moves, someone
+  clears `~/.claude`. The restored pane offered `claude --resume <id>` anyway, and
+  pressing Enter got you `No conversation found with session ID`. Directory matters
+  too: transcripts are namespaced per directory, so a session that still exists is
+  unresumable from the wrong one. Both are now checked before anything is written,
+  and nothing is written when the answer is no — the pane already has its transcript
+  replayed above the prompt, which is the part worth keeping.
+- **The waiting-pane taskbar flash never fired.** The multi-window work replaced the
+  `mainWindow` singleton with a set of windows and missed one call site, so every
+  attention-badge update threw `mainWindow is not defined` — for the whole of
+  0.16.0. Counts are now kept per window: the flash belongs to the window whose
+  panes are waiting, and the dock badge (of which the OS has exactly one) is their
+  total.
+- **You can always get out.** Closing a window now detaches it, which left Linux
+  and Windows with no keyboard route to *quit*: the menu bar is hidden,
+  `Ctrl+Shift+Q` is already Close Tab, and on a desktop with no tray to put an
+  icon in, closing parked the session and relaunching brought it back — with no
+  way to end it. **Alt+F4** now quits. (Most window managers grab Alt+F4
+  themselves and turn it into a close request, which the app answers by
+  detaching; where that happens the tray's *Quit* is the route. macOS keeps native
+  `⌘Q`.)
+- **Shells could be left running with no way back.** A detaching window releases
+  its PTYs before serializing its screens — the right order, so nothing printed
+  in between is lost. But if the renderer never finished parking (it threw, or ran
+  past the host's timeout), those shells survived the window while no parked
+  session referenced them: alive, unreachable, and with nothing to reap them.
+  They are now tracked until parking claims them, and killed if it never does.
+- **Restored tabs and panes come back with their names.** A restored pane used to
+  be handed the placeholder title, which the tab then adopted about 100ms after
+  launch — so an automatically-titled tab reverted to "Terminal" and a pane
+  renamed by `/rename` lost its name entirely. The name is now part of the
+  snapshot, and the first title the new shell reports (`user@host: ~/dir`,
+  emitted a beat after boot and derived from nothing you did) is swallowed rather
+  than applied. Every title after that is a real event and still goes through.
+- **Quitting could overwrite the saved session with a single blank tab.** Tearing
+  a window down kills its shells while the renderer is still alive to see each
+  one exit; a pane whose process exits closes itself, and closing the last one
+  replaces it with a fresh empty terminal. The second of the two exit-time saves
+  then wrote *that* as the session. The snapshot written on the way out is now
+  final — nothing can write after it — while a minimize still checkpoints
+  normally. Whether this bit you came down to how fast your shells died, which is
+  why restore only "sometimes" worked.
+- **The saved session stopped being written once the first window closed.**
+  Ownership of the snapshot was claimed once per launch and never released, so
+  after the owning window went away nothing wrote it again for the rest of the
+  process's life. It is now handed to a window that is still open, and a window
+  that was handed its tabs (a tear-off, or a reattached session) can own it too —
+  writing the snapshot and restoring from it are separate questions, and
+  conflating them was the bug.
+- **A corrupt snapshot can no longer put an unchecked command at your prompt.**
+  The resumable-session block in a saved snapshot was typed into a shell without
+  ever being validated. Every field is now checked before it is read back.
+
 ## 0.16.0 — 2026-07-29
 
 ### Added

@@ -144,6 +144,8 @@ interface Persisted {
   sidebarWidth: number;
   restoreLastSession: boolean;
   sessionRestoreMode: SessionRestoreMode;
+  backgroundSessions: boolean;
+  customTitleBar: boolean;
   claudeAttentionMode: ClaudeAttentionMode;
   clockEnabled: boolean;
   clockFormat: string;
@@ -159,6 +161,8 @@ const DEFAULTS: Persisted = {
   tabBarAutoHide: false,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   restoreLastSession: true,
+  backgroundSessions: true,
+  customTitleBar: true,
   sessionRestoreMode: SESSION_RESTORE_MODE_DEFAULT,
   claudeAttentionMode: CLAUDE_ATTENTION_MODE_DEFAULT,
   clockEnabled: false,
@@ -212,6 +216,14 @@ function load(): Persisted {
         typeof p.restoreLastSession === "boolean"
           ? p.restoreLastSession
           : DEFAULTS.restoreLastSession,
+      backgroundSessions:
+        typeof p.backgroundSessions === "boolean"
+          ? p.backgroundSessions
+          : DEFAULTS.backgroundSessions,
+      customTitleBar:
+        typeof p.customTitleBar === "boolean"
+          ? p.customTitleBar
+          : DEFAULTS.customTitleBar,
       sessionRestoreMode: SESSION_RESTORE_MODES.includes(p.sessionRestoreMode)
         ? p.sessionRestoreMode
         : DEFAULTS.sessionRestoreMode,
@@ -256,6 +268,12 @@ const [sidebarWidth, setSidebarWidthSignal] = createSignal(initial.sidebarWidth)
 const [restoreLastSession, setRestoreLastSessionSignal] = createSignal(
   initial.restoreLastSession
 );
+const [backgroundSessions, setBackgroundSessionsSignal] = createSignal(
+  initial.backgroundSessions
+);
+const [customTitleBar, setCustomTitleBarSignal] = createSignal(
+  initial.customTitleBar
+);
 const [sessionRestoreMode, setSessionRestoreModeSignal] =
   createSignal<SessionRestoreMode>(initial.sessionRestoreMode);
 const [claudeAttentionMode, setClaudeAttentionModeSignal] =
@@ -273,6 +291,8 @@ export {
   tabBarAutoHide,
   sidebarWidth,
   restoreLastSession,
+  backgroundSessions,
+  customTitleBar,
   sessionRestoreMode,
   claudeAttentionMode,
   clockEnabled,
@@ -322,6 +342,8 @@ function persist() {
         tabBarAutoHide: tabBarAutoHide(),
         sidebarWidth: sidebarWidth(),
         restoreLastSession: restoreLastSession(),
+        backgroundSessions: backgroundSessions(),
+        customTitleBar: customTitleBar(),
         sessionRestoreMode: sessionRestoreMode(),
         claudeAttentionMode: claudeAttentionMode(),
         clockEnabled: clockEnabled(),
@@ -420,6 +442,9 @@ function reloadFromStorage() {
   setTabBarAutoHideSignal(p.tabBarAutoHide);
   setSidebarWidthSignal(p.sidebarWidth);
   setRestoreLastSessionSignal(p.restoreLastSession);
+  setBackgroundSessionsSignal(p.backgroundSessions);
+  setCustomTitleBarSignal(p.customTitleBar);
+  pushBackgroundSessions();
   setSessionRestoreModeSignal(p.sessionRestoreMode);
   setClaudeAttentionModeSignal(p.claudeAttentionMode);
   setClockEnabledSignal(p.clockEnabled);
@@ -436,6 +461,65 @@ function reloadFromStorage() {
 export function setRestoreLastSession(v: boolean) {
   setRestoreLastSessionSignal(v);
   persist();
+  // The host decides how many windows to open at launch, before any renderer is
+  // there to ask, so it has to be told when this changes.
+  pushBackgroundSessions();
+}
+
+// --- Background sessions ---------------------------------------------------
+//
+// Whether closing a window detaches it — its shells keep running with no window
+// attached, and a tray icon is how you get back to them (see the detached-session
+// block in electron/main.cjs). This is the only setting the *host* has to know
+// about rather than read: the decision is made in its window-close handler,
+// before any renderer could be asked anything. So every change is pushed, and so
+// is the current value at startup.
+//
+// Fire-and-forget on purpose: a backend with no such notion (Tauri, a single
+// window that can't outlive itself) no-ops it, and a failure here must never
+// stop a settings write.
+function pushBackgroundSessions() {
+  void getBackend()
+    .then((backend) => {
+      backend.setBackgroundSessions(backgroundSessions());
+      // The host also needs both of these *before any window exists* — how many
+      // windows to reopen at launch, and whether closing one detaches it — so it
+      // keeps its own mirror of them, refreshed from here.
+      backend.pushSessionPrefs({
+        restoreLastSession: restoreLastSession(),
+        backgroundSessions: backgroundSessions(),
+        customTitleBar: customTitleBar(),
+      });
+    })
+    .catch(() => {
+      /* Host doesn't do detaching — closing a window just closes it. */
+    });
+}
+
+// --- Custom title bar ------------------------------------------------------
+//
+// Whether the tab bar stands in for the window's title bar, with the window
+// controls drawn in it. macOS has always worked this way and ignores this; on
+// Windows the title bar is hidden while the frame stays, so native snapping and
+// edge-resizing are untouched; on Linux there is no equivalent, so the frame comes
+// off entirely.
+//
+// That last case is why this is a setting rather than simply how the app looks.
+// A frameless window on Linux depends on the compositor for resizing and snapping,
+// and there are setups where that is worse than the decorations it replaced — so
+// there has to be a way back to them. Read by the host at window-creation time
+// (a frame can't be added to or taken off a live window), so a change applies to
+// the next window rather than the current one.
+export function setCustomTitleBar(v: boolean) {
+  setCustomTitleBarSignal(v);
+  persist();
+  pushBackgroundSessions();
+}
+
+export function setBackgroundSessions(v: boolean) {
+  setBackgroundSessionsSignal(v);
+  persist();
+  pushBackgroundSessions();
 }
 
 // --- Clock -----------------------------------------------------------------
@@ -477,4 +561,7 @@ export function initSettings() {
   registerStoreSync("settings", reloadFromStorage);
   applyCssVars();
   applyWindowOpacity();
+  // The host defaults to detaching; tell it the persisted answer before the first
+  // window can be closed.
+  pushBackgroundSessions();
 }

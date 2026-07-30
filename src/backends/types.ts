@@ -106,18 +106,40 @@ export interface TransferTab {
 // (async) takeWindowInit fetches it — a round trip nobody can perceive, since
 // that window exists only because a drag just ended.
 export interface WindowBoot {
-  hasTab: boolean;
+  // Tabs are waiting in takeWindowInit() — handed over with their PTYs still
+  // running, from a tear-off or a background session being reattached. Fetched
+  // asynchronously: they can carry megabytes of serialized screen, and that window
+  // exists only because a drag just ended.
+  hasTabs: boolean;
+  // Whether a saved layout was collected for this window. `restore` below is it.
+  hasRestore: boolean;
+  // This window's saved layout, already here — collected synchronously by the
+  // preload before the renderer's first line ran, because the first tab is built
+  // from it and nothing may sit in front of the first shell.
+  restore: RestoreWindow | null;
   // Whether this window owns the single launch-time update check.
   autoCheckUpdates: boolean;
-  // Whether this window owns the saved session: it restores it on open, and is
-  // the only one that writes it back. Every other window opens a plain terminal.
-  ownsSession: boolean;
+  // This one window may look for a session left in localStorage by the version
+  // that kept it there, so an upgrade doesn't cost the user their tabs. Only ever
+  // true for the single window opened at launch when the host had nothing of its
+  // own to restore — two windows both migrating the same blob would duplicate it.
+  migrateLegacy: boolean;
+}
+
+// A window's tabs as the host saved them: no live processes behind them, unlike a
+// TransferTab. The renderer validates and hydrates this into fresh shells.
+export interface RestoreWindow {
+  tabs: unknown[];
+  activeTabIndex: number;
 }
 
 // State a window collects once, on mount — the half that needs a round trip.
 export interface WindowInit {
-  // A tab torn off another window that this one was created to host.
-  tab: TransferTab | null;
+  // The tabs this window was created to host: one, for a tab torn off another
+  // window, or all of them for a background session being reattached. Empty when
+  // there is nothing waiting (which the boot flags already said, so this is only
+  // ever read by a window that expects something).
+  tabs: TransferTab[];
 }
 
 export interface Backend {
@@ -193,6 +215,25 @@ export interface Backend {
   // Whole-window alpha (0–1); values below 1 let the desktop show through.
   // A no-op on backends/platforms that can't honor it.
   setWindowOpacity(value: number): Promise<void>;
+
+  // --- Window controls ------------------------------------------------------
+  //
+  // The tab bar acts as the title bar, so on platforms where that means the window
+  // has no frame of its own, it also draws the minimise/maximise/close buttons —
+  // and they need somewhere to go. `drawsOwnWindowControls` is what decides whether
+  // to draw them: it is a question about *this window*, not about the setting, since
+  // macOS keeps its native traffic lights and a window created before the setting
+  // changed still has whatever frame it was born with.
+  drawsOwnWindowControls(): Promise<boolean>;
+  minimizeWindow(): Promise<void>;
+  /** Toggles, and resolves to whether the window ended up maximized. */
+  toggleMaximizeWindow(): Promise<boolean>;
+  /** The same gesture as the X on a native frame — so it detaches like any close. */
+  closeWindow(): Promise<void>;
+  isMaximized(): Promise<boolean>;
+  // Fires when the window is maximized or restored, including from outside the app
+  // (a WM keybinding, snapping).
+  onMaximizedChange(cb: (maximized: boolean) => void): Promise<UnlistenFn>;
   // How many panes are waiting on the user (see stores/attention). Surfaced on
   // whatever the OS gives us to say so from outside the window — a dock badge,
   // a flashing taskbar entry — because a pane can be waiting while the whole
@@ -209,12 +250,68 @@ export interface Backend {
   takeWindowInit(): Promise<WindowInit>;
   // Open another window on the same app.
   newWindow(): Promise<void>;
+  // End the whole app, detached sessions and all. Distinct from closing a window,
+  // which with background sessions on parks it instead (see below).
+  quitApp(): Promise<void>;
   // Land a torn-off tab wherever the cursor released it: into another Specterm
   // window if one is under it, otherwise into a new window of its own. The host
   // decides, since only it can see the real cursor and every window's bounds.
   dropTransfer(tab: TransferTab): Promise<void>;
   // A tab another window tore off and dropped onto this one.
   onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn>;
+
+  // --- Detaching (closing a window without stopping its shells) -------------
+  //
+  // The host holds a closing window open until the renderer has serialized its
+  // tabs and handed the PTYs over, then parks the payload until a window
+  // reattaches it. Backends with no such notion never fire onDetachRequest, and
+  // their windows close the way they always did.
+
+  // Give up ownership of these PTYs with no reclaim deadline — they are waiting
+  // for the user, not for a window that is already booting. (releasePty is the
+  // tear-off version, and is reaped if nothing claims it.)
+  detachPtys(ids: number[]): Promise<void>;
+  // The host is closing this window and is waiting on us. Must always be
+  // answered with parkSession, even with nothing to park.
+  onDetachRequest(cb: () => void): Promise<UnlistenFn>;
+  // Hand this window's tabs to the host to hold while it's closed, and let the
+  // close complete. An empty list just completes the close.
+  parkSession(tabs: TransferTab[]): Promise<void>;
+  // Whether closing a window should detach it at all. The setting lives in the
+  // renderer; the host has to decide in its close handler, so it's pushed.
+  setBackgroundSessions(enabled: boolean): void;
+
+  // --- The saved session ----------------------------------------------------
+  //
+  // The host assembles one entry per window and writes the lot on quit, which is
+  // what makes quitting with three windows open bring three back. Each renderer
+  // only ever reports its own.
+
+  // This window's tabs, pushed on the renderer's existing save debounce.
+  pushLayout(layout: { tabs: unknown[]; activeTabIndex: number } | null): void;
+  // The two session settings the host needs before any window exists.
+  pushSessionPrefs(prefs: {
+    restoreLastSession: boolean;
+    backgroundSessions: boolean;
+    customTitleBar: boolean;
+  }): void;
+  // Bring a parked session back into a window. False when nothing was parked.
+  reattachSession(): Promise<boolean>;
+
+  // --- Saved screens --------------------------------------------------------
+  //
+  // A restored session's scrollback, held by the host rather than in the
+  // renderer's localStorage (see lib/session-screens.ts for the three reasons).
+  // Backends with nowhere to put it no-op the write and return nothing to read,
+  // and a session then restores its layout without its screens.
+
+  // Fire-and-forget: the one caller runs as the window is being torn down, where
+  // an awaited round trip has no guarantee of finishing. `null` clears them.
+  writeScreens(screens: Record<string, string> | null): Promise<void>;
+  readScreens(): Promise<Record<string, string>>;
+  // How many sessions are currently parked, so the UI can offer the reattach only
+  // when there is one.
+  detachedSessionCount(): Promise<number>;
 
   // Cross-window sync for state each window keeps its own copy of (settings,
   // theme, favorites): the writer persists, then tells everyone else to re-read.
