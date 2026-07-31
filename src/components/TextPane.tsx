@@ -6,6 +6,7 @@ import {
   looksBinary,
   VIEW_BYTE_CAP,
 } from "../lib/textview";
+import { IconChevronUp, IconChevronDown, IconX } from "../lib/icons";
 
 interface TextPaneProps {
   filePath: string;
@@ -242,9 +243,15 @@ export default function TextPane(props: TextPaneProps) {
                 ? "No results"
                 : ""}
           </span>
-          <button class="text-search-btn" onClick={() => navigateMatch(-1)}>▲</button>
-          <button class="text-search-btn" onClick={() => navigateMatch(1)}>▼</button>
-          <button class="text-search-btn" onClick={closeSearch}>×</button>
+          <button class="text-search-btn" title="Previous match" onClick={() => navigateMatch(-1)}>
+            <IconChevronUp size={13} stroke-width={2} />
+          </button>
+          <button class="text-search-btn" title="Next match" onClick={() => navigateMatch(1)}>
+            <IconChevronDown size={13} stroke-width={2} />
+          </button>
+          <button class="text-search-btn" title="Close (Esc)" onClick={closeSearch}>
+            <IconX size={13} stroke-width={2} />
+          </button>
         </div>
       </Show>
       <Show when={truncated()}>

@@ -18,6 +18,7 @@ import {
   isRootEdgeDrop,
 } from "../stores/pane-drag";
 import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
+import { IconGrip, IconX, ICON_STROKE } from "../lib/icons";
 
 interface PaneProps {
   id: PaneId;
@@ -164,7 +165,9 @@ export default function Pane(props: PaneProps) {
         title="Drag to move / swap pane"
         onPointerDown={onBarPointerDown}
       >
-        <span class="pane-grip">⠿</span>
+        <span class="pane-grip">
+          <IconGrip size={13} stroke-width={ICON_STROKE} />
+        </span>
         {/* Which pane in a split is the one waiting. The tab chip only says
             that something in the tab is; this says where. */}
         <Show when={paneAttention(paneId)} keyed>
@@ -191,8 +194,9 @@ export default function Pane(props: PaneProps) {
             props.onClose?.();
           }}
           title="Close pane"
+          aria-label="Close pane"
         >
-          ×
+          <IconX size={12} stroke-width={2} />
         </button>
       </div>
       <div class="pane-content">

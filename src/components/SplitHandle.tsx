@@ -1,3 +1,5 @@
+import { IconSplitToggle } from "../lib/icons";
+
 export interface ResizeEntry {
   splitId: string;
   ratio: number;
@@ -133,7 +135,7 @@ export default function SplitHandle(props: SplitHandleProps) {
           props.onToggleDirection?.();
         }}
       >
-        ⇄
+        <IconSplitToggle size={12} stroke-width={2} />
       </button>
     </div>
   );

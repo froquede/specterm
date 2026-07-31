@@ -70,6 +70,9 @@
 
 /* "Open the active terminal here" (cd) button in the header */
 .file-tree-cd-here {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -85,6 +88,9 @@
 }
 
 .file-tree-refresh {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -151,6 +157,9 @@
 
 /* Favorite-current-folder toggle in the header */
 .file-tree-fav-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--fg-muted);
@@ -218,6 +227,9 @@
 }
 
 .file-tree-fav-remove {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   border: none;
   background: none;
@@ -250,6 +262,9 @@
 }
 
 .file-tree-entry-fav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   border: none;
   background: none;
@@ -299,11 +314,14 @@
   color: var(--ansi-green);
 }
 
+/* Holds the row's type icon. A fixed box so every name starts on the same
+   column whatever the icon inside it is. */
 .file-tree-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  width: 12px;
-  text-align: center;
-  font-size: 10px;
+  width: 14px;
 }
 
 /* Directories — navigable */
@@ -351,6 +369,9 @@
 /* "Go up" affordance shown under a permission/read error so the user isn't
    stranded in an unreadable folder. */
 .file-tree-error-up {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 8px;
   color: var(--accent);
   cursor: pointer;

@@ -97,6 +97,9 @@
 }
 
 .text-search-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
   border: none;
   background: none;
   color: var(--fg-muted);

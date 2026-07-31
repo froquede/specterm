@@ -9,6 +9,18 @@ import {
   onCleanup,
 } from "solid-js";
 import { Portal } from "solid-js/web";
+import {
+  IconX,
+  IconStar,
+  IconRefresh,
+  IconLevelUp,
+  IconFolder,
+  IconFile,
+  IconMarkdown,
+  IconArrowLeft,
+  IconCdHere,
+  ICON_STROKE,
+} from "../lib/icons";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
 import { isAccelClick, os } from "../lib/platform";
@@ -433,7 +445,7 @@ export default function FileTree(props: FileTreeProps) {
                       toggleFavorite(fav.path);
                     }}
                   >
-                    ✕
+                    <IconX size={11} stroke-width={2.25} />
                   </button>
                 </div>
               )}
@@ -488,8 +500,9 @@ export default function FileTree(props: FileTreeProps) {
               class="file-tree-cd-here"
               title="Open the active terminal here (cd)"
               onClick={() => props.onCdPath(currentPath())}
+              aria-label="Open the active terminal here"
             >
-              ⌁
+              <IconCdHere size={14} stroke-width={ICON_STROKE} />
             </button>
             <button
               class="file-tree-fav-toggle"
@@ -501,20 +514,31 @@ export default function FileTree(props: FileTreeProps) {
               }
               onClick={() => toggleFavorite(currentPath())}
             >
-              {isFav(currentPath()) ? "★" : "☆"}
+              {/* One glyph, filled or not — the pair of ★/☆ codepoints came
+                  from different fonts often enough to change size when you
+                  clicked it. */}
+              <IconStar
+                size={14}
+                stroke-width={ICON_STROKE}
+                fill={isFav(currentPath()) ? "currentColor" : "none"}
+              />
             </button>
           </Show>
           <button
             class="file-tree-refresh"
             onClick={() => (drivesView() ? refetchDrives() : refetch())}
+            title="Refresh"
+            aria-label="Refresh"
           >
-            ↻
+            <IconRefresh size={13} stroke-width={ICON_STROKE} />
           </button>
         </div>
         <div class="file-tree-content" ref={listEl}>
           <Show when={!drivesView() && currentPath() && !filter()}>
             <div class="file-tree-entry file-tree-dir" onClick={navigateUp}>
-              <span class="file-tree-icon">▴</span>
+              <span class="file-tree-icon">
+                <IconLevelUp size={13} stroke-width={ICON_STROKE} />
+              </span>
               ..
             </div>
           </Show>
@@ -546,7 +570,13 @@ export default function FileTree(props: FileTreeProps) {
                         title={entry.path}
                       >
                         <span class="file-tree-icon">
-                          {entry.isDirectory ? "▸" : isMd ? "◆" : "·"}
+                          {entry.isDirectory ? (
+                            <IconFolder size={13} stroke-width={ICON_STROKE} />
+                          ) : isMd ? (
+                            <IconMarkdown size={13} stroke-width={ICON_STROKE} />
+                          ) : (
+                            <IconFile size={13} stroke-width={ICON_STROKE} />
+                          )}
                         </span>
                         <span class="file-tree-name">{entry.name}</span>
                         <Show when={entry.isDirectory}>
@@ -563,7 +593,11 @@ export default function FileTree(props: FileTreeProps) {
                               toggleFavorite(entry.path);
                             }}
                           >
-                            {isFav(entry.path) ? "★" : "☆"}
+                            <IconStar
+                              size={12}
+                              stroke-width={ICON_STROKE}
+                              fill={isFav(entry.path) ? "currentColor" : "none"}
+                            />
                           </button>
                         </Show>
                       </div>
@@ -585,7 +619,7 @@ export default function FileTree(props: FileTreeProps) {
             <div class="file-tree-empty">
               Can’t read this folder — you may not have permission.
               <div class="file-tree-error-up" onClick={navigateUp}>
-                ← Go up
+                <IconArrowLeft size={12} stroke-width={ICON_STROKE} /> Go up
               </div>
             </div>
           </Show>

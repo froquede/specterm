@@ -10,6 +10,7 @@ import type { EditorView } from "@codemirror/view";
 import { getBackend } from "../backends";
 import { renderMarkdown, renderMermaidBlocks } from "../lib/markdown";
 import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
+import { IconChevronUp, IconChevronDown, IconX } from "../lib/icons";
 
 interface MarkdownPaneProps {
   filePath: string;
@@ -486,14 +487,22 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
                 ? "No results"
                 : ""}
           </span>
-          <button class="markdown-search-btn" onClick={() => navigateMatch(-1)}>
-            ▲
+          <button
+            class="markdown-search-btn"
+            title="Previous match"
+            onClick={() => navigateMatch(-1)}
+          >
+            <IconChevronUp size={13} stroke-width={2} />
           </button>
-          <button class="markdown-search-btn" onClick={() => navigateMatch(1)}>
-            ▼
+          <button
+            class="markdown-search-btn"
+            title="Next match"
+            onClick={() => navigateMatch(1)}
+          >
+            <IconChevronDown size={13} stroke-width={2} />
           </button>
-          <button class="markdown-search-btn" onClick={closeSearch}>
-            ×
+          <button class="markdown-search-btn" title="Close (Esc)" onClick={closeSearch}>
+            <IconX size={13} stroke-width={2} />
           </button>
         </div>
       )}

@@ -2,6 +2,7 @@ import { createSignal, onMount, onCleanup } from "solid-js";
 import type { ISearchOptions } from "@xterm/addon-search";
 import { getTerminalInstance } from "../lib/terminal-registry";
 import { closeSearch } from "../stores/terminal-search";
+import { IconChevronUp, IconChevronDown, IconX } from "../lib/icons";
 
 // Match highlight colors (Tokyo Night): all matches in blue, the active one in
 // orange so it stands out as you step through results.
@@ -107,7 +108,7 @@ export default function TerminalSearch(props: TerminalSearchProps) {
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => find(-1)}
       >
-        ↑
+        <IconChevronUp size={13} stroke-width={2} />
       </button>
       <button
         class="term-search-btn"
@@ -115,7 +116,7 @@ export default function TerminalSearch(props: TerminalSearchProps) {
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => find(1)}
       >
-        ↓
+        <IconChevronDown size={13} stroke-width={2} />
       </button>
       <button
         class={`term-search-btn ${caseSensitive() ? "term-search-btn-active" : ""}`}
@@ -134,7 +135,7 @@ export default function TerminalSearch(props: TerminalSearchProps) {
         onMouseDown={(e) => e.preventDefault()}
         onClick={close}
       >
-        ×
+        <IconX size={13} stroke-width={2} />
       </button>
     </div>
   );
