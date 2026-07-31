@@ -45,6 +45,7 @@ export function windowBoot(): WindowBoot {
       hasRestore: false,
       restore: null,
       autoCheckUpdates: true,
+      ownControls: false,
       migrateLegacy: false,
     }
   );

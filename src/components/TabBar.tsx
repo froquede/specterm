@@ -1,8 +1,24 @@
-import { createSignal, For, Show, onMount, onCleanup } from "solid-js";
-import { getBackend, type UnlistenFn } from "../backends";
+import { For, Show } from "solid-js";
 import { shortcutLabel } from "../lib/platform";
-import { clockEnabled, tabBarSide } from "../stores/settings";
+import { clockEnabled, tabBarSide, tabBarEdge } from "../stores/settings";
+import {
+  ownControls,
+  isFullscreen,
+  toggleFullscreen,
+} from "../stores/window-chrome";
+import {
+  IconSidebarOpen,
+  IconSidebarClose,
+  IconPlus,
+  IconFullscreen,
+  IconFullscreenExit,
+  IconSettings,
+  IconX,
+  ICON_SIZE,
+  ICON_STROKE,
+} from "../lib/icons";
 import Clock from "./Clock";
+import WindowControls from "./WindowControls";
 import {
   draggingTabId,
   setDraggingTabId,
@@ -61,12 +77,6 @@ const ATTENTION_TITLE: Record<AttentionKind, string> = {
   bell: "Rang the terminal bell",
 };
 
-// Gear glyph as a single evenodd path (Material "settings"): the center circle
-// is a cut-out, so it reads as an outline when stroked (fill none) and as a
-// solid gear when filled — which is how we show the settings sidebar's state.
-const GEAR_PATH =
-  "M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z";
-
 // The inline tab-rename editor. A fresh instance mounts each time a tab
 // enters rename mode (its parent <Show> disposes/recreates it), so `settled`
 // — guarding against a Escape/Enter *and* the blur it triggers both firing a
@@ -111,13 +121,6 @@ function TabTitleInput(props: {
 }
 
 export default function TabBar(props: TabBarProps) {
-  const [isFullscreen, setIsFullscreen] = createSignal(false);
-  // Whether this window has no frame of its own and must draw its own controls.
-  // Asked of the host rather than derived from the platform: macOS keeps its native
-  // traffic lights, and a window created before the setting changed still has
-  // whatever frame it was born with.
-  const [ownControls, setOwnControls] = createSignal(false);
-  const [isMaximized, setIsMaximized] = createSignal(false);
   // Set right before a completed drag's reorder call, so the click event that
   // follows pointerup doesn't also re-select a tab out from under the drag.
   let suppressClick = false;
@@ -213,33 +216,6 @@ export default function TabBar(props: TabBarProps) {
     window.addEventListener("pointercancel", onCancel);
   }
 
-  async function toggleFullscreen() {
-    const backend = await getBackend();
-    const next = !(await backend.isFullscreen());
-    await backend.setFullscreen(next);
-    setIsFullscreen(next);
-  }
-
-  onMount(async () => {
-    const backend = await getBackend();
-    setIsFullscreen(await backend.isFullscreen());
-    setOwnControls(await backend.drawsOwnWindowControls());
-    setIsMaximized(await backend.isMaximized());
-    let unlisten: UnlistenFn | undefined;
-    let unlistenMax: UnlistenFn | undefined;
-    try {
-      unlisten = await backend.onFullscreenChange(setIsFullscreen);
-      unlistenMax = await backend.onMaximizedChange(setIsMaximized);
-    } catch (_) {
-      // Backend without those signals — the icons still flip on our own toggles,
-      // just not on OS-driven changes.
-    }
-    onCleanup(() => {
-      unlisten?.();
-      unlistenMax?.();
-    });
-  });
-
   const sidebarKey = () => shortcutLabel("B");
   const settingsKey = () => shortcutLabel(",");
 
@@ -249,41 +225,44 @@ export default function TabBar(props: TabBarProps) {
   return (
     <div class="tab-bar" data-side={tabBarSide()}>
       <div class="tab-actions">
+        {/* The sidebar toggle shows what the click will do, not what is: the
+            panel-with-an-arrow pair reads as "open this" / "close this", where
+            the old ◧/▯ pair only said which state you were in. */}
         <button
-          class="tab-sidebar-toggle"
+          class="tab-icon-btn"
           onClick={props.onToggleSidebar}
+          aria-pressed={props.sidebarOpen}
           title={`${props.sidebarOpen ? "Hide" : "Show"} sidebar (${sidebarKey()})`}
         >
-          {props.sidebarOpen ? "◧" : "▯"}
+          <Show
+            when={props.sidebarOpen}
+            fallback={<IconSidebarOpen size={ICON_SIZE} stroke-width={ICON_STROKE} />}
+          >
+            <IconSidebarClose size={ICON_SIZE} stroke-width={ICON_STROKE} />
+          </Show>
         </button>
-        <button class="tab-new" onClick={props.onCreate} title="New tab">
-          +
-        </button>
+        {/* Arrows out of the corners going in or out — the direction of the
+            change, which is what the ⊞/⊡ boxes never managed to say. */}
         <button
-          class="tab-fullscreen"
-          onClick={toggleFullscreen}
+          class="tab-icon-btn"
+          onClick={() => void toggleFullscreen()}
           title={isFullscreen() ? "Exit fullscreen" : "Fullscreen"}
         >
-          {isFullscreen() ? "⊡" : "⊞"}
+          <Show
+            when={isFullscreen()}
+            fallback={<IconFullscreen size={ICON_SIZE} stroke-width={ICON_STROKE} />}
+          >
+            <IconFullscreenExit size={ICON_SIZE} stroke-width={ICON_STROKE} />
+          </Show>
         </button>
         <button
-          class="tab-settings"
+          class="tab-icon-btn tab-settings"
           classList={{ active: props.settingsOpen }}
           onClick={props.onOpenSettings}
           aria-pressed={props.settingsOpen}
           title={`${props.settingsOpen ? "Hide" : "Open"} settings (${settingsKey()})`}
         >
-          <svg
-            width="15"
-            height="15"
-            viewBox="0 0 24 24"
-            fill={props.settingsOpen ? "currentColor" : "none"}
-            stroke="currentColor"
-            stroke-width={props.settingsOpen ? 0 : 1.4}
-            stroke-linejoin="round"
-          >
-            <path d={GEAR_PATH} fill-rule="evenodd" />
-          </svg>
+          <IconSettings size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
       </div>
       <div class="tab-list">
@@ -351,12 +330,14 @@ export default function TabBar(props: TabBarProps) {
               </Show>
               <button
                 class="tab-close"
+                title="Close tab"
+                aria-label="Close tab"
                 onClick={(e) => {
                   e.stopPropagation();
                   props.onClose(tab.id);
                 }}
               >
-                ×
+                <IconX size={12} stroke-width={2} />
               </button>
               <Show
                 when={
@@ -374,83 +355,35 @@ export default function TabBar(props: TabBarProps) {
           )}
         </For>
       </div>
+      {/* Immediately after the last tab, on whichever side the tabs grow —
+          which is the only place it can be if it is going to mean "one more
+          of these". Parked in the icon cluster it was just another button in a
+          row of unrelated ones, and on the right-hand layout it sat past the
+          window controls, at the opposite end of the bar from the tabs it
+          adds to. It sits outside .tab-list on purpose: inside, it would
+          scroll away with the tabs the moment they overflow. */}
+      <button
+        class="tab-icon-btn tab-new"
+        onClick={props.onCreate}
+        title="New tab"
+        aria-label="New tab"
+      >
+        <IconPlus size={ICON_SIZE} stroke-width={ICON_STROKE} />
+      </button>
       {/* Flexible draggable strip: fills the empty space so the window can be
           moved by dragging the tab bar (the tabs/buttons stay no-drag). */}
       <div class="tab-drag-region" />
-      {/* Window controls, for the platforms where the tab bar *is* the title bar and
-          there is no frame left to click. Hidden in fullscreen: there is no window
-          to minimise or restore up there, and the OS has taken the chrome away
-          anyway — the ⊞ icon above is how you come back. macOS never shows these;
-          it keeps its own traffic lights, which the tab bar leaves room for. */}
-      <Show when={ownControls() && !isFullscreen()}>
-        <div class="tab-window-controls">
-          <button
-            class="tab-window-btn"
-            onClick={() => void getBackend().then((b) => b.minimizeWindow())}
-            title="Minimise"
-            aria-label="Minimise"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-              <rect x="0" y="4.5" width="10" height="1" fill="currentColor" />
-            </svg>
-          </button>
-          <button
-            class="tab-window-btn"
-            onClick={() =>
-              void getBackend()
-                .then((b) => b.toggleMaximizeWindow())
-                .then(setIsMaximized)
-            }
-            title={isMaximized() ? "Restore" : "Maximise"}
-            aria-label={isMaximized() ? "Restore" : "Maximise"}
-          >
-            <Show
-              when={isMaximized()}
-              fallback={
-                <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                  <rect
-                    x="0.5"
-                    y="0.5"
-                    width="9"
-                    height="9"
-                    fill="none"
-                    stroke="currentColor"
-                  />
-                </svg>
-              }
-            >
-              {/* Two offset outlines: the conventional "restore down" glyph. */}
-              <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-                <rect
-                  x="2.5"
-                  y="0.5"
-                  width="7"
-                  height="7"
-                  fill="none"
-                  stroke="currentColor"
-                />
-                <rect
-                  x="0.5"
-                  y="2.5"
-                  width="7"
-                  height="7"
-                  fill="var(--bg-chrome)"
-                  stroke="currentColor"
-                />
-              </svg>
-            </Show>
-          </button>
-          <button
-            class="tab-window-btn tab-window-close"
-            onClick={() => void getBackend().then((b) => b.closeWindow())}
-            title="Close window"
-            aria-label="Close window"
-          >
-            <svg width="10" height="10" viewBox="0 0 10 10" aria-hidden="true">
-              <path d="M0 0 L10 10 M10 0 L0 10" stroke="currentColor" fill="none" />
-            </svg>
-          </button>
-        </div>
+      {/* Window controls, for the platforms where the tab bar *is* the title bar
+          and there is no frame left to click — so only while it is actually up
+          at the top. Moved to the bottom edge it stops being the title bar, and
+          they stay behind in a strip of their own (see TitleStrip); dragging the
+          close button down to the bottom-left corner of the screen was never the
+          point of moving the tabs there. Hidden in fullscreen too: there is no
+          window to minimise or restore up there, and the OS has taken the chrome
+          away anyway. macOS never shows these; it keeps its own traffic lights,
+          which the tab bar leaves room for. */}
+      <Show when={ownControls() && !isFullscreen() && tabBarEdge() === "top"}>
+        <WindowControls />
       </Show>
       {/* Optional clock, at the far end from the tabs. Mounted only when it's
           switched on, so when it's off there is no timer running at all. */}

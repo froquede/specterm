@@ -26,6 +26,7 @@ function readBootFlags() {
         hasTabs: flags.hasTabs === true,
         hasRestore: flags.hasRestore === true,
         autoCheckUpdates: flags.autoCheckUpdates === true,
+        ownControls: flags.ownControls === true,
         migrateLegacy: flags.migrateLegacy === true,
       };
     }
@@ -34,6 +35,7 @@ function readBootFlags() {
     hasTabs: false,
     hasRestore: false,
     autoCheckUpdates: true,
+    ownControls: false,
     migrateLegacy: false,
   };
 }

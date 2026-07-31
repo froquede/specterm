@@ -119,6 +119,13 @@ export interface WindowBoot {
   restore: RestoreWindow | null;
   // Whether this window owns the single launch-time update check.
   autoCheckUpdates: boolean;
+  // This window has no frame of its own, so the app draws the minimise/maximise/
+  // close buttons. Here rather than behind `drawsOwnWindowControls()` because it
+  // decides whether a strip of chrome exists at all: awaiting it would lay the
+  // window out once without that strip and again a round trip later. The async
+  // call stays as the authority (a window can outlive a change to the setting),
+  // it just no longer gates the first paint.
+  ownControls: boolean;
   // This one window may look for a session left in localStorage by the version
   // that kept it there, so an upgrade doesn't cost the user their tabs. Only ever
   // true for the single window opened at launch when the host had nothing of its
