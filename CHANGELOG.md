@@ -1,5 +1,109 @@
 # Changelog
 
+## 0.17.1 — 2026-07-31
+
+### Fixed
+- **Double-clicking a word in Claude Code selects it.** It selected nothing.
+  A press in a pane whose program has grabbed the mouse is held back until the
+  gesture says what it is — release without moving and it's a click, forwarded
+  to the program; move and it's a selection, kept local. A double-click never
+  moves, so both presses went out as clicks and xterm, whose own selection is
+  switched off while the program owns the mouse, had nothing to act on. A second
+  or third press in place is now forced through as a selection immediately:
+  there is no ambiguity to wait on, since nobody double-clicks a TUI to click it
+  twice. Word on two, line on three, exactly as in a pane nothing has taken over.
+
+- **A selection you just made survives you moving the mouse.** It used to
+  disappear about a second later — however long it took you to twitch the
+  pointer on the way to ⌘C. xterm reports pointer motion to a program that asked
+  for it, treats a report as user input, and clears the selection on user input;
+  in a pane running anything with hover states that chain fires on every stray
+  move. So while a selection is up and no button is down, bare motion is now
+  held back. Typing still clears the selection, as it should, and any click
+  hands the program its motion reporting straight back — the trade is that a
+  program can't hover-highlight while you're holding a selection, which is the
+  right way round.
+
+- **The window controls stay at the top when the tab bar is at the bottom.**
+  Moving the tabs to the bottom edge took minimise, maximise and close down
+  there with them — and on macOS didn't move the traffic lights at all, leaving
+  them drawn over the top-left of the terminal. The top edge now keeps a slim
+  strip of its own in those layouts, carrying the window controls (or, on macOS,
+  the room the traffic lights need) and a drag region, which a frameless window
+  would otherwise have lost entirely.
+
+### Changed
+- **The new-tab button sits next to the last tab.** It was parked in the icon
+  cluster with the sidebar, fullscreen and settings buttons — and in the
+  right-hand layouts that put it past the window controls, at the opposite end
+  of the bar from the tabs it adds to. It now follows the tabs in every layout.
+
+- **The chrome uses a real icon set.** Every glyph in it was either a literal
+  character — ◧ ▯ ⊞ ⊡ ⠿ ★ ↻ ▸ ⌁ — or a hand-copied SVG path. Both have the same
+  problem: they were drawn by whatever font happened to own that codepoint, at
+  whatever weight and optical size that font chose, so no two of them matched
+  and several rendered as tofu on systems whose monospace font lacks the block.
+  They are now [Lucide](https://lucide.dev): one grid, one stroke weight, one
+  join style. Two of them also say something they didn't before — the sidebar
+  toggle shows what the click will *do* rather than which state you're in, and
+  fullscreen shows the direction of the change rather than two nested boxes.
+
+  It costs the app nothing to ship. Icons are imported one at a time
+  (`lucide-solid/icons/<name>`, never the barrel over ~1,600 of them), Vite
+  inlines the handful used, and the package is a *dev* dependency — a runtime
+  one would have put 77 MB of unused icon sources inside every build, since
+  electron-builder packs `node_modules`. The icons also now size off the tab
+  bar's height instead of being pinned, so they stay proportional across its
+  24–52px range.
+
+- **The settings sidebar has categories.** It was one undivided column of every
+  setting there is, each a label with a paragraph under it and nothing marking
+  where one ended and the next began. They are now grouped — Appearance, Layout,
+  Terminal, Sessions, Updates — under sticky headings that fold, with the
+  spacing and hierarchy that were missing. "Tab bar replaces the title bar" also
+  moved out of Sessions, where it had no business being, into Layout.
+
+- **One sidebar width, and it remembers where you left it.** The file tree and
+  the settings panel share one slot, but the panel quietly held a 340px floor of
+  its own — so at any narrower width, switching between them shoved the panes
+  sideways and back. The floor is gone: both take the same width, set by
+  dragging the edge between the sidebar and the panes, and switching views moves
+  nothing.
+
+  The *Sidebar width* slider in Settings goes with it. It was a second control
+  for something the edge already does, sitting in the very panel whose width it
+  was arguing with. And the sidebar now comes back the way you left it — open or
+  closed, on the tree or on settings — instead of always opening the tree. That
+  last piece is stored on its own rather than as a setting, because settings are
+  mirrored into every open window: opening this panel in one window has no
+  business closing the file tree in another.
+
+- **Settings loads only when you open it.** The panel was already mounted lazily
+  but *bundled* eagerly: a thousand lines of controls, the font prober, the
+  updater UI and the Claude-hooks installer sat in the boot chunk of a launch
+  that never opened them. It is now a chunk of its own.
+
+- **The e2e suites wait on the app, not on the clock.** They were paced with
+  fixed sleeps — two seconds after opening a tab, two after a split, two and a
+  half before reading a directory — each one sized for the slowest machine it
+  might ever run on and then paid by every machine on every run. `e2e.mjs` spent
+  about three and a half minutes of a four-minute run waiting for things that
+  had already happened. The waits now name what they are waiting for (the pane
+  count to rise and every terminal to have painted, the window to be gone, the
+  probe's file to have two lines in it) and return the moment it holds, keeping
+  the old duration as a deadline. A wait that never comes true now fails there,
+  saying which one, instead of sailing on to fail somewhere else as a mystery.
+
+  `npm run test:e2e:all` runs all three suites at once; they were always
+  independent — separate Electron instances on separate profiles, which is what
+  the single-instance lock keys on — so the cost is the longest suite rather
+  than the sum. The two new selection behaviours above are covered against the
+  program's own stdin, like the rest of that section.
+
+  The waits that are still fixed are the ones measuring time rather than passing
+  it: that a seconds-granularity clock ticks, that a minute-granularity one
+  doesn't, that a debounced toast withholds itself and then appears.
+
 ## 0.17.0 — 2026-07-29
 
 ### Added
