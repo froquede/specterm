@@ -268,12 +268,20 @@ function windowBootArg(opts) {
   //              even a microtask in front of the first tab means the app no longer
   //              opens straight into a shell). The preload pulls it over a sync
   //              channel and hands it to the renderer as plain data.
+  //   ownControls — whether this window is being created without a frame, and so
+  //              has to draw its own minimise/maximise/close. It decides whether
+  //              a whole strip of chrome exists, which makes it a layout
+  //              question, and layout questions have to be answered before the
+  //              first paint or the window visibly reflows a round trip later.
+  //              It is stamped here, next to the `frame:` option it describes,
+  //              so the two cannot disagree.
   const bit = (b) => (b ? "1" : "0");
   return {
     arg:
       `--specterm-boot=hasTabs=${bit(hasTab)},` +
       `hasRestore=${bit(Boolean(opts.restore))},` +
       `autoCheckUpdates=${bit(autoCheckUpdates)},` +
+      `ownControls=${bit(process.platform !== "darwin" && sessionPrefs.customTitleBar)},` +
       `migrateLegacy=${bit(Boolean(opts.migrateLegacy))}`,
   };
 }
@@ -365,7 +373,7 @@ if (!singleInstanceOk) {
     const win = targetWindow();
     if (win) {
       if (win.isMinimized()) win.restore();
-      win.focus();
+      raise(win);
       return;
     }
     // Running in the background with every window closed: launching Specterm
@@ -482,7 +490,7 @@ function updateTray() {
         label: n === 1 ? "Reattach session" : "Reattach a session",
         click: () => reattachSession(),
       },
-      { label: "New window", click: () => createWindow().focus() },
+      { label: "New window", click: () => raise(createWindow()) },
       { type: "separator" },
       {
         // The one path that actually stops the shells, so it says so.
@@ -514,7 +522,26 @@ function reattachSession() {
     ? createWindow({ tabs: parked.tabs, bounds: parked.bounds })
     : createWindow();
   updateTray();
-  win.focus();
+  raise(win);
+  return win;
+}
+
+// Windows come up without taking focus, and without jumping in front of what
+// you were looking at, when SPECTERM_BACKGROUND_WINDOWS is set. The e2e suites
+// set it (see test/README): between them they open and close a few dozen
+// windows over a few minutes, and a suite that snatches the keyboard every time
+// one appears is a suite you can only run when you have nothing else to do.
+//
+// Deliberately not a setting. It is not a way anyone would want to use the app —
+// clicking "new window" and having it open behind the current one is wrong — it
+// is a way to run the app while somebody else is using the desktop.
+const BACKGROUND_WINDOWS = process.env.SPECTERM_BACKGROUND_WINDOWS === "1";
+
+// Bring a window to the front, unless we have been asked not to. Every place
+// that used to call win.focus() goes through here, so there is one answer to
+// "does opening a window steal focus" rather than seven.
+function raise(win) {
+  if (win && !win.isDestroyed() && !BACKGROUND_WINDOWS) win.focus();
   return win;
 }
 
@@ -559,6 +586,9 @@ function createWindow(opts = {}) {
     ...(opts.bounds || {}),
     title: "Specterm",
     autoHideMenuBar: true,
+    // Held back and then shown *inactive* below, so the window appears where it
+    // belongs without pulling focus off whatever has it.
+    ...(BACKGROUND_WINDOWS ? { show: false } : {}),
     ...platformWindow,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
@@ -572,6 +602,14 @@ function createWindow(opts = {}) {
   });
 
   windows.add(win);
+
+  if (BACKGROUND_WINDOWS) {
+    // ready-to-show rather than straight away: the window has painted by then,
+    // so it appears complete instead of as a white rectangle that fills in.
+    win.once("ready-to-show", () => {
+      if (!win.isDestroyed()) win.showInactive();
+    });
+  }
 
   // The tabs this window was created to host, if any — fetched separately because
   // they carry serialized screens and have no business on a command line. One tab
@@ -1458,7 +1496,7 @@ ipcMain.on("window-restore-sync", (event) => {
 });
 
 ipcMain.handle("new-window", () => {
-  createWindow().focus();
+  raise(createWindow());
 });
 
 // The keyboard route out. `before-quit` does the rest: it sets `quitting`, which
@@ -1872,12 +1910,12 @@ ipcMain.handle("drop-transfer", (event, tab) => {
     ) {
       win.webContents.send("adopt-tab", tab);
       if (win.isMinimized()) win.restore();
-      win.focus();
+      raise(win);
       return;
     }
   }
 
-  createWindow({ tab, bounds: windowBoundsAt(point) }).focus();
+  raise(createWindow({ tab, bounds: windowBoundsAt(point) }));
 });
 
 // Relay for state every window keeps its own copy of (settings, theme,
@@ -1960,7 +1998,7 @@ function buildAppMenu() {
           label: "New Window",
           accelerator: isMac ? "Cmd+N" : "Ctrl+Shift+N",
           registerAccelerator: false,
-          click: () => createWindow().focus(),
+          click: () => raise(createWindow()),
         },
         {
           // Enabled state is fixed at build time, and the menu is only rebuilt at

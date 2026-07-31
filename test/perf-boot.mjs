@@ -22,6 +22,7 @@
 //
 // Run: node test/perf-boot.mjs   (after `vite build`)
 import { _electron as electron } from "playwright";
+import { launchOptions } from "./launch.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -57,10 +58,7 @@ const median = (xs) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)];
 
 async function boot(profile) {
   const t0 = Date.now();
-  const app = await electron.launch({
-    args: [root, `--user-data-dir=${profile}`],
-    cwd: root,
-  });
+  const app = await electron.launch(launchOptions(root, profile));
   const win = await app.firstWindow();
   // The terminal's render surface existing is the closest observable proxy for
   // "there is a pane in front of you".
@@ -144,7 +142,7 @@ try {
     // live terminal and lands in the snapshot. (A tab that has been visited keeps
     // its terminal even once another tab is showing, which is why all of them get a
     // screen captured and not just the last.)
-    const app = await electron.launch({ args: [root, `--user-data-dir=${p}`], cwd: root });
+    const app = await electron.launch(launchOptions(root, p));
     const w = await app.firstWindow();
     await w.waitForSelector(".file-tree", { timeout: 30000 });
     await w.waitForTimeout(2500);

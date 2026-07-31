@@ -22,6 +22,7 @@
 //     window, which skips the `close` event the whole detach path hangs off. The
 //     close must be driven through `BrowserWindow.close()`, the X button's path.
 import { _electron as electron } from "playwright";
+import { launchOptions } from "./launch.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -59,6 +60,31 @@ if (hard) hard.unref();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// Wait for a condition instead of for the clock.
+//
+// Almost every sleep in this file was really "however long a window takes to
+// open, close, or come back on the slowest machine this might run on" — a
+// number chosen for the worst case and then paid on every machine, on every
+// run. Waiting on the condition keeps the same worst case as the deadline and
+// gives the time back everywhere else. It also throws instead of continuing,
+// so a window that never appears fails here rather than three checks later.
+async function until(what, predicate, { timeout = 20000, poll = 100 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    let ok = false;
+    try {
+      ok = await predicate();
+    } catch (_) {
+      ok = false;
+    }
+    if (ok) return;
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeout}ms waiting for: ${what}`);
+    }
+    await sleep(poll);
+  }
+}
+
 // One profile for the whole file: the on-disk snapshot lives in localStorage
 // under the user-data dir, so the relaunch half has to see what the first half
 // wrote.
@@ -66,7 +92,7 @@ const userDataDir = path.join(os.tmpdir(), `specterm-session-${process.pid}-${Da
 fs.mkdirSync(userDataDir, { recursive: true });
 
 const launch = () =>
-  electron.launch({ args: [root, `--user-data-dir=${userDataDir}`], cwd: root });
+  electron.launch(launchOptions(root, userDataDir));
 
 const kill = async (app) => {
   try {
@@ -123,7 +149,9 @@ try {
   const winA = await app.firstWindow();
   winA.on("pageerror", (e) => log("PAGEERROR:", e.message));
   await winA.waitForSelector(".file-tree", { timeout: 20000 });
-  await winA.waitForTimeout(3000);
+  await until("the first pane to paint", () =>
+    winA.evaluate(() => !!document.querySelector(".xterm-screen canvas"))
+  );
 
   // Foreground, so its life is tied to the shell's. See the header.
   await winA.locator(".xterm-helper-textarea:visible").first().click({ force: true });
@@ -131,24 +159,61 @@ try {
     `for i in $(seq 1 900); do echo tick >> ${ticks}; sleep 1; done`
   );
   await winA.keyboard.press("Enter");
-  await winA.waitForTimeout(5000);
+  // The loop writes a line a second, so this is a few seconds — not the five it
+  // used to be, but not instant either: the point of the section is what happens
+  // to a *running* shell, and three ticks is the difference between having one
+  // and having just pressed Enter.
+  await until("the tick loop to get going", () => countTicks() > 2, { timeout: 20000 });
 
   const atOpen = countTicks();
   check("a foreground process runs in the pane", atOpen > 1, `ticks=${atOpen}`);
 
   // A second window, so Playwright keeps a page to drive after the first closes.
   await winA.evaluate(() => window.specterm.newWindow());
-  await sleep(6000);
+  await until("a second window", async () => (await nWindows()) === 2);
+  // …and wait for it to be a finished window, not just a created one. Closing
+  // the first while the second is still wiring itself up is not what this
+  // section is about, and the handover it would race is the very thing being
+  // measured two checks below.
+  await until("the second window to finish booting", async () => {
+    const pages = await app.windows();
+    const other = pages.find((p) => p !== winA);
+    if (!other) return false;
+    return other.evaluate(() => !!document.querySelector(".xterm-screen canvas"));
+  });
   check("a second window opens", (await nWindows()) === 2, `windows=${await nWindows()}`);
 
   await closeFirstWindow();
-  await sleep(8000);
+  // Both counts, and in this order: the host's, which says the window is gone,
+  // and Playwright's page list, which catches up a moment later — reaching for
+  // `windows()[0]` before it does hands back the page that just died.
+  await until("the first window to go", async () => (await nWindows()) === 1);
+  await until(
+    "the driver's page list to catch up",
+    async () => (await app.windows()).length === 1
+  );
   check("the closed window is gone", (await nWindows()) === 1, `windows=${await nWindows()}`);
 
   const survivor = (await app.windows())[0];
+  // The window being gone and its shells being parked are two different moments.
+  // Waited for rather than slept through, but with the check below still doing
+  // the asserting: a timeout here should read as "it never parked", not as a
+  // harness error.
+  await until("its session to be parked", async () =>
+    (await survivor.evaluate(() => window.specterm.detachedSessionCount())) === 1
+  ).catch(() => {});
   const parked = await survivor.evaluate(() => window.specterm.detachedSessionCount());
   check("closing a window parks its session", parked === 1, `parked=${parked}`);
 
+  // The shell has to keep ticking now that nothing is watching it, which takes
+  // as long as it takes: wait for the ticks to arrive, but let the check do the
+  // asserting so a shell that died reads as "ticks 3 → 3" rather than as a
+  // harness error.
+  await until(
+    "the parked shell to keep ticking",
+    () => countTicks() > atOpen + 3,
+    { timeout: 15000 }
+  ).catch(() => {});
   const afterClose = countTicks();
   check(
     "its shell keeps running after the window closed",
@@ -158,7 +223,7 @@ try {
 
   const didReattach = await survivor.evaluate(() => window.specterm.reattachSession());
   check("reattach reports success", didReattach === true, `returned=${didReattach}`);
-  await sleep(7000);
+  await until("the reattached window", async () => (await nWindows()) === 2);
   check(
     "reattaching gives the session a window again",
     (await nWindows()) === 2,
@@ -166,7 +231,11 @@ try {
   );
 
   const beforeWait = countTicks();
-  await sleep(4000);
+  await until(
+    "the reattached shell to keep ticking",
+    () => countTicks() > beforeWait + 1,
+    { timeout: 15000 }
+  ).catch(() => {});
   check(
     "the reattached pane holds the same running shell",
     countTicks() > beforeWait + 1,
@@ -199,13 +268,17 @@ try {
   // past a real quit, so the pid proves nothing, while window-all-closed kills
   // every PTY when it decides to quit.
   await closeFirstWindow();
-  await sleep(7000);
+  await until("one window left", async () => (await nWindows()) === 1);
   await closeFirstWindow();
-  await sleep(8000);
+  await until("no windows left", async () => (await nWindows()) === 0);
   check("all windows can be closed", (await nWindows()) === 0, `windows=${await nWindows()}`);
 
   const bg = countTicks();
-  await sleep(5000);
+  await until(
+    "the windowless shell to keep ticking",
+    () => countTicks() > bg + 1,
+    { timeout: 15000 }
+  ).catch(() => {});
   check(
     "shells keep running with no window open at all",
     countTicks() > bg + 1,
@@ -214,7 +287,13 @@ try {
 
   // The dock-click route back in (the tray's click handler runs the same code).
   await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-  await sleep(7000);
+  await until("a window to come back", async () => (await nWindows()) >= 1);
+  // …and for the driver to have a page for it. Reaching into `windows()[0]`
+  // before that is what the undefined below would have been.
+  await until(
+    "the driver to see the reattached window",
+    async () => (await app.windows()).length >= 1
+  );
   check(
     "activating with no windows reattaches a session",
     (await nWindows()) >= 1,
@@ -233,7 +312,9 @@ try {
 
   const win = (await app.windows())[0];
   await win.waitForSelector(".file-tree", { timeout: 20000 });
-  await win.waitForTimeout(2000);
+  await until("the pane to paint", () =>
+    win.evaluate(() => !!document.querySelector(".xterm-screen canvas"))
+  );
 
   await win.keyboard.press("F2");
   await win.waitForSelector(".tab-title-input", { timeout: 6000 });
@@ -281,28 +362,40 @@ try {
 
   const app2 = await launch();
   try {
-    await app2.firstWindow();
-    await sleep(6000);
+    const first2 = await app2.firstWindow();
+    await first2.waitForSelector(".file-tree", { timeout: 20000 });
 
     // More than one window can come back here, and that is correct: the phases
     // above left a session parked, and a detached window is part of the saved
     // session too — its shells died with the quit, but you hadn't finished with it.
-    // So the window carrying the renamed tab has to be *found* rather than assumed
-    // to be the first one.
-    const pages = await app2.windows();
-    let win2 = pages[0];
-    for (const page of pages) {
-      try {
-        await page.waitForSelector(".file-tree", { timeout: 15000 });
-        const title = await page.locator(".tab").first().innerText();
-        if (title.includes(TAB_NAME)) {
-          win2 = page;
-          break;
+    // So the window carrying the renamed tab has to be *found* rather than
+    // assumed to be the first one — and looked for until it turns up, since the
+    // windows do not all finish restoring at the same moment.
+    let win2 = null;
+    await until(
+      `the restored window carrying "${TAB_NAME}"`,
+      async () => {
+        for (const page of await app2.windows()) {
+          try {
+            if (!(await page.evaluate(() => !!document.querySelector(".tab")))) continue;
+            const title = await page.locator(".tab").first().innerText();
+            if (title.includes(TAB_NAME)) {
+              win2 = page;
+              return true;
+            }
+          } catch (_) {
+            // this window is still coming up
+          }
         }
-      } catch (_) {
-        // not this one
-      }
-    }
+        return false;
+      },
+      { timeout: 30000 }
+    ).catch(() => {
+      // Fall through with the first window; the checks below report what they
+      // actually found, which is more useful than dying here.
+    });
+    const pages = await app2.windows();
+    win2 = win2 ?? pages[0];
     win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
     await win2.waitForTimeout(2000);
 
@@ -402,20 +495,24 @@ try {
   const multiDir = path.join(os.tmpdir(), `specterm-multi-${Date.now()}`);
   fs.mkdirSync(multiDir, { recursive: true });
   const multiLaunch = () =>
-    electron.launch({ args: [root, `--user-data-dir=${multiDir}`], cwd: root });
+    electron.launch(launchOptions(root, multiDir));
 
   const appM = await multiLaunch();
   let placed = [];
   try {
     const w = await appM.firstWindow();
     await w.waitForSelector(".file-tree", { timeout: 20000 });
-    await w.waitForTimeout(2500);
+    await until("the pane to paint", () =>
+      w.evaluate(() => !!document.querySelector(".xterm-screen canvas"))
+    );
     // Three windows, each at a distinct position and size, and each with a
     // different number of tabs so they can be told apart after the restart.
+    const nWins = () =>
+      appM.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
     await w.evaluate(() => window.specterm.newWindow());
-    await sleep(4000);
+    await until("a second window", async () => (await nWins()) === 2);
     await w.evaluate(() => window.specterm.newWindow());
-    await sleep(4000);
+    await until("a third window", async () => (await nWins()) === 3);
     check(
       "three windows are open",
       (await appM.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)) === 3,
@@ -437,7 +534,9 @@ try {
     // Give the middle window a second tab, so window identity is checkable.
     const pages = await appM.windows();
     await pages[1].keyboard.press("Control+Shift+T");
-    await sleep(2500);
+    await until("the second tab", async () =>
+      (await pages[1].evaluate(() => document.querySelectorAll(".tab").length)) === 2
+    );
 
     // Let the layout debounce settle, then quit properly — the host writes the
     // session on before-quit, while the windows are still open and measurable.
@@ -517,10 +616,7 @@ try {
     }
   };
 
-  const app3 = await electron.launch({
-    args: [root, `--user-data-dir=${safetyDir}`],
-    cwd: root,
-  });
+  const app3 = await electron.launch(launchOptions(root, safetyDir));
   try {
     const w = await app3.firstWindow();
     await w.waitForSelector(".file-tree", { timeout: 20000 });
@@ -582,10 +678,7 @@ try {
       return 0;
     }
   };
-  const app4 = await electron.launch({
-    args: [root, `--user-data-dir=${safetyDir}`],
-    cwd: root,
-  });
+  const app4 = await electron.launch(launchOptions(root, safetyDir));
   try {
     const w = await app4.firstWindow();
     await w.waitForSelector(".file-tree", { timeout: 20000 });
@@ -690,10 +783,7 @@ try {
   // Does the restored pane have the command sitting at its prompt? Probed through
   // the find bar, the same way every other buffer check here works.
   const resumeOffered = async () => {
-    const app = await electron.launch({
-      args: [root, `--user-data-dir=${resumeDir}`],
-      cwd: root,
-    });
+    const app = await electron.launch(launchOptions(root, resumeDir));
     try {
       const w = await app.firstWindow();
       await w.waitForSelector(".file-tree", { timeout: 20000 });
@@ -747,7 +837,7 @@ try {
   const chromeDir = path.join(os.tmpdir(), `specterm-chrome-${Date.now()}`);
   fs.mkdirSync(chromeDir, { recursive: true });
   const chromeLaunch = () =>
-    electron.launch({ args: [root, `--user-data-dir=${chromeDir}`], cwd: root });
+    electron.launch(launchOptions(root, chromeDir));
 
   const appC = await chromeLaunch();
   try {
@@ -794,7 +884,10 @@ try {
   const appC2 = await chromeLaunch();
   try {
     const w = await appC2.firstWindow();
-    await w.waitForSelector(".file-tree", { timeout: 20000 });
+    // The sidebar remembers what it was showing, and the block above turned the
+    // custom title bar off through Settings — so this window comes back on the
+    // settings panel, not the file tree. Wait for the window itself.
+    await w.waitForSelector(".app", { timeout: 20000 });
     await w.waitForTimeout(2500);
     check(
       "turning it off gives the system title bar back on the next window",

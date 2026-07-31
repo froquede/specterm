@@ -11,6 +11,7 @@
 // test/e2e.mjs does it: the shell writes to a temp file, and a shell that keeps
 // its PID across the move is proof the same process came along.
 import { _electron as electron } from "playwright";
+import { launchOptions } from "./launch.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -154,10 +155,7 @@ const dragOutOfWindow = (win, selector) =>
 
 let app;
 try {
-  app = await electron.launch({
-    args: [root, `--user-data-dir=${userDataDir}`],
-    cwd: root,
-  });
+  app = await electron.launch(launchOptions(root, userDataDir));
 
   const winA = await app.firstWindow();
   await winA.waitForSelector(".file-tree", { timeout: 20000 });

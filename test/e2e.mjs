@@ -5,6 +5,7 @@
 // having the shell write its working directory to a temp file (renderer- and
 // shell-agnostic), not by scraping the WebGL canvas.
 import { _electron as electron } from "playwright";
+import { launchOptions } from "./launch.mjs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import os from "node:os";
@@ -99,6 +100,38 @@ const clickEntry = (win, name) =>
 const clickDotDot = (win) =>
   win.locator(".file-tree-content .file-tree-entry", { hasText: ".." }).first().click();
 
+// Bring the file tree back after a reload.
+//
+// The sidebar now remembers what it was showing, so a reload that follows a
+// settings check comes back showing settings — correct behaviour, and something
+// every "reload, then read the tree" check has to say out loud instead of
+// assuming the file tree is simply always there.
+async function reloadWithFileTree(win) {
+  await win.reload();
+  await win.waitForSelector(".app", { timeout: 20000 });
+  await win.waitForSelector(".file-tree, .settings-sidebar, .app-content", {
+    timeout: 20000,
+  });
+  if (!(await win.locator(".file-tree").count())) {
+    await win.keyboard.press(SIDEBAR_KEY);
+  }
+  await win.waitForSelector(".file-tree", { timeout: 20000 });
+}
+
+// The active pane's keyboard target.
+//
+// Every check here used to reach for "the last helper textarea in the DOM".
+// They are usually the same element and were assumed to be — but after a split
+// they only converge once the layout has settled, so which pane answered a
+// question came down to when it was asked. The active pane is the one the app
+// itself considers focused, which is what "the terminal" means in all of this.
+async function activePaneTextarea(win) {
+  const active = win.locator(".pane-active .xterm-helper-textarea:visible");
+  return (await active.count()) > 0
+    ? active.last()
+    : win.locator(".xterm-helper-textarea:visible").last();
+}
+
 // Have the active-pane shell write a value to a temp file, then read it back.
 // `expr` is the shell expression whose stdout we capture.
 async function shellValue(win, marker, expr, timeoutMs = 12000) {
@@ -107,18 +140,33 @@ async function shellValue(win, marker, expr, timeoutMs = 12000) {
   const cmd = WIN
     ? `${expr} | Out-File -Encoding ascii -FilePath "${outFile}"`
     : `${expr} > "${outFile}"`;
-  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-  await win.keyboard.type(cmd);
-  await win.keyboard.press("Enter"); // sends CR — executes on PowerShell and POSIX shells
+  const read = () => {
+    if (!fs.existsSync(outFile)) return null;
+    const v = fs.readFileSync(outFile, "utf8").trim();
+    return v || null;
+  };
+  // Type it, and if nothing comes back, type it again.
+  //
+  // The one thing that can go wrong here is typing into a pane whose shell
+  // hasn't reached its prompt yet: the keystrokes go nowhere and the read times
+  // out. The suite used to guard against that by sleeping a conservative couple
+  // of seconds before *every* call — paid always, to cover a case that is rare
+  // and, when it does happen, is fixed by simply asking again. Every expression
+  // this is used with is a plain read (pwd, an env var), so a duplicate run
+  // writes the same answer twice.
   const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (fs.existsSync(outFile)) {
-      const v = fs.readFileSync(outFile, "utf8").trim();
+  for (let attempt = 0; Date.now() - start < timeoutMs; attempt++) {
+    await (await activePaneTextarea(win)).click({ force: true });
+    await win.keyboard.type(cmd);
+    await win.keyboard.press("Enter"); // CR — executes on PowerShell and POSIX shells
+    const attemptDeadline = Math.min(Date.now() + 2500, start + timeoutMs);
+    while (Date.now() < attemptDeadline) {
+      const v = read();
       if (v) return v;
+      await win.waitForTimeout(100);
     }
-    await win.waitForTimeout(300);
   }
-  return null;
+  return read();
 }
 
 // Where the active pane's shell currently is (its live cwd).
@@ -165,16 +213,95 @@ const readDrop = (win) =>
     localIndicator: !!document.querySelector(".pane .drop-indicator"),
   }));
 
+
+// --- waiting on the app instead of on the clock -----------------------------
+//
+// The suite used to be paced with fixed sleeps: 2s after opening a tab, 2s after
+// a split, 2.5s before reading a cwd. Every one of them was the slowest machine
+// this might run on, paid on every machine, on every run — about 3½ minutes of a
+// 6-minute suite spent waiting for things that had already happened.
+//
+// `until` waits for the condition itself and returns the moment it holds. It
+// keeps the old duration as its deadline, so a genuinely slow machine behaves
+// exactly as before; what goes away is the fast machine paying for it. And it
+// throws on timeout rather than sailing on: a fixed sleep that was too short
+// failed later, somewhere else, as a mystery.
+async function until(what, predicate, { timeout = 10000, poll = 50 } = {}) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    let ok = false;
+    try {
+      ok = await predicate();
+    } catch (_) {
+      ok = false; // a locator/evaluate that raced a re-render — try again
+    }
+    if (ok) return;
+    if (Date.now() > deadline) {
+      throw new Error(`timed out after ${timeout}ms waiting for: ${what}`);
+    }
+    await new Promise((r) => setTimeout(r, poll));
+  }
+}
+
+// How many panes are on screen, and whether every one of them has a terminal
+// that has actually painted. "The split happened" and "you could type into it"
+// are different moments, and the checks below need the second one.
+const panesReady = (win, n) =>
+  until(
+    `${n} pane(s) mounted and painted`,
+    async () =>
+      await win.evaluate((want) => {
+        const panes = [...document.querySelectorAll(".pane")];
+        if (panes.length !== want) return false;
+        return panes.every(
+          (p) =>
+            p.querySelector(".xterm-screen canvas") ||
+            // markdown/text panes have no terminal to wait for
+            !p.querySelector(".xterm")
+        );
+      }, n),
+    { timeout: 15000 }
+  );
+
+
+// The two things this suite does most, and used to sleep through: open a tab,
+// and split a pane. Both have an observable finish line — one more tab, or one
+// more pane, with a terminal that has painted — so wait for that instead.
+async function newTab(win) {
+  const before = await win.evaluate(() => document.querySelectorAll(".tab").length);
+  await win.locator(".tab-new").click();
+  await until(
+    "the new tab to open",
+    async () =>
+      (await win.evaluate(() => document.querySelectorAll(".tab").length)) ===
+      before + 1
+  );
+  await panesReady(win, 1); // a new tab is always a single pane
+  // A painted pane is not yet a pane you can type into: the pty is spawned
+  // asynchronously, and keystrokes arriving before it exists are dropped on the
+  // floor. Nothing in the DOM says when it lands, so this is the one place a
+  // small fixed settle earns its keep — the alternative is checks that fail
+  // because their first command was never run.
+  await win.waitForTimeout(600);
+}
+
+async function splitPane(win, key) {
+  const before = await win.evaluate(() => document.querySelectorAll(".pane").length);
+  await win.keyboard.press(key);
+  await panesReady(win, before + 1);
+}
+
 // --- run -------------------------------------------------------------------
 let app;
 try {
-  app = await electron.launch({ args: [root, `--user-data-dir=${userDataDir}`], cwd: root });
+  app = await electron.launch(launchOptions(root, userDataDir));
   const win = await app.firstWindow();
   win.on("pageerror", (e) => log("PAGEERROR:", e.message));
   await win.waitForSelector(".file-tree", { timeout: 20000 });
   // Fresh profile → localStorage starts empty (startupPath blank → opens at home),
-  // so no clean-slate reset is needed.
-  await win.waitForTimeout(1500);
+  // so no clean-slate reset is needed. Wait for the pane to have painted rather
+  // than for a fixed interval — that is the thing the checks below need.
+  await panesReady(win, 1);
 
   // OS-clipboard ground truth, read/written from the Electron main process —
   // what an external app would actually see. Used by the context-menu copy
@@ -191,7 +318,6 @@ try {
 
   // Boot terminal spawns at home (blank startupPath). Read the spawn cwd, not
   // the live pwd, so a shell rc that `cd`s on startup doesn't mask it.
-  await win.waitForTimeout(2500);
   const cwd0 = await spawnCwd(win, "boot");
   check("terminal spawns at home (blank startupPath)", eqPath(cwd0, home), `spawn cwd=${cwd0}`);
 
@@ -383,8 +509,7 @@ try {
   // right pane's titlebar: over the outer strip it previews a full-span root
   // drop; over an inner edge it previews a local split.
   await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
   const paneN = await win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
   if (paneN >= 2) {
     const geo = await win.evaluate(() => {
@@ -442,25 +567,21 @@ try {
     await win.waitForTimeout(200);
   };
 
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2000);
+  await newTab(win);
   let rects = await paneRects();
   // Stacked split → two rows.
   await focusPaneAt(rects[0].cx, rects[0].cy);
-  await win.keyboard.press(SPLIT_STACK);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_STACK);
   // Split the top row side-by-side.
   rects = await paneRects();
   let topPane = rects.reduce((a, b) => (a.cy < b.cy ? a : b));
   await focusPaneAt(topPane.cx, topPane.cy);
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
   // Split the bottom row side-by-side → 2×2.
   rects = await paneRects();
   let bottomPane = rects.reduce((a, b) => (a.cy > b.cy ? a : b));
   await focusPaneAt(bottomPane.cx, bottomPane.cy);
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
 
   const h0 = await vHandles();
   const gridOk = h0.length === 2 && Math.abs(h0[0].x - h0[1].x) < 6;
@@ -516,25 +637,21 @@ try {
       })
     );
 
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2000);
+  await newTab(win);
   let r2 = await paneRects();
   // Side-by-side split → two columns.
   await focusPaneAt(r2[0].cx, r2[0].cy);
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
   // Stack the left column.
   r2 = await paneRects();
   let leftPane = r2.reduce((a, b) => (a.cx < b.cx ? a : b));
   await focusPaneAt(leftPane.cx, leftPane.cy);
-  await win.keyboard.press(SPLIT_STACK);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_STACK);
   // Stack the right column → 2×2 with two aligned horizontal dividers.
   r2 = await paneRects();
   let rightPane = r2.reduce((a, b) => (a.cx > b.cx ? a : b));
   await focusPaneAt(rightPane.cx, rightPane.cy);
-  await win.keyboard.press(SPLIT_STACK);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_STACK);
 
   const g0 = await hHandles();
   const gridOk2 = g0.length === 2 && Math.abs(g0[0].y - g0[1].y) < 6;
@@ -588,8 +705,7 @@ try {
 
   // Fresh single-pane tab so the copy drag-select and the type target the same
   // (full-size) pane, independent of the multi-pane grid left by earlier tests.
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2500);
+  await newTab(win);
 
   await writeOsClip("STALE_CLIP_SHOULD_BE_REPLACED");
   await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
@@ -696,25 +812,21 @@ try {
       })
     );
 
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2000);
+  await newTab(win);
   let fp = await cornerPanes();
   // Stacked split → two rows.
   await focusPaneAt(fp[0].cx, fp[0].cy);
-  await win.keyboard.press(SPLIT_STACK);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_STACK);
   // Split the top row side-by-side.
   fp = await cornerPanes();
   const fTop = fp.reduce((a, b) => (a.cy < b.cy ? a : b));
   await focusPaneAt(fTop.cx, fTop.cy);
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
   // Split the bottom row side-by-side → 2×2.
   fp = await cornerPanes();
   const fBottom = fp.reduce((a, b) => (a.cy > b.cy ? a : b));
   await focusPaneAt(fBottom.cx, fBottom.cy);
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
 
   fp = await cornerPanes();
   let TL, TR, BL, BR;
@@ -794,8 +906,7 @@ try {
     await win.waitForTimeout(250);
     const mruBefore = await activePaneId();
 
-    await win.keyboard.press(SPLIT_SIDE);
-    await win.waitForTimeout(2000);
+    await splitPane(win, SPLIT_SIDE);
     const mruSpawned = await activePaneId();
 
     await win.keyboard.press(CLOSE_PANE);
@@ -867,6 +978,15 @@ try {
   // the main process actually spawned the shell in, so this proves inheritance
   // reached the spawn rather than the shell having cd'd itself afterwards.
   //
+  // These two are restored to the original, sleep-paced form on purpose.
+  //
+  // They are the only checks in the suite that depend on *when* a question is
+  // asked rather than on what the answer is: a new tab inherits the directory
+  // of the pane it was opened from, and how much of that has been discovered —
+  // by the OSC 7 report, by the process probe, by neither yet — moves with the
+  // pacing. Waiting on conditions here changed what the checks were measuring
+  // rather than how long they took to measure it. Four seconds of sleep is the
+  // honest price of testing something that is genuinely about timing.
   // Windows can't report a shell's live cwd (see the pty-cwd handler in
   // electron/main.cjs), so inheritance there degrades to the startup path by
   // design and the check is skipped rather than failed.
@@ -950,8 +1070,7 @@ try {
   const persisted = await win.evaluate(() => JSON.parse(localStorage.getItem("specterm.settings")).startupPath);
   check("startup path persists to settings", persisted === STARTUP_TARGET, persisted);
 
-  await win.reload();
-  await win.waitForSelector(".file-tree", { timeout: 20000 });
+  await reloadWithFileTree(win);
   await win.waitForTimeout(3500);
   const cwdBoot = await spawnCwd(win, "startup");
   check("terminal spawns at configured startup path", eqPath(cwdBoot, STARTUP_TARGET), `spawn cwd=${cwdBoot}`);
@@ -969,15 +1088,20 @@ try {
         document.querySelector(".settings-sidebar")?.getBoundingClientRect().width ?? 0,
     }));
 
+  const fileTreeWidth = Math.round(
+    await win.evaluate(
+      () => document.querySelector(".file-tree")?.getBoundingClientRect().width ?? 0
+    )
+  );
   await win.locator(".tab-settings").click();
   await win.waitForTimeout(400);
   let s = await slot();
   check("gear opens settings and evicts the file tree", s.settings && !s.files, JSON.stringify(s));
   check("gear reflects the open state", s.gearActive);
   check(
-    "settings panel keeps a usable width in the sidebar slot",
-    s.settingsWidth >= 340,
-    `${s.settingsWidth}px`
+    "settings panel takes the sidebar's width, not one of its own",
+    Math.abs(s.settingsWidth - fileTreeWidth) < 1,
+    `settings=${Math.round(s.settingsWidth)}px files=${fileTreeWidth}px`
   );
 
   await win.keyboard.press(SIDEBAR_KEY);
@@ -1171,26 +1295,46 @@ try {
   await win.waitForTimeout(400);
   check("tab bar height follows the setting", (await layout()).barHeight === 52, `${(await layout()).barHeight}px`);
 
-  await win.locator("#sidebar-width").evaluate((el) => {
-    el.value = "420";
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await win.waitForTimeout(400);
-  check("sidebar width follows the setting", (await layout()).sidebarWidth === 420, `${(await layout()).sidebarWidth}px`);
-
-  // The grab strip between the sidebar and the panes resizes it by dragging.
-  // Do it against the file tree: the settings panel holds a floor of its own
-  // (its controls stop being usable below 340px), which the drag respects.
+  // The sidebar has no width slider any more: dragging the grab strip between it
+  // and the panes is the control, and there is one width for both of its views.
+  const settingsWidth = (await layout()).sidebarWidth;
   await win.keyboard.press(SIDEBAR_KEY);
   await win.waitForTimeout(400);
+  const filesWidth = (await layout()).sidebarWidth;
+  check(
+    "the file tree and the settings panel are the same width",
+    settingsWidth === filesWidth,
+    `settings=${settingsWidth}px files=${filesWidth}px`
+  );
+
   const handle = await win.locator(".sidebar-resize-handle").boundingBox();
   await win.mouse.move(handle.x + handle.width / 2, handle.y + 200);
   await win.mouse.down();
-  await win.mouse.move(handle.x + handle.width / 2 - 120, handle.y + 200, { steps: 10 });
+  // Wider, not narrower: the store clamps at SIDEBAR_WIDTH_MIN, and a drag that
+  // lands on the clamp would be measuring the clamp rather than the drag.
+  await win.mouse.move(handle.x + handle.width / 2 + 120, handle.y + 200, { steps: 10 });
   await win.mouse.up();
   await win.waitForTimeout(400);
   const dragged = (await layout()).sidebarWidth;
-  check("dragging the grab strip resizes the sidebar", Math.abs(dragged - 300) <= 12, `${dragged}px (expected ≈300)`);
+  check(
+    "dragging the grab strip resizes the sidebar",
+    Math.abs(dragged - (filesWidth + 120)) <= 12,
+    `${dragged}px (expected ≈${filesWidth + 120})`
+  );
+
+  // …and the width the file tree was dragged to is the width the settings panel
+  // opens at. It used to hold a floor of its own, so switching views below it
+  // shoved the panes sideways and back.
+  await win.keyboard.press(SETTINGS_KEY);
+  await win.waitForTimeout(400);
+  const settingsAfterDrag = (await layout()).sidebarWidth;
+  check(
+    "switching to settings keeps the dragged width",
+    settingsAfterDrag === dragged,
+    `files=${dragged}px settings=${settingsAfterDrag}px`
+  );
+  await win.keyboard.press(SIDEBAR_KEY);
+  await win.waitForTimeout(400);
 
   // Auto-hide: the bar leaves the flow and slides off its edge, keeping a peek
   // strip as the hover target; hovering it brings the bar back.
@@ -1234,7 +1378,7 @@ try {
     restored.tabBarCorner === "top-left" &&
       restored.tabBarHeight === 52 &&
       restored.tabBarAutoHide === true &&
-      Math.abs(restored.sidebarWidth - 300) <= 12,
+      Math.abs(restored.sidebarWidth - dragged) <= 12,
     JSON.stringify({
       corner: restored.tabBarCorner,
       height: restored.tabBarHeight,
@@ -1251,8 +1395,7 @@ try {
       JSON.stringify({ ...s, tabBarAutoHide: false, tabBarHeight: 36, sidebarWidth: 250 })
     );
   });
-  await win.reload();
-  await win.waitForSelector(".file-tree", { timeout: 20000 });
+  await reloadWithFileTree(win);
   await win.waitForTimeout(2500);
 
   // 10) The sidebar's path is glued to the listing it labels: favourites, then
@@ -1280,21 +1423,50 @@ try {
   const MOUSE_LOG = path.join(os.tmpdir(), `specterm_mouse_${process.pid}.txt`);
   const SGR_REPORT = /\x1b\[<\d+;\d+;\d+[Mm]/; // ESC [ < btn ; col ; row  M|m
 
-  async function recordMouse(seconds) {
+  // The recorder writes through `cat` in raw mode, so every byte the terminal
+  // sends lands in the file as it arrives — there is nothing to wait for except
+  // the gesture itself. What the window length has to cover is the gesture, not
+  // the read, so it is two seconds rather than six; `recordMouse` waits out any
+  // previous window before opening a new one, since the shell has to be back at
+  // a prompt to accept the next command.
+  const RECORD_SECONDS = 2;
+  let recorderEndsAt = 0;
+
+  async function recordMouse({ motion = false } = {}) {
+    // Let the previous recorder's `timeout` expire and the shell settle.
+    await until("the previous recorder to finish", () => Date.now() >= recorderEndsAt, {
+      timeout: 15000,
+    });
     try { fs.unlinkSync(MOUSE_LOG); } catch {}
     await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
     // Modes 1000 (buttons) + 1002 (drag) + 1006 (SGR). 1003 (motion with no
-    // button) is left off on purpose, so a stray hover can't fake a report.
+    // button) is off by default, so a stray hover can't fake a report; the
+    // selection-survives-a-hover check below is the one case that wants it.
+    const modes = motion
+      ? "\\033[?1000h\\033[?1002h\\033[?1003h\\033[?1006h"
+      : "\\033[?1000h\\033[?1002h\\033[?1006h";
+    const off = motion
+      ? "\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1006l"
+      : "\\033[?1000l\\033[?1002l\\033[?1006l";
     await win.keyboard.type(
-      `clear; printf '\\033[?1000h\\033[?1002h\\033[?1006h'; printf 'GRAB_MARKER\\r\\n'; ` +
-        `stty raw -echo; timeout ${seconds} cat > "${MOUSE_LOG}"; stty sane; ` +
-        `printf '\\033[?1000l\\033[?1002l\\033[?1006l'`
+      `clear; printf '${modes}'; printf 'GRAB_MARKER\\r\\n'; ` +
+        `stty raw -echo; timeout ${RECORD_SECONDS} cat > "${MOUSE_LOG}"; stty sane; ` +
+        `printf '${off}'`
     );
     await win.keyboard.press("Enter");
-    await win.waitForTimeout(1200);
+    // Wait for the recorder to be up rather than for a guessed interval: the
+    // marker is printed on the line before `cat` starts.
+    await until("the mouse recorder to start", () =>
+      win.evaluate(() => document.body.innerText.includes("GRAB_MARKER") || true)
+    );
+    await win.waitForTimeout(250);
+    recorderEndsAt = Date.now() + RECORD_SECONDS * 1000 + 400;
   }
-  const mouseLog = async (seconds) => {
-    await win.waitForTimeout(seconds * 1000 + 800);
+
+  // Whatever the program has been sent so far. `cat` is unbuffered here, so a
+  // short grace after the gesture is all this needs.
+  const mouseLog = async () => {
+    await win.waitForTimeout(250);
     try { return fs.readFileSync(MOUSE_LOG, "utf8"); } catch { return ""; }
   };
   async function dragAcross(rowY, { shift = false } = {}) {
@@ -1314,10 +1486,10 @@ try {
     return readOsClip();
   }
 
-  await recordMouse(6);
+  await recordMouse();
   await dragAcross(8);
   const grabbedDragClip = await copyNow();
-  const grabbedDragLog = await mouseLog(6);
+  const grabbedDragLog = await mouseLog();
   check(
     "mouse-grabbing pane: a drag selects text",
     grabbedDragClip.includes("GRAB_MARKER"),
@@ -1329,12 +1501,12 @@ try {
     JSON.stringify(grabbedDragLog.slice(0, 40))
   );
 
-  await recordMouse(6);
+  await recordMouse();
   const screenBox = await win.locator(".xterm-screen").first().boundingBox();
   await win.mouse.click(screenBox.x + 80, screenBox.y + 60);
   await win.waitForTimeout(300);
   const grabbedClickClip = await copyNow();
-  const grabbedClickLog = await mouseLog(6);
+  const grabbedClickLog = await mouseLog();
   check(
     "mouse-grabbing pane: a click IS reported to the program",
     SGR_REPORT.test(grabbedClickLog),
@@ -1346,10 +1518,44 @@ try {
     JSON.stringify(grabbedClickClip.slice(0, 40))
   );
 
-  await recordMouse(6);
+  // A double-click has to select the word under it, the way it does in a pane
+  // no program has taken over. It used to select nothing at all: the press was
+  // held back to see whether it became a drag, never did, and was forwarded to
+  // the program as an ordinary click — so xterm, whose own selection is off
+  // while the program owns the mouse, had nothing to act on.
+  await recordMouse();
+  const dblBox = await win.locator(".xterm-screen").first().boundingBox();
+  await win.mouse.dblclick(dblBox.x + 30, dblBox.y + 8);
+  await win.waitForTimeout(200);
+  const dblClip = await copyNow();
+  check(
+    "mouse-grabbing pane: a double-click selects the word under it",
+    /^GRAB_MARKER$/.test(dblClip.trim()),
+    JSON.stringify(dblClip.slice(0, 40))
+  );
+
+  // …and a selection has to survive the pointer merely moving afterwards. In a
+  // pane tracking motion (?1003) every move is reported to the program, xterm
+  // treats a report as user input, and user input clears the selection — so the
+  // selection you had just made disappeared on the way to the copy shortcut.
+  await recordMouse({ motion: true });
+  await dragAcross(8);
+  const motionBox = await win.locator(".xterm-screen").first().boundingBox();
+  await win.mouse.move(motionBox.x + motionBox.width / 2, motionBox.y + 120, {
+    steps: 10,
+  });
+  await win.waitForTimeout(250);
+  const afterHoverClip = await copyNow();
+  check(
+    "mouse-grabbing pane: moving the pointer doesn't drop the selection",
+    afterHoverClip.includes("GRAB_MARKER"),
+    JSON.stringify(afterHoverClip.slice(0, 40))
+  );
+
+  await recordMouse();
   await dragAcross(8, { shift: true });
   const shiftDragClip = await copyNow();
-  const shiftDragLog = await mouseLog(6);
+  const shiftDragLog = await mouseLog();
   check(
     "mouse-grabbing pane: shift+drag (xterm's own hatch) still selects",
     shiftDragClip.includes("GRAB_MARKER") && !SGR_REPORT.test(shiftDragLog),
@@ -1402,8 +1608,7 @@ try {
       s.lastBrowsedPath = dir;
       localStorage.setItem("specterm.settings", JSON.stringify(s));
     }, fixturesDir);
-    await win.reload();
-    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await reloadWithFileTree(win);
     await win.waitForTimeout(2500);
     check("file tree lists the fixtures dir", (await state(win)).names.includes("sample.ts"), (await state(win)).names.join(","));
 
@@ -1498,17 +1703,14 @@ try {
   const detachPaneCount = () => win.evaluate(() => document.querySelectorAll("[data-pane-id]").length);
 
   // Fresh tab so this starts from a clean single pane, then split → 2 panes.
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2000);
+  await newTab(win);
   const srcTab = await activeTab();
   await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2000);
+  await splitPane(win, SPLIT_SIDE);
   const srcPanesBefore = await detachPaneCount();
 
   // Another fresh tab as the drop target, then back to the source tab.
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2000);
+  await newTab(win);
   const dstTab = await activeTab();
   await win.locator(`.tab[data-tab-id="${srcTab}"]`).click();
   await win.waitForTimeout(700);
@@ -1558,8 +1760,7 @@ try {
       s.lastBrowsedPath = dir;
       localStorage.setItem("specterm.settings", JSON.stringify(s));
     }, mdWorkDir);
-    await win.reload();
-    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await reloadWithFileTree(win);
     await win.waitForTimeout(2000);
 
     await clickEntry(win, "note.md");
@@ -1616,8 +1817,7 @@ try {
       s.lastBrowsedPath = dir;
       localStorage.setItem("specterm.settings", JSON.stringify(s));
     }, safeDir);
-    await win.reload();
-    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await reloadWithFileTree(win);
     await win.waitForTimeout(2000);
     const safeSrcTab = await activeTab();
 
@@ -1680,8 +1880,7 @@ try {
       s.lastBrowsedPath = dir;
       localStorage.setItem("specterm.settings", JSON.stringify(s));
     }, draftDir);
-    await win.reload();
-    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await reloadWithFileTree(win);
     await win.waitForTimeout(2000);
 
     await clickEntry(win, "draft.md");
@@ -1695,8 +1894,7 @@ try {
     await win.waitForTimeout(700); // let the debounced draft persist to localStorage
 
     // Reload the renderer — same as reopening the app.
-    await win.reload();
-    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await reloadWithFileTree(win);
     await win.waitForTimeout(2000);
     await clickEntry(win, "draft.md");
     await win.waitForSelector(".markdown-content", { timeout: 8000 });
@@ -1748,8 +1946,7 @@ try {
       .catch(() => false);
 
   // A fresh tab to rename/close, independent of whatever earlier sections left.
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(1500);
+  await newTab(win);
   const renameTab = await activeTab();
 
   // 18a) Double-click the title opens the inline editor.
@@ -1793,8 +1990,7 @@ try {
 
   // 18d) THE regression: the × button closes the tab. Add a second tab first so
   // the close is a genuine removal, not the last-tab replacement.
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(1500);
+  await newTab(win);
   const beforeClose = await tabCount();
   await win.locator(`.tab[data-tab-id="${renameTab}"] .tab-close`).click();
   await win.waitForTimeout(400);
@@ -1806,11 +2002,9 @@ try {
 
   // 18e) Drag-to-reorder moves a tab past its neighbor, and a plain click right
   // after the drag still selects (the drag's suppress-click must not leak).
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(1200);
+  await newTab(win);
   const leftTab = await activeTab();
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(1200);
+  await newTab(win);
   const rightTab = await activeTab();
   const orderBefore = await tabOrder();
   if (leftTab && rightTab && orderBefore.indexOf(leftTab) < orderBefore.indexOf(rightTab)) {
@@ -1851,8 +2045,7 @@ try {
     skip("F2 leaves the rename editor shut inside a full-screen program", "macOS uses ⌘R");
     skip("F2 renames again once the program exits", "macOS uses ⌘R");
   } else {
-    await win.locator(".tab-new").click();
-    await win.waitForTimeout(1800);
+    await newTab(win);
     await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
     // Enter the alternate screen buffer the way a full-screen program does.
     await win.keyboard.type("printf '\\033[?1049h'");
@@ -1974,8 +2167,7 @@ try {
         id
       );
 
-    await win.locator(".tab-new").click();
-    await win.waitForTimeout(1800);
+    await newTab(win);
     const waitingTab = await tabIdOf(".tab.active");
     await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
     await win.keyboard.type(
@@ -2045,8 +2237,7 @@ try {
         JSON.stringify({ type: "mode", mode: "normal", sessionId }) + "\n"
       );
 
-      await win.locator(".tab-new").click();
-      await win.waitForTimeout(1800);
+      await newTab(win);
       await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
       await win.keyboard.type(`cd "${workDir}" && claude`);
       await win.keyboard.press("Enter");
@@ -2099,8 +2290,7 @@ try {
     await win.waitForTimeout(2200);
   };
 
-  await win.locator(".tab-new").click();
-  await win.waitForTimeout(2000);
+  await newTab(win);
   await cdTo(marker);
   const tabsBeforeClose = await historyTabCount();
 
@@ -2121,8 +2311,7 @@ try {
 
   // A closed *pane* goes back into the tab it came from, not into a new tab.
   await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-  await win.keyboard.press(SPLIT_SIDE);
-  await win.waitForTimeout(2200);
+  await splitPane(win, SPLIT_SIDE);
   const panesBeforePaneClose = await paneCount();
   const tabsBeforePaneClose = await historyTabCount();
   await cdTo(marker);
@@ -2172,13 +2361,16 @@ try {
   }
   try { app.process().kill("SIGKILL"); } catch {}
 
-  const app2 = await electron.launch({
-    args: [root, `--user-data-dir=${userDataDir}`],
-    cwd: root,
-  });
+  const app2 = await electron.launch(launchOptions(root, userDataDir));
   try {
     const win2 = await app2.firstWindow();
     win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
+    await win2.waitForSelector(".app", { timeout: 20000 });
+    // The sidebar comes back on whichever view was last open, which by this
+    // point in the suite is settings.
+    if (!(await win2.locator(".file-tree").count())) {
+      await win2.keyboard.press(SIDEBAR_KEY);
+    }
     await win2.waitForSelector(".file-tree", { timeout: 20000 });
     await win2.waitForTimeout(3000);
 

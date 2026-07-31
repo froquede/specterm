@@ -1,11 +1,14 @@
 # E2E test suite
 
-Two Playwright-driven end-to-end suites. Both build the app, launch the **real**
-Electron binary, and drive the actual UI (clicks, keyboard, settings), asserting
-on observable behavior.
+Three Playwright-driven end-to-end suites. Each builds the app, launches the
+**real** Electron binary, and drives the actual UI (clicks, keyboard, settings),
+asserting on observable behavior.
 
 - **`e2e.mjs`** — one long-lived launch. Covers the file sidebar, pane splits and
   drag-and-drop, the clipboard, the settings sidebar, and the tab-bar layout.
+- **`e2e-windows.mjs`** — multi-window behaviour: tearing a tab out into a window
+  of its own, dropping it onto another, and settings/theme changes propagating to
+  every open window.
 - **`e2e-session.mjs`** — session continuity, which needs the app closed and
   reopened repeatedly and so can't live in the suite above (it is already close to
   its time budget). Covers the two independent mechanisms: **detaching** (closing a
@@ -52,10 +55,63 @@ because both produce a green run that proves nothing:
 ## Run
 
 ```bash
+npm run test:e2e:all        # vite build + all three suites, in parallel
 npm run test:e2e            # vite build + node test/e2e.mjs
 npm run test:e2e:session    # vite build + node test/e2e-session.mjs
+npm run test:e2e:windows    # vite build + node test/e2e-windows.mjs
 npm run test:perf           # vite build + node test/perf-boot.mjs
 ```
+
+## They don't take your keyboard
+
+Every harness launches through `test/launch.mjs`, which sets
+`SPECTERM_BACKGROUND_WINDOWS=1`. The app then shows its windows *inactive* (see
+`raise()` in `electron/main.cjs`) — they appear, they render, they are driveable
+and screenshottable, they just never pull focus off whatever you were doing.
+Between them the suites open and close a few dozen windows over a few minutes,
+and without this, running the tests is something you can only do when you have
+nothing else to do.
+
+It comes with three Chromium switches, and they are not optional. A window that
+never gets focus is a window Chromium considers occluded, and it throttles
+occluded renderers to about a frame a second — which turns a 150ms CSS
+transition into two seconds and a green suite into a red one that says nothing
+about the app. `--disable-renderer-backgrounding`,
+`--disable-backgrounding-occluded-windows` and
+`--disable-features=CalculateNativeWinOcclusion` switch that off.
+
+`SPECTERM_TEST_FOREGROUND=1` gives the old behaviour back, which is what you
+want when you'd rather watch a run happen than read about it afterwards.
+
+## Runtime
+
+The suites wait on the app, not on the clock. That is the whole story of why
+they finish when they do, and it is worth stating because the obvious way to
+write these — sleep two seconds after opening a tab, sleep two seconds after a
+split — is what they used to do. A fixed sleep is the slowest machine the suite
+might ever run on, and every machine pays it on every run; `e2e.mjs` alone spent
+about three and a half minutes of a four-minute run waiting for things that had
+already finished.
+
+So each suite has an `until(what, predicate)` helper, and the waits say what
+they are waiting for: the pane count to go up and every terminal to have
+painted, the window to be gone, the shell's tick file to have two lines in it.
+The old duration survives as the deadline, so a genuinely slow machine behaves
+exactly as it did; and a wait that never comes true now fails *there*, naming
+the condition, instead of sailing on to fail somewhere else as a mystery.
+
+A few waits are still fixed, and they are the ones that are measuring time
+rather than passing it: that a seconds-granularity clock format ticks, that a
+minute-granularity one doesn't, that a debounced toast withholds itself and then
+appears, that a shell kept running while nothing was watching it. Those aren't
+slack.
+
+`test/run-all.mjs` (`npm run test:e2e:all`) runs the three suites at once. They
+are independent — each launches its own Electron on its own throwaway
+`--user-data-dir`, which is what Electron's single-instance lock keys on — so
+the cost is the longest suite rather than the sum of all three. Each suite's
+output is buffered and printed in one block when it finishes, since three of
+them narrating into the same terminal is unreadable.
 
 Exit code `0` = all checks passed, `1` = a check failed, `2` = hard timeout,
 `3` = harness error. A summary line reports `N passed, N failed, N skipped` and
@@ -95,7 +151,15 @@ halves of the fix against the program's own stdin rather than guessing from the
 UI: it runs a recorder in the pane that enables mouse tracking and writes back
 whatever the terminal sends it (`stty raw; cat > file`). A click must arrive as
 exactly one SGR press/release pair; a drag must arrive as nothing at all, and
-must instead put the text on the OS clipboard.
+must instead put the text on the OS clipboard. A double-click must select the
+word under it — it is the same held-back press, and forwarding it as a plain
+click is what used to make double-clicking select nothing.
+
+One case turns motion reporting on (`?1003`) as well, because that is what makes
+a *finished* selection fragile: xterm reports every pointer move to the program,
+treats a report as user input, and clears the selection on user input — so
+simply moving the mouse afterwards threw the selection away. The check selects,
+moves the pointer, and requires the text to still be there.
 
 That makes the check self-contained. One extra case runs the same drag against a
 real `claude` session — the program the bug was reported against — and is
