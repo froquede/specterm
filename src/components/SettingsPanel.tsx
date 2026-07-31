@@ -6,6 +6,8 @@ import {
   createEffect,
   onMount,
   onCleanup,
+  type JSX,
+  type Component,
 } from "solid-js";
 import {
   unfocusedOpacity,
@@ -51,9 +53,6 @@ import {
   tabBarAutoHide,
   setTabBarAutoHide,
   sidebarWidth,
-  setSidebarWidth,
-  SIDEBAR_WIDTH_MIN,
-  SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_DEFAULT,
   resetChromeLayout,
 } from "../stores/settings";
@@ -89,9 +88,66 @@ import {
   installHooks,
   removeHooks,
 } from "../lib/claude-hooks";
+import { IconChevronDown, IconSettings, ICON_STROKE } from "../lib/icons";
+import {
+  IconAppearance,
+  IconLayout,
+  IconTerminal,
+  IconSessions,
+  IconUpdates,
+} from "../lib/icons-lazy";
 
 interface SettingsPanelProps {
   onClose: () => void;
+}
+
+// Which categories are folded away. Module-level rather than component state:
+// the panel is unmounted every time the sidebar closes, and a fold that came
+// undone each time you looked away would be worse than no fold at all. Not
+// persisted to disk either — this is a working position, not a preference, and
+// it costs nothing to start a new session with everything in view.
+const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+
+// One category of settings: a header that folds it away, and the fields.
+//
+// The panel used to be a single column of every setting there is, separated by
+// hairlines, each one a label with a paragraph of explanation directly under it
+// and nothing to say where one ended and the next began. Grouping is the fix:
+// four or five things you would go looking for together, under a heading that
+// says what they are, foldable so the ones you have already set can get out of
+// the way of the one you came for.
+function Category(props: {
+  id: string;
+  title: string;
+  icon: Component<{ size?: number; "stroke-width"?: number }>;
+  children: JSX.Element;
+}) {
+  const open = () => !collapsed().has(props.id);
+  const toggle = () =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(props.id)) next.add(props.id);
+      return next;
+    });
+
+  return (
+    <section class="settings-category" classList={{ folded: !open() }}>
+      <button
+        class="settings-category-head"
+        onClick={toggle}
+        aria-expanded={open()}
+      >
+        <props.icon size={14} stroke-width={ICON_STROKE} />
+        <span class="settings-category-title">{props.title}</span>
+        <span class="settings-category-caret">
+          <IconChevronDown size={14} stroke-width={ICON_STROKE} />
+        </span>
+      </button>
+      <Show when={open()}>
+        <div class="settings-category-body">{props.children}</div>
+      </Show>
+    </section>
+  );
 }
 
 // Six representative swatches for a gallery row: background, accent, and the
@@ -404,12 +460,9 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   const activeIsCustom = () => !activeTheme().builtin && !activeTheme().id.startsWith("gallery-");
 
   return (
-    <div
-      class="settings-sidebar"
-      role="complementary"
-      aria-label="Settings"
-    >
+    <div class="settings-sidebar" role="complementary" aria-label="Settings">
       <div class="settings-header">
+        <IconSettings size={14} stroke-width={ICON_STROKE} />
         <span class="settings-title">Settings</span>
         {/* No Save button — changes persist live and autosave (see the effect
             above). Esc closes the sidebar. */}
@@ -420,619 +473,624 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         </div>
       </Show>
       <div class="settings-scroll">
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="theme-select">
-              Theme
-            </label>
-            <Show when={activeIsCustom()}>
-              <button
-                class="settings-reset"
-                onClick={() => removeCustomTheme(activeTheme().id)}
-              >
-                Remove
-              </button>
-            </Show>
-          </div>
-          <select
-            id="theme-select"
-            class="settings-select"
-            value={activeTheme().id}
-            onChange={(e) => setActiveTheme(e.currentTarget.value)}
-          >
-            <For each={availableThemes()}>
-              {(t) => <option value={t.id}>{t.name}</option>}
-            </For>
-            {/* Keep the picker showing the active gallery theme by name. */}
-            <Show when={activeTheme().id.startsWith("gallery-")}>
-              <option value={activeTheme().id}>{activeTheme().name}</option>
-            </Show>
-          </select>
-
-          <div class="settings-actions">
-            <button
-              class="settings-action"
-              onClick={() => setGalleryOpen((v) => !v)}
+        {/* ---- Appearance ------------------------------------------------- */}
+        <Category id="appearance" title="Appearance" icon={IconAppearance}>
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="theme-select">
+                Theme
+              </label>
+              <Show when={activeIsCustom()}>
+                <button
+                  class="settings-reset"
+                  onClick={() => removeCustomTheme(activeTheme().id)}
+                >
+                  Remove
+                </button>
+              </Show>
+            </div>
+            <select
+              id="theme-select"
+              class="settings-select"
+              value={activeTheme().id}
+              onChange={(e) => setActiveTheme(e.currentTarget.value)}
             >
-              {galleryOpen() ? "Hide gallery" : `Browse gallery (${galleryThemes().length})`}
-            </button>
-            <button class="settings-action" onClick={() => fileRef?.click()}>
-              Open file…
-            </button>
-            <button class="settings-action" onClick={() => setImportOpen((v) => !v)}>
-              {importOpen() ? "Cancel paste" : "Paste…"}
-            </button>
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".yaml,.yml,.json,.txt"
-            style={{ display: "none" }}
-            onChange={onFilePicked}
-          />
+              <For each={availableThemes()}>
+                {(t) => <option value={t.id}>{t.name}</option>}
+              </For>
+              {/* Keep the picker showing the active gallery theme by name. */}
+              <Show when={activeTheme().id.startsWith("gallery-")}>
+                <option value={activeTheme().id}>{activeTheme().name}</option>
+              </Show>
+            </select>
 
-          <Show when={galleryOpen()}>
+            <div class="settings-actions">
+              <button
+                class="settings-action"
+                onClick={() => setGalleryOpen((v) => !v)}
+              >
+                {galleryOpen()
+                  ? "Hide gallery"
+                  : `Browse gallery (${galleryThemes().length})`}
+              </button>
+              <button class="settings-action" onClick={() => fileRef?.click()}>
+                Open file…
+              </button>
+              <button
+                class="settings-action"
+                onClick={() => setImportOpen((v) => !v)}
+              >
+                {importOpen() ? "Cancel paste" : "Paste…"}
+              </button>
+            </div>
             <input
-              class="settings-search"
-              type="text"
-              placeholder="Filter themes…"
-              value={query()}
-              onInput={(e) => setQuery(e.currentTarget.value)}
+              ref={fileRef}
+              type="file"
+              accept=".yaml,.yml,.json,.txt"
+              style={{ display: "none" }}
+              onChange={onFilePicked}
             />
-            <div class="theme-gallery">
-              <For each={filteredGallery()}>
-                {(t) => (
+
+            <Show when={galleryOpen()}>
+              <input
+                class="settings-search"
+                type="text"
+                placeholder="Filter themes…"
+                value={query()}
+                onInput={(e) => setQuery(e.currentTarget.value)}
+              />
+              <div class="theme-gallery">
+                <For each={filteredGallery()}>
+                  {(t) => (
+                    <button
+                      class="theme-gallery-item"
+                      classList={{ active: t.id === activeTheme().id }}
+                      title={t.name}
+                      onClick={() => setActiveTheme(t.id)}
+                    >
+                      <span class="theme-swatches">
+                        <For each={swatches(t)}>
+                          {(color) => (
+                            <span
+                              class="theme-swatch"
+                              style={{ background: color }}
+                            />
+                          )}
+                        </For>
+                      </span>
+                      <span class="theme-gallery-name">{t.name}</span>
+                    </button>
+                  )}
+                </For>
+                <Show when={filteredGallery().length === 0}>
+                  <div class="settings-hint">No themes match “{query()}”.</div>
+                </Show>
+              </div>
+            </Show>
+
+            <Show when={importOpen()}>
+              <textarea
+                class="settings-textarea"
+                placeholder="Paste a base16 scheme (YAML or JSON)…"
+                value={importText()}
+                onInput={(e) => setImportText(e.currentTarget.value)}
+                rows={6}
+              />
+              <div class="settings-row">
+                <span class="settings-hint">base00–base0F → terminal + chrome.</span>
+                <button
+                  class="settings-reset"
+                  disabled={!importText().trim()}
+                  onClick={applyImport}
+                >
+                  Apply theme
+                </button>
+              </div>
+            </Show>
+
+            <Show when={importError()}>
+              <div class="settings-error">{importError()}</div>
+            </Show>
+            <p class="settings-hint">
+              Drag a base16 file onto the window, or browse hundreds of schemes
+              above. Imports recolor the terminal and the app.
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="font-select">
+                Terminal font
+              </label>
+              <Show when={terminalFontFamily() !== ""}>
+                <button
+                  class="settings-reset"
+                  onClick={() => setTerminalFontFamily("")}
+                >
+                  Reset
+                </button>
+              </Show>
+            </div>
+            <select
+              id="font-select"
+              class="settings-select"
+              value={terminalFontFamily()}
+              onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
+            >
+              <option value="">Default (bundled)</option>
+              {/* Keep a persisted pick visible even if detection hasn't run or
+                  no longer lists it (e.g. font uninstalled). */}
+              <Show
+                when={
+                  terminalFontFamily() && !fonts().includes(terminalFontFamily())
+                }
+              >
+                <option value={terminalFontFamily()}>
+                  {terminalFontFamily()}
+                </option>
+              </Show>
+              <For each={fonts()}>
+                {(f) => (
+                  <option value={f} style={{ "font-family": `'${f}', monospace` }}>
+                    {f}
+                  </option>
+                )}
+              </For>
+            </select>
+            <p class="settings-hint">
+              {fontsLoading()
+                ? "Detecting installed monospace fonts…"
+                : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="unfocused-opacity">
+                Unfocused pane opacity
+              </label>
+              <span class="settings-value">{pct()}%</span>
+            </div>
+            <input
+              ref={(el) => {
+                // Seed the initial position once, on mount, without a reactive
+                // `value={...}` binding — see the note above on drag-cancelling.
+                sliderRef = el;
+                el.value = String(unfocusedOpacity());
+              }}
+              id="unfocused-opacity"
+              class="settings-slider"
+              type="range"
+              min={UNFOCUSED_OPACITY_MIN}
+              max={UNFOCUSED_OPACITY_MAX}
+              step={0.05}
+              onInput={(e) => setUnfocusedOpacity(Number(e.currentTarget.value))}
+            />
+            <div class="settings-row">
+              <p class="settings-hint">
+                How visible inactive split panes are. 100% = no dimming.
+              </p>
+              <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
+                <button class="settings-reset" onClick={reset}>
+                  Reset
+                </button>
+              </Show>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="window-opacity">
+                Window opacity
+              </label>
+              <span class="settings-value">{winPct()}%</span>
+            </div>
+            <input
+              ref={(el) => {
+                // Seed the position once, on mount — same uncontrolled-slider
+                // reasoning as the unfocused-opacity control above (a reactive
+                // `value={...}` binding cancels an in-progress thumb drag).
+                windowSliderRef = el;
+                el.value = String(windowOpacity());
+              }}
+              id="window-opacity"
+              class="settings-slider"
+              type="range"
+              min={WINDOW_OPACITY_MIN}
+              max={WINDOW_OPACITY_MAX}
+              step={0.05}
+              onInput={(e) => setWindowOpacity(Number(e.currentTarget.value))}
+            />
+            <div class="settings-row">
+              <p class="settings-hint">
+                Whole-window transparency, so the desktop shows through. 100% =
+                opaque.
+              </p>
+              <Show when={windowOpacity() !== WINDOW_OPACITY_DEFAULT}>
+                <button class="settings-reset" onClick={resetWindow}>
+                  Reset
+                </button>
+              </Show>
+            </div>
+          </div>
+        </Category>
+
+        {/* ---- Layout ----------------------------------------------------- */}
+        <Category id="layout" title="Layout" icon={IconLayout}>
+          <div class="settings-section">
+            <div class="settings-row">
+              <span class="settings-label">Tab bar corner</span>
+              <Show when={chromeLayoutIsCustom()}>
+                <button class="settings-reset" onClick={resetChromeLayout}>
+                  Reset all
+                </button>
+              </Show>
+            </div>
+            {/* A 2×2 grid of the window's corners, laid out as the corners
+                themselves — picking one is aiming at it, not reading a label. */}
+            <div
+              class="corner-picker"
+              role="radiogroup"
+              aria-label="Tab bar corner"
+            >
+              <For each={TAB_BAR_CORNERS}>
+                {(corner) => (
                   <button
-                    class="theme-gallery-item"
-                    classList={{ active: t.id === activeTheme().id }}
-                    title={t.name}
-                    onClick={() => setActiveTheme(t.id)}
+                    class="corner-option"
+                    classList={{ active: tabBarCorner() === corner }}
+                    data-corner={corner}
+                    role="radio"
+                    aria-checked={tabBarCorner() === corner}
+                    aria-label={corner.replace("-", " ")}
+                    title={corner.replace("-", " ")}
+                    onClick={() => setTabBarCorner(corner)}
                   >
-                    <span class="theme-swatches">
-                      <For each={swatches(t)}>
-                        {(color) => (
-                          <span class="theme-swatch" style={{ background: color }} />
-                        )}
-                      </For>
-                    </span>
-                    <span class="theme-gallery-name">{t.name}</span>
+                    <span class="corner-bar" />
                   </button>
                 )}
               </For>
-              <Show when={filteredGallery().length === 0}>
-                <div class="settings-hint">No themes match “{query()}”.</div>
+            </div>
+            <p class="settings-hint">
+              Which edge the tabs sit on, and which end of it they hug. Moved to
+              the bottom, the window controls stay up top where you reach for
+              them.
+            </p>
+            <p class="settings-hint">
+              The sidebar's width is set by dragging the edge between it and the
+              panes — one width for both the file tree and this panel, so
+              switching between them never shifts the layout. <em>Reset all</em>
+              puts it back too.
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="tab-bar-height">
+                Tab bar height
+              </label>
+              <span class="settings-value">{tabBarHeight()}px</span>
+            </div>
+            <input
+              id="tab-bar-height"
+              class="settings-slider"
+              type="range"
+              min={TAB_BAR_HEIGHT_MIN}
+              max={TAB_BAR_HEIGHT_MAX}
+              step={1}
+              value={tabBarHeight()}
+              onInput={(e) => setTabBarHeight(Number(e.currentTarget.value))}
+            />
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="tab-bar-autohide">
+                Auto-hide the tab bar
+              </label>
+              <input
+                id="tab-bar-autohide"
+                type="checkbox"
+                class="settings-checkbox"
+                checked={tabBarAutoHide()}
+                onChange={(e) => setTabBarAutoHide(e.currentTarget.checked)}
+              />
+            </div>
+            <p class="settings-hint">
+              Panes take the whole window; the bar slides back in when you reach
+              for its edge.
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="custom-title-bar">
+                Tab bar replaces the title bar
+              </label>
+              <input
+                id="custom-title-bar"
+                type="checkbox"
+                class="settings-checkbox"
+                checked={customTitleBar()}
+                onChange={(e) => setCustomTitleBar(e.currentTarget.checked)}
+              />
+            </div>
+            <p class="settings-hint">
+              Drops the system title bar and puts the window controls in the tab
+              bar, so the panes get the space back. Takes effect on the next
+              window — a frame can't be added to or taken off one that's already
+              open. macOS always works this way. On Linux the frame comes off
+              entirely and resizing is then up to your compositor, so turn this
+              off if that ends up worse than the decorations it replaced.
+            </p>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="clock-enabled">
+                Clock in the tab bar
+              </label>
+              <input
+                id="clock-enabled"
+                type="checkbox"
+                class="settings-checkbox"
+                checked={clockEnabled()}
+                onChange={(e) => setClockEnabled(e.currentTarget.checked)}
+              />
+            </div>
+            <Show when={clockEnabled()}>
+              <input
+                id="clock-format"
+                class="settings-select"
+                type="text"
+                maxLength={CLOCK_FORMAT_MAX}
+                value={clockDraft()}
+                onInput={(e) => setClockDraft(e.currentTarget.value)}
+                onBlur={() => setClockFormat(clockDraft())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                }}
+              />
+              <p class="settings-hint">
+                Now: <strong>{clockPreview()}</strong> — <code>HH</code>{" "}
+                <code>mm</code> <code>ss</code> <code>DD</code> <code>MM</code>{" "}
+                <code>YYYY</code> <code>ddd</code> <code>h</code> <code>a</code>.
+                Wrap literal text in brackets: <code>[at] HH:mm</code>. Seconds
+                make it tick every second instead of every minute.
+              </p>
+            </Show>
+          </div>
+        </Category>
+
+        {/* ---- Terminal --------------------------------------------------- */}
+        <Category id="terminal" title="Terminal" icon={IconTerminal}>
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="startup-path">
+                Default terminal path
+              </label>
+              <Show when={startupPath() !== ""}>
+                <button
+                  class="settings-reset"
+                  onClick={() => {
+                    setStartupDraft("");
+                    setStartupError(null);
+                    setStartupPath("");
+                  }}
+                >
+                  Reset
+                </button>
               </Show>
             </div>
-          </Show>
-
-          <Show when={importOpen()}>
-            <textarea
-              class="settings-textarea"
-              placeholder="Paste a base16 scheme (YAML or JSON)…"
-              value={importText()}
-              onInput={(e) => setImportText(e.currentTarget.value)}
-              rows={6}
-            />
-            <div class="settings-row">
-              <span class="settings-hint">base00–base0F → terminal + chrome.</span>
-              <button
-                class="settings-reset"
-                disabled={!importText().trim()}
-                onClick={applyImport}
-              >
-                Apply theme
-              </button>
-            </div>
-          </Show>
-
-          <Show when={importError()}>
-            <div class="settings-error">{importError()}</div>
-          </Show>
-          <div class="settings-hint">
-            Drag a base16 file onto the window, or browse hundreds of schemes
-            above. Imports recolor the terminal and the app.
-          </div>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="font-select">
-              Terminal font
-            </label>
-            <Show when={terminalFontFamily() !== ""}>
-              <button
-                class="settings-reset"
-                onClick={() => setTerminalFontFamily("")}
-              >
-                Reset
-              </button>
-            </Show>
-          </div>
-          <select
-            id="font-select"
-            class="settings-select"
-            value={terminalFontFamily()}
-            onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
-          >
-            <option value="">Default (bundled)</option>
-            {/* Keep a persisted pick visible even if detection hasn't run or
-                no longer lists it (e.g. font uninstalled). */}
-            <Show
-              when={
-                terminalFontFamily() &&
-                !fonts().includes(terminalFontFamily())
-              }
-            >
-              <option value={terminalFontFamily()}>
-                {terminalFontFamily()}
-              </option>
-            </Show>
-            <For each={fonts()}>
-              {(f) => (
-                <option value={f} style={{ "font-family": `'${f}', monospace` }}>
-                  {f}
-                </option>
-              )}
-            </For>
-          </select>
-          <div class="settings-hint">
-            {fontsLoading()
-              ? "Detecting installed monospace fonts…"
-              : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
-          </div>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="startup-path">
-              Default terminal path
-            </label>
-            <Show when={startupPath() !== ""}>
-              <button
-                class="settings-reset"
-                onClick={() => {
-                  setStartupDraft("");
-                  setStartupError(null);
-                  setStartupPath("");
-                }}
-              >
-                Reset
-              </button>
-            </Show>
-          </div>
-          <input
-            id="startup-path"
-            class="settings-select"
-            type="text"
-            placeholder="Leave blank for home directory"
-            value={startupDraft()}
-            onInput={(e) => setStartupDraft(e.currentTarget.value)}
-            onBlur={commitStartupPath}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") e.currentTarget.blur();
-            }}
-          />
-          <Show when={startupError()}>
-            <div class="settings-error">{startupError()}</div>
-          </Show>
-          <div class="settings-hint">
-            Where new terminals open and the file sidebar starts. Blank uses
-            your home directory.
-          </div>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="clock-enabled">
-              Clock in the tab bar
-            </label>
             <input
-              id="clock-enabled"
-              type="checkbox"
-              class="settings-checkbox"
-              checked={clockEnabled()}
-              onChange={(e) => setClockEnabled(e.currentTarget.checked)}
-            />
-          </div>
-          <Show when={clockEnabled()}>
-            <input
-              id="clock-format"
+              id="startup-path"
               class="settings-select"
               type="text"
-              maxLength={CLOCK_FORMAT_MAX}
-              value={clockDraft()}
-              onInput={(e) => setClockDraft(e.currentTarget.value)}
-              onBlur={() => setClockFormat(clockDraft())}
+              placeholder="Leave blank for home directory"
+              value={startupDraft()}
+              onInput={(e) => setStartupDraft(e.currentTarget.value)}
+              onBlur={commitStartupPath}
               onKeyDown={(e) => {
                 if (e.key === "Enter") e.currentTarget.blur();
               }}
             />
-            <div class="settings-hint">
-              Now: <strong>{clockPreview()}</strong> — <code>HH</code>{" "}
-              <code>mm</code> <code>ss</code> <code>DD</code> <code>MM</code>{" "}
-              <code>YYYY</code> <code>ddd</code> <code>h</code> <code>a</code>.
-              Wrap literal text in brackets: <code>[at] HH:mm</code>. Seconds
-              make it tick every second instead of every minute.
+            <Show when={startupError()}>
+              <div class="settings-error">{startupError()}</div>
+            </Show>
+            <p class="settings-hint">
+              Where new terminals open and the file sidebar starts. Blank uses
+              your home directory.
+            </p>
+          </div>
+        </Category>
+
+        {/* ---- Sessions --------------------------------------------------- */}
+        <Category id="sessions" title="Sessions" icon={IconSessions}>
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="restore-last-session">
+                Reopen tabs on start
+              </label>
+              <input
+                id="restore-last-session"
+                type="checkbox"
+                class="settings-checkbox"
+                checked={restoreLastSession()}
+                onChange={(e) => setRestoreLastSession(e.currentTarget.checked)}
+              />
             </div>
-          </Show>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="restore-last-session">
-              Reopen tabs on start
-            </label>
-            <input
-              id="restore-last-session"
-              type="checkbox"
-              class="settings-checkbox"
-              checked={restoreLastSession()}
-              onChange={(e) => setRestoreLastSession(e.currentTarget.checked)}
-            />
-          </div>
-          <div class="settings-hint">
-            Brings back the tabs, splits, directories and screens you had open,
-            with the names they had. The shells are new — nothing you were
-            running is restarted.
+            <p class="settings-hint">
+              Brings back the tabs, splits, directories and screens you had open,
+              with the names they had. The shells are new — nothing you were
+              running is restarted.
+            </p>
           </div>
 
-          <div class="settings-row">
-            <label class="settings-sublabel" for="custom-title-bar">
-              Tab bar replaces the title bar
-            </label>
-            <input
-              id="custom-title-bar"
-              type="checkbox"
-              class="settings-checkbox"
-              checked={customTitleBar()}
-              onChange={(e) => setCustomTitleBar(e.currentTarget.checked)}
-            />
-          </div>
-          <div class="settings-hint">
-            Drops the system title bar and puts the window controls in the tab
-            bar, so the panes get the space back. Takes effect on the next window
-            — a frame can't be added to or taken off one that's already open.
-            macOS always works this way. On Linux the frame comes off entirely and
-            resizing is then up to your compositor, so turn this off if that ends
-            up worse than the decorations it replaced.
-          </div>
-
-          <div class="settings-row">
-            <label class="settings-sublabel" for="background-sessions">
-              Keep shells running when a window closes
-            </label>
-            <input
-              id="background-sessions"
-              type="checkbox"
-              class="settings-checkbox"
-              checked={backgroundSessions()}
-              onChange={(e) => setBackgroundSessions(e.currentTarget.checked)}
-            />
-          </div>
-          <div class="settings-hint">
-            Closing a window detaches it instead of ending it: your shells keep
-            running and a tray icon brings them back, exactly where they were.
-            Quit — from the tray menu or the app menu — is what actually ends
-            them. Off means closing a window closes it for good, and a restart
-            falls back to reopening the tabs above.
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="background-sessions">
+                Keep shells running when a window closes
+              </label>
+              <input
+                id="background-sessions"
+                type="checkbox"
+                class="settings-checkbox"
+                checked={backgroundSessions()}
+                onChange={(e) => setBackgroundSessions(e.currentTarget.checked)}
+              />
+            </div>
+            <p class="settings-hint">
+              Closing a window detaches it instead of ending it: your shells keep
+              running and a tray icon brings them back, exactly where they were.
+              Quit — from the tray menu or the app menu — is what actually ends
+              them. Off means closing a window closes it for good, and a restart
+              falls back to reopening the tabs above.
+            </p>
           </div>
 
-          <div class="settings-row">
-            <label class="settings-sublabel" for="session-restore-mode">
-              Resumable sessions
-            </label>
-          </div>
-          <select
-            id="session-restore-mode"
-            class="settings-select"
-            value={sessionRestoreMode()}
-            onChange={(e) =>
-              setSessionRestoreMode(
-                e.currentTarget.value as SessionRestoreMode
-              )
-            }
-          >
-            <option value="off">Ignore them</option>
-            <option value="type">Type the resume command</option>
-            <option value="run">Run the resume command</option>
-          </select>
-          <div class="settings-hint">
-            When a restored pane was running Claude Code, its session is
-            remembered. "Type" leaves <code>claude --resume …</code> at the
-            prompt for you to confirm; "run" submits it.
-          </div>
-
-          <div class="settings-row">
-            <label class="settings-sublabel" for="claude-attention-mode">
-              Flag panes waiting on you
-            </label>
-          </div>
-          <select
-            id="claude-attention-mode"
-            class="settings-select"
-            value={claudeAttentionMode()}
-            onChange={(e) =>
-              setClaudeAttentionMode(
-                e.currentTarget.value as ClaudeAttentionMode
-              )
-            }
-          >
-            <option value="off">Off</option>
-            <option value="heuristic">On — detect it</option>
-            <option value="hooks">On — let Claude say so</option>
-          </select>
-          <div class="settings-hint">
-            A dot on the tab and on the pane's title-bar when Claude Code has
-            finished a turn or is asking permission, so you can leave it running
-            in another tab. "Detect it" needs no setup and watches for a pane
-            that was working going quiet. A terminal bell counts either way.
-          </div>
-
-          <Show when={claudeAttentionMode() === "hooks"}>
-            <Show
-              when={hooksSupported}
-              fallback={
-                <div class="settings-hint">
-                  Not available on Windows — the hook writes to{" "}
-                  <code>/dev/tty</code>, which it has no equivalent of. Use
-                  "detect it" instead.
-                </div>
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="session-restore-mode">
+                Resumable sessions
+              </label>
+            </div>
+            <select
+              id="session-restore-mode"
+              class="settings-select"
+              value={sessionRestoreMode()}
+              onChange={(e) =>
+                setSessionRestoreMode(e.currentTarget.value as SessionRestoreMode)
               }
             >
-              <div class="settings-actions">
-                <button
-                  class="settings-action"
-                  disabled={hooksBusy()}
-                  onClick={toggleHooks}
-                >
-                  {hooksBusy()
-                    ? "Working…"
-                    : hooksOn()
-                      ? "Remove hooks"
-                      : "Install hooks…"}
-                </button>
-              </div>
-              <div class="settings-hint">
-                Adds a <code>Notification</code> and a <code>Stop</code> hook to{" "}
-                <code>~/.claude/settings.json</code>; each writes one escape
-                sequence to the pane it runs in. Nothing else in that file is
-                touched, and "Remove" takes back exactly these two. Sessions
-                already running pick the hooks up on their next turn.
-              </div>
-              <Show when={hooksError()}>
-                <div class="settings-error">{hooksError()}</div>
-              </Show>
-            </Show>
-          </Show>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="unfocused-opacity">
-              Unfocused pane opacity
-            </label>
-            <span class="settings-value">{pct()}%</span>
-          </div>
-          <input
-            ref={(el) => {
-              // Seed the initial position once, on mount, without a reactive
-              // `value={...}` binding — see the note above on drag-cancelling.
-              sliderRef = el;
-              el.value = String(unfocusedOpacity());
-            }}
-            id="unfocused-opacity"
-            class="settings-slider"
-            type="range"
-            min={UNFOCUSED_OPACITY_MIN}
-            max={UNFOCUSED_OPACITY_MAX}
-            step={0.05}
-            onInput={(e) => setUnfocusedOpacity(Number(e.currentTarget.value))}
-          />
-          <div class="settings-row">
-            <span class="settings-hint">
-              How visible inactive split panes are. 100% = no dimming.
-            </span>
-            <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
-              <button class="settings-reset" onClick={reset}>
-                Reset
-              </button>
-            </Show>
-          </div>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <label class="settings-label" for="window-opacity">
-              Window opacity
-            </label>
-            <span class="settings-value">{winPct()}%</span>
-          </div>
-          <input
-            ref={(el) => {
-              // Seed the position once, on mount — same uncontrolled-slider
-              // reasoning as the unfocused-opacity control above (a reactive
-              // `value={...}` binding cancels an in-progress thumb drag).
-              windowSliderRef = el;
-              el.value = String(windowOpacity());
-            }}
-            id="window-opacity"
-            class="settings-slider"
-            type="range"
-            min={WINDOW_OPACITY_MIN}
-            max={WINDOW_OPACITY_MAX}
-            step={0.05}
-            onInput={(e) => setWindowOpacity(Number(e.currentTarget.value))}
-          />
-          <div class="settings-row">
-            <span class="settings-hint">
-              Whole-window transparency, so the desktop shows through. 100% =
-              opaque.
-            </span>
-            <Show when={windowOpacity() !== WINDOW_OPACITY_DEFAULT}>
-              <button class="settings-reset" onClick={resetWindow}>
-                Reset
-              </button>
-            </Show>
-          </div>
-        </div>
-
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <span class="settings-label">Layout</span>
-            <Show when={chromeLayoutIsCustom()}>
-              <button class="settings-reset" onClick={resetChromeLayout}>
-                Reset
-              </button>
-            </Show>
+              <option value="off">Ignore them</option>
+              <option value="type">Type the resume command</option>
+              <option value="run">Run the resume command</option>
+            </select>
+            <p class="settings-hint">
+              When a restored pane was running Claude Code, its session is
+              remembered. "Type" leaves <code>claude --resume …</code> at the
+              prompt for you to confirm; "run" submits it.
+            </p>
           </div>
 
-          <div class="settings-row">
-            <span class="settings-sublabel">Tab bar corner</span>
-          </div>
-          {/* A 2×2 grid of the window's corners, laid out as the corners
-              themselves — picking one is aiming at it, not reading a label. */}
-          <div class="corner-picker" role="radiogroup" aria-label="Tab bar corner">
-            <For each={TAB_BAR_CORNERS}>
-              {(corner) => (
-                <button
-                  class="corner-option"
-                  classList={{ active: tabBarCorner() === corner }}
-                  data-corner={corner}
-                  role="radio"
-                  aria-checked={tabBarCorner() === corner}
-                  aria-label={corner.replace("-", " ")}
-                  title={corner.replace("-", " ")}
-                  onClick={() => setTabBarCorner(corner)}
-                >
-                  <span class="corner-bar" />
-                </button>
-              )}
-            </For>
-          </div>
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="claude-attention-mode">
+                Flag panes waiting on you
+              </label>
+            </div>
+            <select
+              id="claude-attention-mode"
+              class="settings-select"
+              value={claudeAttentionMode()}
+              onChange={(e) =>
+                setClaudeAttentionMode(
+                  e.currentTarget.value as ClaudeAttentionMode
+                )
+              }
+            >
+              <option value="off">Off</option>
+              <option value="heuristic">On — detect it</option>
+              <option value="hooks">On — let Claude say so</option>
+            </select>
+            <p class="settings-hint">
+              A dot on the tab and on the pane's title-bar when Claude Code has
+              finished a turn or is asking permission, so you can leave it running
+              in another tab. "Detect it" needs no setup and watches for a pane
+              that was working going quiet. A terminal bell counts either way.
+            </p>
 
-          <div class="settings-row">
-            <label class="settings-sublabel" for="tab-bar-height">
-              Tab bar height
-            </label>
-            <span class="settings-value">{tabBarHeight()}px</span>
-          </div>
-          <input
-            id="tab-bar-height"
-            class="settings-slider"
-            type="range"
-            min={TAB_BAR_HEIGHT_MIN}
-            max={TAB_BAR_HEIGHT_MAX}
-            step={1}
-            value={tabBarHeight()}
-            onInput={(e) => setTabBarHeight(Number(e.currentTarget.value))}
-          />
-
-          <div class="settings-row">
-            <label class="settings-sublabel" for="sidebar-width">
-              Sidebar width
-            </label>
-            <span class="settings-value">{sidebarWidth()}px</span>
-          </div>
-          <input
-            id="sidebar-width"
-            class="settings-slider"
-            type="range"
-            min={SIDEBAR_WIDTH_MIN}
-            max={SIDEBAR_WIDTH_MAX}
-            step={10}
-            value={sidebarWidth()}
-            onInput={(e) => setSidebarWidth(Number(e.currentTarget.value))}
-          />
-          <div class="settings-hint">
-            Also draggable: grab the edge between the sidebar and the panes.
-          </div>
-
-          <div class="settings-row">
-            <label class="settings-sublabel" for="tab-bar-autohide">
-              Auto-hide the tab bar
-            </label>
-            <input
-              id="tab-bar-autohide"
-              type="checkbox"
-              class="settings-checkbox"
-              checked={tabBarAutoHide()}
-              onChange={(e) => setTabBarAutoHide(e.currentTarget.checked)}
-            />
-          </div>
-          <div class="settings-hint">
-            Panes take the whole window; the bar slides back in when you reach
-            for its edge.
-          </div>
-        </div>
-        <div class="settings-divider" />
-
-        <div class="settings-section">
-          <div class="settings-row">
-            <span class="settings-label">Updates</span>
-          </div>
-          {/* Toast anchor: position:relative so the absolutely-positioned
-              up-to-date toast sits directly above the button, overlapping the
-              content, and fades in/out. */}
-          <div class="updater-control">
-            <Show when={toastMounted()}>
-              <div
-                class="updater-toast"
-                classList={{ visible: toastVisible() }}
-                role="status"
-                aria-live="polite"
+            <Show when={claudeAttentionMode() === "hooks"}>
+              <Show
+                when={hooksSupported}
+                fallback={
+                  <p class="settings-hint">
+                    Not available on Windows — the hook writes to{" "}
+                    <code>/dev/tty</code>, which it has no equivalent of. Use
+                    "detect it" instead.
+                  </p>
+                }
               >
-                {toastMsg()}
-              </div>
-            </Show>
-            {/* While downloading the button becomes a progress bar: an accent
-                fill grows left→right to the percentage. A second copy of the
-                label, clipped to the filled region and painted in the bg color,
-                overlays the base label so the text stays legible on both the
-                filled (accent) and unfilled (chrome) sides. */}
-            <button
-              class="settings-action updater-button"
-              classList={{
-                ready: updaterPhase() === "downloaded",
-                downloading: updaterDownloading(),
-              }}
-              style={
-                updaterDownloading()
-                  ? { "--progress": `${updaterPercent()}%` }
-                  : undefined
-              }
-              disabled={updaterBusy()}
-              onClick={onUpdaterButton}
-            >
-              <Show when={updaterDownloading()}>
-                <span class="updater-fill" aria-hidden="true" />
-                <span class="updater-label over" aria-hidden="true">
-                  {updaterLabel()}
-                </span>
+                <div class="settings-actions">
+                  <button
+                    class="settings-action"
+                    disabled={hooksBusy()}
+                    onClick={toggleHooks}
+                  >
+                    {hooksBusy()
+                      ? "Working…"
+                      : hooksOn()
+                        ? "Remove hooks"
+                        : "Install hooks…"}
+                  </button>
+                </div>
+                <p class="settings-hint">
+                  Adds a <code>Notification</code> and a <code>Stop</code> hook to{" "}
+                  <code>~/.claude/settings.json</code>; each writes one escape
+                  sequence to the pane it runs in. Nothing else in that file is
+                  touched, and "Remove" takes back exactly these two. Sessions
+                  already running pick the hooks up on their next turn.
+                </p>
+                <Show when={hooksError()}>
+                  <div class="settings-error">{hooksError()}</div>
+                </Show>
               </Show>
-              <span class="updater-label base">{updaterLabel()}</span>
-            </button>
+            </Show>
           </div>
-          <Show when={updaterError()}>
-            <div class="settings-error">{updaterError()}</div>
-          </Show>
-          <div class="settings-hint">
-            Checks GitHub for the latest release and installs it in place.
+        </Category>
+
+        {/* ---- Updates ---------------------------------------------------- */}
+        <Category id="updates" title="Updates" icon={IconUpdates}>
+          <div class="settings-section">
+            {/* Toast anchor: position:relative so the absolutely-positioned
+                up-to-date toast sits directly above the button, overlapping the
+                content, and fades in/out. */}
+            <div class="updater-control">
+              <Show when={toastMounted()}>
+                <div
+                  class="updater-toast"
+                  classList={{ visible: toastVisible() }}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {toastMsg()}
+                </div>
+              </Show>
+              {/* While downloading the button becomes a progress bar: an accent
+                  fill grows left→right to the percentage. A second copy of the
+                  label, clipped to the filled region and painted in the bg color,
+                  overlays the base label so the text stays legible on both the
+                  filled (accent) and unfilled (chrome) sides. */}
+              <button
+                class="settings-action updater-button"
+                classList={{
+                  ready: updaterPhase() === "downloaded",
+                  downloading: updaterDownloading(),
+                }}
+                style={
+                  updaterDownloading()
+                    ? { "--progress": `${updaterPercent()}%` }
+                    : undefined
+                }
+                disabled={updaterBusy()}
+                onClick={onUpdaterButton}
+              >
+                <Show when={updaterDownloading()}>
+                  <span class="updater-fill" aria-hidden="true" />
+                  <span class="updater-label over" aria-hidden="true">
+                    {updaterLabel()}
+                  </span>
+                </Show>
+                <span class="updater-label base">{updaterLabel()}</span>
+              </button>
+            </div>
+            <Show when={updaterError()}>
+              <div class="settings-error">{updaterError()}</div>
+            </Show>
+            <p class="settings-hint">
+              Checks GitHub for the latest release and installs it in place.
+            </p>
           </div>
-        </div>
+        </Category>
       </div>
       <div class="settings-version">Specterm v{__APP_VERSION__}</div>
     </div>

@@ -1,4 +1,12 @@
-import { Show, onMount, createEffect, createMemo, onCleanup } from "solid-js";
+import {
+  Show,
+  Suspense,
+  lazy,
+  onMount,
+  createEffect,
+  createMemo,
+  onCleanup,
+} from "solid-js";
 import {
   captureSessionNow,
   captureSessionOnExit,
@@ -28,11 +36,21 @@ import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd } from "./lib/fspath";
+import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
+import TitleStrip from "./components/TitleStrip";
 import SplitContainer from "./components/SplitContainer";
 import FileTree from "./components/FileTree";
-import SettingsPanel from "./components/SettingsPanel";
 import SidebarResizeHandle from "./components/SidebarResizeHandle";
+
+// The settings panel is the one part of the chrome that is never on screen at
+// launch, and it is also the widest: a thousand lines of controls, the font
+// prober, the updater UI, the Claude-hooks installer and its own half of the
+// icon set. Split into a chunk of its own it costs a launch that never opens it
+// nothing at all — not a byte fetched, not a line parsed — and the first shell
+// gets the boot budget instead. It was already mounted lazily; this makes it
+// *load* lazily too, which is the half that was actually costing anything.
+const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
 import type { UnlistenFn } from "./backends";
@@ -243,6 +261,12 @@ export default function App() {
     // Apply the persisted color theme (CSS variables + terminal palette).
     initTheme();
 
+    // Subscribe to this window's frame state (fullscreen, maximised, and
+    // whether we draw the window controls ourselves). Whether the controls
+    // exist at all was already answered synchronously from the boot flags, so
+    // this only refines what is on screen — it never gates the first paint.
+    void initWindowChrome();
+
     // Start listening for settings/theme/favorites changes made in other
     // windows. Each store registered its own reload in the init calls above.
     void initStoreSync();
@@ -427,6 +451,10 @@ export default function App() {
       data-tab-edge={tabBarEdge()}
       data-tab-autohide={tabBarAutoHide() ? "true" : "false"}
     >
+      {/* Only ever present when the tab bar has been moved off the top edge —
+          see TitleStrip, which decides for itself and renders nothing
+          otherwise. */}
+      <TitleStrip />
       <TabBar
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
@@ -455,14 +483,19 @@ export default function App() {
         />
         {/* Mounted only while open. The panel probes the installed font list and
             builds the 325-scheme gallery on mount, so keeping it alive behind an
-            internal <Show> paid that cost on every app boot. */}
+            internal <Show> paid that cost on every app boot. Nothing is rendered
+            while its chunk is in flight: it comes off local disk in a frame or
+            two, and a placeholder that flashes for one frame reads worse than
+            the panel simply opening. */}
         <Show when={settingsOpen()}>
-          <SettingsPanel
-            onClose={() => {
-              store.closeSidebar();
-              focusActivePane();
-            }}
-          />
+          <Suspense>
+            <SettingsPanel
+              onClose={() => {
+                store.closeSidebar();
+                focusActivePane();
+              }}
+            />
+          </Suspense>
         </Show>
         <Show when={store.state.sidebarView !== null}>
           <SidebarResizeHandle />

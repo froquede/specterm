@@ -27,21 +27,15 @@ export default function SidebarResizeHandle() {
     document.body.classList.add("resizing-sidebar");
   }
 
-  // The view currently in the sidebar slot may hold a floor of its own — the
-  // settings panel does, because its controls stop being usable below it. Clamp
-  // the drag to that floor so the stored width never outruns what's on screen
-  // (otherwise the strip keeps "moving" while the sidebar visibly doesn't).
-  function renderedFloor(handle: HTMLElement): number {
-    const sidebar = handle.previousElementSibling;
-    if (!(sidebar instanceof HTMLElement)) return 0;
-    return parseFloat(getComputedStyle(sidebar).minWidth) || 0;
-  }
-
+  // No per-view floor to respect any more: the settings panel used to refuse to
+  // go below 340px, which meant the strip kept "moving" while the sidebar
+  // visibly didn't, and switching views at a narrower width shoved the panes
+  // sideways and back. Both views now take the one width, and the only clamp is
+  // the store's own (SIDEBAR_WIDTH_MIN/MAX).
   function onPointerMove(e: PointerEvent) {
     const el = e.currentTarget as HTMLElement;
     if (!el.hasPointerCapture(e.pointerId)) return;
-    const width = startWidth + (e.clientX - startX);
-    setSidebarWidth(Math.max(renderedFloor(el), width));
+    setSidebarWidth(startWidth + (e.clientX - startX));
   }
 
   function endDrag(e: PointerEvent) {

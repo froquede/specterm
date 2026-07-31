@@ -63,6 +63,7 @@ import {
   saveSession,
 } from "./history";
 import { restoreLastSession } from "./settings";
+import { loadSidebarView, saveSidebarView } from "../lib/sidebar-state";
 
 function createTerminalTab(cwd = ""): Tab {
   const leaf = createLeaf({ kind: "terminal", ptyId: null, cwd });
@@ -232,7 +233,7 @@ const [state, setStateRaw] = createSignal<AppState>({
   tabs: [],
   activeTabId: "",
   tabHistory: [],
-  sidebarView: "files",
+  sidebarView: loadSidebarView(),
   renamingTabId: null,
 });
 
@@ -1220,19 +1221,22 @@ export function useTabStore() {
     // whatever was there, so "settings is open" and "the file tree is open" can
     // never both be true — the invariant lives here, not in the callers.
     showSidebar(view: SidebarView) {
-      update((s) => (s.sidebarView === view ? s : { ...s, sidebarView: view }));
+      if (state().sidebarView === view) return;
+      saveSidebarView(view);
+      update((s) => ({ ...s, sidebarView: view }));
     },
 
     closeSidebar() {
-      update((s) => (s.sidebarView === null ? s : { ...s, sidebarView: null }));
+      if (state().sidebarView === null) return;
+      saveSidebarView(null);
+      update((s) => ({ ...s, sidebarView: null }));
     },
 
     // Show `view`, or close the sidebar if it's already the one showing.
     toggleSidebarView(view: SidebarView) {
-      update((s) => ({
-        ...s,
-        sidebarView: s.sidebarView === view ? null : view,
-      }));
+      const next = state().sidebarView === view ? null : view;
+      saveSidebarView(next);
+      update((s) => ({ ...s, sidebarView: next }));
     },
   };
 }
