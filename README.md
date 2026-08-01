@@ -4,7 +4,7 @@ A GPU-accelerated terminal emulator for running coding agents in parallel.
 Sessions survive closing the window, panes tell you when an agent is waiting, and
 markdown renders inline. SolidJS + xterm.js on Electron — Linux, macOS, Windows.
 
-![Specterm — three agents running in their own panes, dividers dragged on both axes, panes swapped by their title-bars, and each agent flagging its pane as it finishes](docs/assets/specterm.gif)
+![Specterm — three agents running in their own panes, dividers dragged on both axes, panes swapped by their title-bars, a Mermaid diagram rendered in a tab of its own, a theme change recolouring everything at once, and each agent flagging its pane as it finishes](docs/assets/specterm.gif)
 
 ## Install
 

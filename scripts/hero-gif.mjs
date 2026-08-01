@@ -34,22 +34,35 @@ const root = path.resolve(__dirname, "..");
 const outFile =
   process.argv[2] ?? path.join(root, "docs", "assets", "specterm.gif");
 const themeId = process.argv[3] ?? "tokyo-night";
+// The theme it changes to partway through.
+// Nord: still dark, but a good deal lighter and cooler than Tokyo Night
+// (#2e3440 against #1a1b26), so the change reads at a glance. Gruvbox was tried
+// first and is too close in luminance to register in a short recording.
+const themeSwitchTo = process.argv[4] ?? "nord";
 
 // 960x600 keeps the GIF inside the ~880px GitHub renders a README at, without
 // paying for pixels nobody sees.
 const WIDTH = 960;
 const HEIGHT = 600;
-const FPS = 8;
+const FPS = 12;
 const FRAME_MS = Math.round(1000 / FPS);
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const log = (...a) => console.log("[gif]", ...a);
 
 // --- Fixture -----------------------------------------------------------------
-const home = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-hero-home-"));
+// A fixed path rather than mkdtemp: this one is on screen. The markdown pane
+// shows the file's full path in its breadcrumb, and "specterm-hero-home-Cpjc08"
+// both looks like debris and advertises that the project is a fixture.
+const home = path.join(os.tmpdir(), "specterm-demo");
+fs.rmSync(home, { recursive: true, force: true });
+fs.mkdirSync(home, { recursive: true });
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-hero-"));
 const demo = path.join(home, "demo");
 fs.mkdirSync(path.join(demo, "src"), { recursive: true });
+// Demo commands live on PATH (see .bashrc below) so the recording shows plain
+// verbs rather than shell scripts with arguments.
+fs.mkdirSync(path.join(home, "bin"), { recursive: true });
 
 // A neutral prompt: no username, no hostname, no real path.
 fs.writeFileSync(
@@ -57,6 +70,7 @@ fs.writeFileSync(
   [
     "PS1='\\[\\e[38;5;110m\\]demo\\[\\e[0m\\] \\[\\e[38;5;245m\\]›\\[\\e[0m\\] '",
     "unset PROMPT_COMMAND",
+    'export PATH="$HOME/bin:$PATH"',
     "export LANG=C.UTF-8",
   ].join("\n") + "\n"
 );
@@ -65,24 +79,51 @@ fs.writeFileSync(
 // about sudo until this file exists. Three of the panes here are fresh shells.
 fs.writeFileSync(path.join(home, ".sudo_as_admin_successful"), "");
 
+fs.writeFileSync(
+  path.join(demo, "ARCHITECTURE.md"),
+  `# Architecture
+
+A pane is a first-class surface: it can hold a shell, a rendered document, or a
+syntax-highlighted file — and a split inherits the directory it came from.
+
+\`\`\`mermaid
+graph LR
+  A[program] -->|OSC 9| B(pane)
+  B --> C{are you looking?}
+  C -->|no| D[dot on the tab]
+  C -->|yes| E[nothing to say]
+\`\`\`
+
+Markdown renders inline, Mermaid included, and a document opens in a tab of its
+own when a program asks for one.
+`
+);
+
+// Any program can ask for a rendered markdown pane; this is the whole of it.
+fs.writeFileSync(
+  path.join(home, "bin", "docs"),
+  `#!/bin/bash\nprintf '\\033]1337;OpenMD;path=${demo}/ARCHITECTURE.md;mode=tab\\007'\n`,
+  { mode: 0o755 }
+);
+
 // A stand-in for a coding agent: prints its working notes at a given pace, then
 // emits OSC 9 — the standard "notify the user" sequence, which is all any tool
 // has to do to light up the pane it ran in.
 fs.writeFileSync(
-  path.join(demo, "agent.sh"),
+  path.join(home, "bin", "agent"),
   `#!/bin/bash
 # The work is preset per task name so the recording shows a short command.
-case "$1" in
-  refactor) step=3.6; msg='Refactor complete - 3 files'
+case "$(basename "$0")" in
+  refactor) step=5.2; msg='Refactor complete - 3 files'
             lines=("reading src/pane.ts" "src/pane.ts   +18 -7" \\
                    "src/osc.ts     +4 -2" "src/main.ts   +11 -3") ;;
-  tests)    step=2.6; msg='42 passed, 0 failed'
+  tests)    step=4.0; msg='42 passed, 0 failed'
             lines=("vitest run" "osc.spec.ts     18 ok" "attention.spec  24 ok") ;;
-  lint)     step=1.6; msg='Lint clean'
+  lint)     step=2.8; msg='Lint clean'
             lines=("eslint src" "0 problems") ;;
 esac
 mag=$'\\033[35m'; dim=$'\\033[38;5;245m'; grn=$'\\033[32m'; rst=$'\\033[0m'
-printf '%s*%s %s\\n' "$mag" "$rst" "$1"
+printf '%s*%s %s\\n' "$mag" "$rst" "$(basename "$0")"
 for line in "\${lines[@]}"; do
   sleep "$step"
   printf '%s  . %s%s\\n' "$dim" "$line" "$rst"
@@ -100,6 +141,12 @@ fs.copyFileSync(
   path.join(__dirname, "fixtures", "spin.js"),
   path.join(demo, "spin.js")
 );
+
+// Three names for the one script; it dispatches on how it was called, so the
+// recording shows a plain `refactor` instead of a shell script with arguments.
+for (const name of ["refactor", "tests", "lint"]) {
+  fs.symlinkSync("agent", path.join(home, "bin", name));
+}
 
 for (const f of ["main.ts", "pane.ts", "osc.ts"]) {
   fs.writeFileSync(path.join(demo, "src", f), `// ${f}\n`);
@@ -233,21 +280,32 @@ async function swapPanes(sourceIndex, targetIndex) {
   await win.mouse.up();
 }
 
+// Change theme mid-recording, through the picker. The whole app recolours —
+// terminal palette and chrome together — which is the point of the feature.
+async function switchTheme(id) {
+  await win.click(".tab-settings");
+  await win.waitForSelector("#theme-select", { timeout: 10000 });
+  await sleep(500);
+  await win.selectOption("#theme-select", id);
+  await sleep(1100);
+  await win.click(".tab-settings");
+}
+
 // 1. Split off a column for the work, and start the long job in it.
 await hold(400);
 await win.keyboard.press("Control+Shift+Enter");
 await hold(700);
-await type("./agent.sh refactor");
+await type("refactor");
 await hold(600);
 
 // 2. Two more agents stacked under it.
 await win.keyboard.press("Control+Shift+S");
 await hold(700);
-await type("./agent.sh tests");
+await type("tests");
 await hold(600);
 await win.keyboard.press("Control+Shift+S");
 await hold(700);
-await type("./agent.sh lint");
+await type("lint");
 await hold(600);
 
 // 3. Back to the left column — the pane you actually sit in while they run.
@@ -285,19 +343,36 @@ await dragHandle("v", 1, 95);
 await hold(2200);
 await still("04-regrown");
 
-// 7. The agents finish out of order, each flagging its own pane with what it
-//    said — none of them the pane you are looking at.
-await hold(4500);
-await still("05-panes-waiting");
+// 7. A rendered document, in a tab of its own, because a program asked for one.
+//     Mermaid included.
+await win.click(".xterm-screen");
+await hold(300);
+await type("docs");
+await hold(2600);
+await still("05-markdown");
 
-// 8. One keystroke per pane, and each flag goes out as you arrive.
+// 8. One theme drives the terminal palette and the chrome together, so the
+//     document, the tabs and the panes all recolour at once.
+await switchTheme(themeSwitchTo);
+// The panel is shut by now; this is the beat where the recoloured app is
+// actually on screen unobstructed, so it is the one worth holding.
+await hold(2600);
+await still("06-themed");
+
+// 9. Back to the terminal tab. While we were reading, the agents finished —
+//     the tab said so without us being in it.
+await win.keyboard.press("Control+Shift+ArrowLeft");
+await hold(2600);
+await still("07-panes-waiting");
+
+// 10. One keystroke per pane, and each flag goes out as you arrive.
 await win.keyboard.press("Control+Shift+U");
-await hold(1700);
+await hold(1500);
 await win.keyboard.press("Control+Shift+U");
-await hold(1700);
+await hold(1500);
 await win.keyboard.press("Control+Shift+U");
-await hold(2200);
-await still("06-cleared");
+await hold(1900);
+await still("08-cleared");
 
 rolling = false;
 await camera;
