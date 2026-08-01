@@ -29,6 +29,7 @@
     "test:e2e:session": "vite build && node test/e2e-session.mjs",
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
+    "hero:gif": "vite build && node scripts/hero-gif.mjs",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -131,8 +132,10 @@
     "cross-env": "^10.1.0",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
+    "gifenc": "^1.0.3",
     "lucide-solid": "^1.28.0",
     "playwright": "^1.61.1",
+    "pngjs": "^7.0.0",
     "typescript": "^5.6.0",
     "vite": "^6.0.0",
     "vite-plugin-solid": "^2.10.0",

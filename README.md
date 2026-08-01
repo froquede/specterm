@@ -4,6 +4,8 @@ A GPU-accelerated terminal emulator for running coding agents in parallel.
 Sessions survive closing the window, panes tell you when an agent is waiting, and
 markdown renders inline. SolidJS + xterm.js on Electron — Linux, macOS, Windows.
 
+![Specterm — a split with a rendered document, a pane that starts waiting while you look elsewhere, and the jump back to it](docs/assets/specterm.gif)
+
 ## Install
 
 Grab a build from [Releases](https://github.com/froquede/specterm/releases):
@@ -15,30 +17,13 @@ macOS is unsigned, so clear the quarantine flag once after installing:
 xattr -dr com.apple.quarantine /Applications/Specterm.app
 ```
 
-## What makes it different
+## Features
 
-Most of what a terminal does, Specterm does the usual way. These are the parts
-that don't exist elsewhere, or don't exist together:
-
-- **Sessions survive the window closing.** Closing *detaches*: the shells keep
-  running and a tray icon brings the window back on the same live processes.
-  Quit is what actually ends them.
-- **Panes tell you when an agent is waiting.** A dot on the tab and the pane when
-  Claude Code finishes a turn or asks permission — plus any tool that emits a
-  standard notification sequence. `⌘⇧U` jumps to the next one.
-- **Copy out of full-screen programs.** Selecting text works inside Claude Code,
-  vim or htop, which normally take the mouse away from the terminal.
-- **Tabs move between windows with the shell still running.** Drag a tab past the
-  window edge; the process is handed over live, scrollback and all.
-- **Markdown preview and editor**, with Mermaid — and installed builds register
-  as a `.md` handler, so *Open With → Specterm* works.
-- **Restore brings back the screens.** Every window, tab, split, directory and
-  name comes back after a quit, with each pane's scrollback replayed.
-
-Everything else is what you'd expect: splits with draggable dividers, tabs,
-multiple windows, a filterable file sidebar with pinned favourites, find in
-scrollback, WebGL rendering, five built-in themes plus a 325-scheme base16
-gallery, and a tab bar that stands in for the title bar.
+Splits with draggable dividers, tabs, and multiple windows — with tabs that tear
+off and move between them. A filterable file sidebar with pinned favourites.
+Markdown preview and editor with Mermaid, and a syntax-highlighted viewer for
+everything else. Find in scrollback, WebGL rendering, five built-in themes plus
+a 325-scheme base16 gallery, and a tab bar that stands in for the title bar.
 
 ## Keybindings
 
