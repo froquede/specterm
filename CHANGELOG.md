@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.18.2 — 2026-08-01
+
+### Fixed
+- **A link in a markdown preview can no longer take the whole app with it.** The
+  preview shares its document with the rest of Specterm, so a click that reached
+  the browser's default handler navigated *that* document: the window stopped
+  being the app and became the file the link pointed at. Every pane, the tab bar
+  and the window controls went with it, replaced by however the target happened
+  to render — a link into `dist/assets` filled the window with a wall of
+  minified JavaScript. Nothing brought it back short of restarting.
+
+  Two guards were missing, and both are now in place. The preview's click
+  handler returned early for any href that wasn't a `.md`, without cancelling
+  the click, so a link to an image, a script, a text file — or to a heading in
+  another note, since `notes.md#section` doesn't end in `.md` — fell straight
+  through to a navigation. It now cancels every link click and decides where it
+  goes itself: markdown opens in a pane, `http(s)` and `mailto` go to the OS,
+  anything else is dropped. Fragments and query strings are stripped before that
+  test, so `notes.md#section` opens the note it names.
+
+  Behind it, the main process was blocking only cross-origin `http(s)`
+  navigations. A `file://` URL has an opaque origin, so Chromium reports the
+  same `null` for the app and for every local file, and each one passed the
+  check as "same origin, stays in the window". The window is deny-by-default
+  now: same-origin `http(s)` (the dev server reloading itself) and the app's own
+  document may load, a different `http(s)` origin goes to the browser, and
+  everything else is blocked and logged.
+
 ## 0.18.1 — 2026-07-31
 
 ### Fixed
