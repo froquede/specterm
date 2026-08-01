@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.17.2 — 2026-07-31
+
+### Fixed
+- **"Check for updates" answers in every window, not just the first one.** In
+  any window other than the first of a launch, the button went to "Checking…"
+  and stayed there for the life of that window. The check itself ran fine and
+  the host reported back — that window simply wasn't listening. Only one window
+  per launch is handed the automatic check-on-open, so that opening more windows
+  doesn't re-hit the release feed, and the renderer had tied *subscribing* to
+  updater events to owning that claim. A later window was left asking a question
+  it had no way of hearing the answer to. Listening and checking are now
+  separate concerns: every window listens, one checks.
+
 ## 0.17.1 — 2026-07-31
 
 ### Fixed
