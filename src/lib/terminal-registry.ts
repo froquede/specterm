@@ -66,6 +66,68 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
   } else {
     term.scrollToLine(viewportY);
   }
+
+  // Repaint everything, now, in this tick.
+  //
+  // Resizing the WebGL canvas wipes its drawing buffer — that is what a GL
+  // context does when its backing store changes size — and xterm does not
+  // redraw until its next animation frame. So between the fit and that frame
+  // the terminal is *blank*, and a divider drag refits on every frame it moves
+  // through: measured with frames captured every 40ms through one drag, two in
+  // every three showed both panes completely empty. It reads as the terminal
+  // tearing itself apart while you resize it, and it has nothing to do with
+  // whatever program happens to be running in the pane — an idle shell blanks
+  // exactly the same way.
+  //
+  // Marking every row dirty closes the gap: the fit and the repaint land
+  // together, so there is no frame in which the canvas has been cleared and not
+  // yet drawn. Same call the WebGL context-loss recovery below uses, for the
+  // same reason.
+  try {
+    term.refresh(0, term.rows - 1);
+  } catch {
+    // Terminal disposed between the fit and the repaint — nothing to draw.
+  }
+}
+
+// Watch a pane's box and refit the terminal in it, at most once per throttle
+// window while the size keeps changing.
+//
+// Refitting per animation frame is what a drag would otherwise do, and every
+// fit that changes the grid resizes the WebGL canvas — which discards its
+// drawing buffer, leaving the terminal blank until xterm's next frame paints it
+// back. Dozens of those in one drag is the flicker. Fitting on the same clock
+// the pty is told on cuts the number of times that can happen to a handful, and
+// between them the pane simply shows the grid it already had: slightly behind
+// the divider for a few tens of milliseconds, but never empty.
+function observeResize(
+  term: Terminal,
+  fitAddon: FitAddon,
+  instance: TerminalInstance
+): ResizeObserver {
+  let timer: number | null = null;
+  let lastFitAt = 0;
+  let lastW = 0;
+  let lastH = 0;
+
+  const run = () => {
+    timer = null;
+    lastFitAt = Date.now();
+    if (instance.disposed) return;
+    safeFit(term, fitAddon);
+  };
+
+  return new ResizeObserver((entries) => {
+    const { width, height } = entries[0].contentRect;
+    if (width === lastW && height === lastH) return;
+    lastW = width;
+    lastH = height;
+    if (timer !== null) return;
+
+    const since = Date.now() - lastFitAt;
+    if (since >= PTY_RESIZE_THROTTLE_MS) run();
+    else timer = window.setTimeout(run, PTY_RESIZE_THROTTLE_MS - since);
+  });
 }
 
 // Re-sync the DOM scrollbar to xterm's logical scroll position after a re-attach.
@@ -138,6 +200,12 @@ export interface TerminalInstance {
   // provider positively identifies a *different* session in the same pane.
   sessionMeta: SessionMeta | undefined;
 }
+
+// Smallest gap between two resizes handed down to a pty. A drag produces a new
+// size every animation frame; at this rate a full-screen program still tracks
+// the pane as it moves, for about a fifth of the signals. See the resize wiring
+// in attachTerminal for why this is a throttle and not a debounce.
+const PTY_RESIZE_THROTTLE_MS = 55;
 
 const instances = new Map<string, TerminalInstance>();
 
@@ -872,16 +940,7 @@ export async function attachTerminal(
 
     // Reconnect resize observer
     instance.resizeObserver?.disconnect();
-    let fitTimeout: number | null = null;
-    let lastW = 0, lastH = 0;
-    instance.resizeObserver = new ResizeObserver((entries) => {
-      const { width, height } = entries[0].contentRect;
-      if (width === lastW && height === lastH) return;
-      lastW = width;
-      lastH = height;
-      if (fitTimeout) cancelAnimationFrame(fitTimeout);
-      fitTimeout = requestAnimationFrame(() => safeFit(term, fitAddon));
-    });
+    instance.resizeObserver = observeResize(term, fitAddon, instance);
     instance.resizeObserver.observe(container);
 
     safeFit(term, fitAddon);
@@ -1143,27 +1202,90 @@ export async function attachTerminal(
     writePty(ptyId, data);
   });
 
-  // Wire resize
+  // Wire resize.
+  //
+  // xterm refits on every frame of a divider drag, which is right — the grid
+  // should track the pane under the cursor. Handing every one of those to the
+  // pty is not: each is an ioctl and a SIGWINCH, and a program that repaints on
+  // SIGWINCH (vim, htop, an agent's TUI) redraws for every intermediate width
+  // the divider passed through. Measured on one 300px drag: 56 resizes across
+  // the two panes, 55 of them a size that was never final.
+  //
+  // Throttled, not debounced. Debouncing looks tidier — tell the child once,
+  // when the size is final — but it is wrong for exactly the programs this
+  // matters to. A full-screen program draws into the alternate screen buffer,
+  // which xterm *clears* on resize rather than reflowing; a child not told
+  // until the drag ends therefore spends the whole drag showing nothing.
+  // Throttling keeps it repainting all the way through, for a fraction of the
+  // signals.
+  //
+  // Leading edge, so an isolated resize is instant; trailing edge, so the size
+  // the drag ended on is always the last one sent.
+  let resizeTimer: number | null = null;
+  let pendingSize: { cols: number; rows: number } | null = null;
+  let lastSentAt = 0;
+  let lastSent: string | null = null;
+  let lastCols = 0;
+  let lastRows = 0;
+
+  const sendSize = (cols: number, rows: number) => {
+    // A trailing send can outlive the pane it belongs to — one closed mid-drag,
+    // or a tab torn off into another window. `disposed` catches a terminal
+    // already torn down, `ptyId` one whose shell has gone or been handed over.
+    if (instance!.disposed || instance!.ptyId === null) return;
+    const key = `${cols}x${rows}`;
+    if (key === lastSent) return;
+    lastSent = key;
+    lastSentAt = Date.now();
+    lastCols = cols;
+    lastRows = rows;
+    resizePty(instance!.ptyId, cols, rows);
+  };
+
   term.onResize(({ cols, rows }) => {
-    if (instance!.ptyId !== null) {
-      resizePty(instance!.ptyId, cols, rows);
+    if (instance!.ptyId === null) return;
+
+    // A shrink is never withheld. Growing is safe to delay — a program still
+    // drawing at the old, smaller size just leaves margin. Shrinking is not: it
+    // keeps writing rows wider than the grid, every one of them wraps, and what
+    // was a neat frame becomes several times its own height. That is what a
+    // full-screen program "going enormous" mid-drag actually is, and repainting
+    // does not fix it: the program is drawing the wrong thing, because it has
+    // not been told the screen got smaller.
+    if (cols < lastCols || rows < lastRows) {
+      if (resizeTimer !== null) {
+        clearTimeout(resizeTimer);
+        resizeTimer = null;
+      }
+      pendingSize = null;
+      sendSize(cols, rows);
+      return;
     }
+
+    const since = Date.now() - lastSentAt;
+    if (since >= PTY_RESIZE_THROTTLE_MS && resizeTimer === null) {
+      sendSize(cols, rows);
+      return;
+    }
+
+    pendingSize = { cols, rows };
+    if (resizeTimer !== null) return;
+    resizeTimer = window.setTimeout(
+      () => {
+        resizeTimer = null;
+        if (pendingSize) {
+          sendSize(pendingSize.cols, pendingSize.rows);
+          pendingSize = null;
+        }
+      },
+      Math.max(0, PTY_RESIZE_THROTTLE_MS - since)
+    );
   });
 
   // Title is wired once in createTerminalInstance (cached on the instance and
   // forwarded to the current pane), so nothing to wire here.
 
-  // ResizeObserver
-  let fitTimeout: number | null = null;
-  let lastW = 0, lastH = 0;
-  instance.resizeObserver = new ResizeObserver((entries) => {
-    const { width, height } = entries[0].contentRect;
-    if (width === lastW && height === lastH) return;
-    lastW = width;
-    lastH = height;
-    if (fitTimeout) cancelAnimationFrame(fitTimeout);
-    fitTimeout = requestAnimationFrame(() => safeFit(term, fitAddon));
-  });
+  instance.resizeObserver = observeResize(term, fitAddon, instance);
   instance.resizeObserver.observe(container);
 
   term.focus();

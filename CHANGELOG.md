@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.18.1 — 2026-07-31
+
+### Fixed
+- **Terminals no longer flicker while you drag a split divider.** Three separate
+  causes, all of them visible as the same thing — the panes tearing themselves
+  apart while you resize:
+
+  *The canvas was being cleared and not redrawn.* Resizing a WebGL canvas
+  discards its drawing buffer, and xterm does not repaint until its next
+  animation frame, so every fit left the terminal blank in between. Capturing a
+  drag at 40ms intervals, two frames in three had **every** pane completely
+  empty — an idle shell blanked exactly like a pane running something. The fit
+  and the repaint now happen in the same tick.
+
+  *The grid was changing far more often than anything could keep up with.* A
+  drag refit on every animation frame, and handed each intermediate size
+  straight to the pty — one `ioctl` and one `SIGWINCH` each, 56 of them across
+  two panes for a single 300px drag, 55 at a size that was never final. Both are
+  now on one 55ms clock, so a fit, a signal and a repaint arrive together. The
+  same drag sends 4.
+
+  *A shrinking pane was told too late.* Growth can wait — a program still
+  drawing at the old, smaller size just leaves margin. A shrink cannot: the
+  program keeps writing rows wider than the grid, every one wraps, and a
+  full-screen program balloons to several times its own height. Shrinks now
+  bypass the throttle entirely.
+
+  Measured over a full 255-frame recording of splitting, dragging both axes and
+  swapping panes: blank frames went from 8 to 0 during resizes.
+
 ## 0.18.0 — 2026-07-31
 
 ### Added

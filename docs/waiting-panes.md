@@ -6,7 +6,7 @@ chip and on its title-bar, the count on the dock icon (macOS, Unity) or a
 flashing taskbar entry (Windows and most Linux WMs), and optionally a desktop
 notification.
 
-![A pane flagged as waiting: a dot on its tab and on its title-bar](assets/stills/02-pane-waiting.png)
+![Three agents finishing in their own panes, each flagged with the message it sent](assets/stills/05-panes-waiting.png)
 
 `⌘⇧U` / `Ctrl+Shift+U` jumps to a waiting pane, switching tabs to reach it.
 Pressing it again goes to the next one — arriving at a pane clears its flag, so
