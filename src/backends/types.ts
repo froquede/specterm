@@ -248,6 +248,14 @@ export interface Backend {
   // nothing to show.
   setAttentionBadge(count: number): Promise<void>;
 
+  // Raise an OS notification for a pane that just started waiting. Separate from
+  // the badge above because it is an *event*, not a level: the badge reflects a
+  // count that goes up and down, this fires once when a pane joins it. Opt-in
+  // (settings.desktopNotifications) and only ever called while the window is
+  // unfocused — see the effect in App.tsx. A no-op where the platform has no
+  // notification service.
+  notifyWaiting(payload: { title: string; body: string }): Promise<void>;
+
   // Multi-window. Backends that only ever have one window report a lone
   // session-owning window, no-op the rest, and simply never fire onAdoptTab.
   //

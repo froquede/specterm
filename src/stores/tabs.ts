@@ -982,6 +982,40 @@ export function useTabStore() {
       }));
     },
 
+    /**
+     * Focus a pane wherever it is in this window, switching tabs to reach it.
+     *
+     * `setActivePaneId` above only looks in the active tab, which is right for
+     * everything that acts on what's on screen. This one is for arriving at a
+     * pane you can't see — a pane that started waiting in a tab you're not
+     * looking at (see the attention store). Returns whether it found it, so a
+     * caller walking a list can skip panes that have since gone.
+     *
+     * Only this window's tabs: a pane in another window would need that window
+     * to be told, which is a different problem than a keystroke in this one.
+     */
+    focusPaneAnywhere(paneId: PaneId): boolean {
+      const s = state();
+      const idx = s.tabs.findIndex((t) =>
+        collectLeaves(t.root).some((leaf) => leaf.id === paneId)
+      );
+      if (idx === -1) return false;
+
+      const tab = s.tabs[idx];
+      update(() => ({
+        ...s,
+        activeTabId: tab.id,
+        tabHistory:
+          s.activeTabId === tab.id
+            ? s.tabHistory
+            : pushMru(s.tabHistory, s.activeTabId).filter(
+                (id) => id !== tab.id
+              ),
+        tabs: s.tabs.map((t, i) => (i === idx ? focusPaneInTab(t, paneId) : t)),
+      }));
+      return true;
+    },
+
     // Cycle the active pane within the current tab, in left-to-right /
     // Move focus to the pane visually adjacent to the active one in `dir`
     // (left/right/up/down). No-op when there's no neighbour that way, so

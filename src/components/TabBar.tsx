@@ -27,7 +27,12 @@ import {
 } from "../stores/tab-drag";
 import { draggingPaneId, dropTabId } from "../stores/pane-drag";
 import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
-import { paneAttention, type AttentionKind } from "../stores/attention";
+import {
+  paneAttention,
+  paneAttentionMessage,
+  attentionTitle,
+  type AttentionKind,
+} from "../stores/attention";
 import { collectLeaves } from "../lib/split-tree";
 import type { Tab } from "../types";
 
@@ -61,21 +66,28 @@ const DRAG_THRESHOLD = 4;
 // something in here", the pane title-bars inside say which pane. A permission
 // prompt outranks a finished turn — one blocks until answered, the other waits
 // patiently — so with both open the chip shows the prompt.
-function tabAttention(tab: Tab): AttentionKind | undefined {
-  let found: AttentionKind | undefined;
+interface TabAttention {
+  kind: AttentionKind;
+  // What the program said, when it sent a notification sequence rather than
+  // just a bell. Carried up with the kind so the chip's tooltip can show it
+  // without the tab bar having to know which pane it came from.
+  message?: string;
+}
+
+function tabAttention(tab: Tab): TabAttention | undefined {
+  let found: TabAttention | undefined;
   for (const leaf of collectLeaves(tab.root)) {
     const kind = paneAttention(leaf.id);
-    if (kind === "permission") return kind;
-    found ??= kind;
+    if (!kind) continue;
+    const entry: TabAttention = {
+      kind,
+      message: paneAttentionMessage(leaf.id),
+    };
+    if (kind === "permission") return entry;
+    found ??= entry;
   }
   return found;
 }
-
-const ATTENTION_TITLE: Record<AttentionKind, string> = {
-  permission: "Waiting for your answer",
-  idle: "Finished — waiting for you",
-  bell: "Rang the terminal bell",
-};
 
 // The inline tab-rename editor. A fresh instance mounts each time a tab
 // enters rename mode (its parent <Show> disposes/recreates it), so `settled`
@@ -300,11 +312,11 @@ export default function TabBar(props: TabBarProps) {
               onPointerDown={(e) => onTabPointerDown(e, tab.id)}
             >
               <Show when={tabAttention(tab)} keyed>
-                {(kind) => (
+                {(att) => (
                   <span
                     class="tab-attention"
-                    data-kind={kind}
-                    title={ATTENTION_TITLE[kind]}
+                    data-kind={att.kind}
+                    title={attentionTitle(att.kind, att.message)}
                   />
                 )}
               </Show>

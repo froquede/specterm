@@ -1,8 +1,9 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.17.2",
+  "version": "0.18.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
+  "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
   "contributors": [
     "Lucas Casanova (https://github.com/cas0la)",
@@ -76,7 +77,10 @@
         "AppImage",
         "deb"
       ],
-      "category": "TerminalEmulator"
+      "category": "TerminalEmulator",
+      "desktop": {
+        "StartupNotify": "true"
+      }
     },
     "deb": {
       "afterInstall": "build/linux/after-install.tpl"

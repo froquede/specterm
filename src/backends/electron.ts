@@ -76,6 +76,7 @@ interface SpectermAPI {
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
+  notifyWaiting(payload: { title: string; body: string }): Promise<void>;
   checkForUpdate(): Promise<unknown>;
   downloadUpdate(): Promise<unknown>;
   installUpdate(): Promise<void>;
@@ -327,6 +328,13 @@ export class ElectronBackend implements Backend {
 
   async setAttentionBadge(count: number): Promise<void> {
     return this.api.setAttentionBadge(count);
+  }
+
+  async notifyWaiting(payload: {
+    title: string;
+    body: string;
+  }): Promise<void> {
+    return this.api.notifyWaiting(payload);
   }
 
   async checkForUpdate(): Promise<void> {

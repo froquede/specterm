@@ -9,6 +9,7 @@
 import { cmd, isMac } from "../lib/platform";
 import type { BindingSpec, Chord } from "./keybindings";
 import type { useTabStore } from "./tabs";
+import { waitingPanes } from "./attention";
 import {
   getTerminalInstance,
   paneRunsFullscreenApp,
@@ -270,6 +271,42 @@ export function createKeymap({
         focusActivePane();
       },
     })),
+
+    // Jump to a pane that's waiting on you, wherever it is in this window —
+    // switching tabs to get there. The point of the dots is that a session can
+    // run in a tab you aren't looking at; this is how you get to it without
+    // hunting for which tab lit up.
+    //
+    // Arriving at a pane clears its flag (see setFocusedPane in
+    // stores/attention.ts), so pressing it again goes to the next one and the
+    // list empties as you work through it.
+    //
+    // Caveat on Linux: Ctrl+Shift+U is IBus's Unicode code-point entry, so with
+    // an IME active the input method may take it first. Nothing we can do from
+    // in here, and it's free on the setups that don't run one.
+    {
+      id: "pane.focusWaiting",
+      key: "u",
+      ...cmd({ shift: true }),
+      byOS: kitty("u"),
+      label: "Go to a pane waiting on you",
+      run: () => {
+        const waiting = waitingPanes();
+        if (waiting.length === 0) return;
+
+        // Start just past the current pane so repeated presses walk the list
+        // rather than sticking on whichever one sorts first.
+        const current = store.activeTab?.activePaneId;
+        const start = current ? waiting.indexOf(current) : -1;
+        for (let step = 1; step <= waiting.length; step++) {
+          const paneId = waiting[(start + step) % waiting.length];
+          if (store.focusPaneAnywhere(paneId)) {
+            focusActivePane();
+            return;
+          }
+        }
+      },
+    },
 
     // Clipboard
     {

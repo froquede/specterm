@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.18.0 — 2026-07-31
+
+### Added
+- **Any program can flag a pane, not just Claude Code.** Specterm now honours the
+  three standard desktop-notification sequences — `OSC 9` (iTerm2), `OSC 777`
+  (urxvt) and `OSC 99` (Kitty, including its chunked and base64 payloads) — so
+  Codex, OpenCode, aider, a `make` wrapper or a CI script lights up the pane it
+  ran in with no hooks and no configuration at all. The message the program sent
+  becomes the tooltip on the tab chip and the pane's title-bar. One deliberate
+  exception: ConEmu overloaded `OSC 9` with numbered sub-commands, and
+  `9;4;<state>;<progress>` is a progress bar that tools emit continuously while
+  they work — anything shaped like `<digits>;` is treated as a control and
+  ignored, so a progress bar doesn't fire a notification per tick.
+
+- **`⌘⇧U` / `Ctrl+Shift+U` goes to a pane that's waiting on you**, switching tabs
+  to reach it. The point of the dots is that a session can run in a tab you
+  aren't looking at; this is how you get to it without hunting for which tab lit
+  up. Arriving at a pane clears its flag, so pressing it again goes to the next
+  one and the list empties as you work through it.
+
+- **Optional desktop notifications**, off by default. The dot, the dock badge and
+  the taskbar flash already say a pane is waiting without interrupting anything,
+  so the one signal that reaches outside the window is opt-in — Settings → *Also
+  send a desktop notification*. When on it stays quiet: silent, one per pane per
+  wait rather than one per message, only while the window is in the background,
+  and never more than one at a time however many panes finish together. Clicking
+  it brings that window forward.
+
+### Fixed
+- **Launching from a desktop launcher no longer leaves a "Specterm is ready"
+  notification behind.** The generated `.desktop` entry omitted `StartupNotify`,
+  which the freedesktop spec defaults to false — so nothing told the desktop to
+  associate the new window with the click that started it, and GNOME's
+  focus-stealing prevention filed a notification instead of handing over focus.
+
+### Changed
+- **The project is licensed under Apache-2.0.** It previously declared MIT in the
+  README with no `LICENSE` file, which left contributions on no clear footing.
+  Apache-2.0's Section 5 puts inbound contributions under the same terms without
+  anyone having to sign a CLA.
+
+- **The README is about a third of its old length.** The reference material it
+  had accumulated moved to `docs/waiting-panes.md` and `docs/releasing.md`, and
+  what's left leads with what the terminal actually does differently. It also
+  gained the install instructions it never had.
+
 ## 0.17.2 — 2026-07-31
 
 ### Fixed

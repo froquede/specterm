@@ -6,7 +6,11 @@ import MarkdownPane from "./MarkdownPane";
 import TextPane from "./TextPane";
 import TerminalSearch from "./TerminalSearch";
 import { searchPaneId } from "../stores/terminal-search";
-import { paneAttention } from "../stores/attention";
+import {
+  paneAttention,
+  paneAttentionMessage,
+  attentionTitle,
+} from "../stores/attention";
 import {
   draggingPaneId,
   setDraggingPaneId,
@@ -175,13 +179,7 @@ export default function Pane(props: PaneProps) {
             <span
               class="pane-attention"
               data-kind={kind}
-              title={
-                kind === "permission"
-                  ? "Waiting for your answer"
-                  : kind === "bell"
-                    ? "Rang the terminal bell"
-                    : "Finished — waiting for you"
-              }
+              title={attentionTitle(kind, paneAttentionMessage(paneId))}
             />
           )}
         </Show>

@@ -251,6 +251,7 @@ contextBridge.exposeInMainWorld("specterm", {
   },
   setAttentionBadge: (count) =>
     ipcRenderer.invoke("set-attention-badge", count),
+  notifyWaiting: (payload) => ipcRenderer.invoke("notify-waiting", payload),
 
   // Auto-update
   checkForUpdate: () => ipcRenderer.invoke("updater:check"),

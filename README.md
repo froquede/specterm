@@ -1,35 +1,49 @@
 # Specterm
 
-A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, and a file tree sidebar. Built with SolidJS and xterm.js on Electron.
+A GPU-accelerated terminal emulator for running coding agents in parallel.
+Sessions survive closing the window, panes tell you when an agent is waiting, and
+markdown renders inline. SolidJS + xterm.js on Electron — Linux, macOS, Windows.
 
-## Features
+## Install
 
-- **Split panes** -- horizontal and vertical splits with draggable resize handles, drag-and-drop reordering via each pane's title-bar, and one-click/keyboard direction flipping. Aligned dividers move together; hold **Alt** to resize just one split
-- **Tabs** -- create, close, and cycle through terminal tabs; drag a pane's title-bar onto another tab to move it there (the live terminal rides along)
-- **Multiple windows** -- `⌘N` opens another independent window; drag a tab (or a pane, by its title-bar) past the window's edge to tear it off into a window of its own, or drop it on another Specterm window to move it there. The shell is handed over still running, scrollback and all (see [Moving tabs between windows](#moving-tabs-between-windows))
-- **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
-- **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
-- **Markdown preview & editor** -- render `.md` files inline with Mermaid diagram support, or toggle (`⌘E`) into a live-preview CodeMirror editor and save (`⌘S`) back to disk; installed builds also register as a `.md` handler, so you can *Open With → Specterm* (or double-click) a markdown file to open it in a new tab
-- **Text & code viewer** -- open any other text file from the sidebar in a read-only, syntax-highlighted view with line numbers and find; binaries are declined and huge files are capped, so it never stalls the terminal
-- **Themes** -- five built-ins plus a 325-scheme base16 gallery (and paste/file/drag import); recolors the terminal and the whole app at once
-- **The tab bar is the title bar** -- the system title bar comes off and the window controls move into the tab bar, so the panes get the space back; they hide in fullscreen. Switchable in Settings (on Linux the frame comes off entirely, so resizing falls to your compositor)
-- **Configurable chrome** -- put the tab bar in any of the window's four corners, size it and the sidebar, or auto-hide the bar so the panes take the whole window
-- **Find in terminal** -- search the scrollback of the active pane
-- **WebGL rendering** -- GPU-accelerated terminal via xterm.js WebGL addon, with automatic recovery from a lost context
-- **Splits inherit the directory** -- a new pane or tab opens where the pane you split from is, not back at the startup path. The shell's directory is read from its own process, so it works without configuring your shell; `OSC 7` (which zsh and fish send by default) is used as a faster signal when it's there
-- **OSC protocol** -- captures title sequences and working directory updates
-- **Sessions survive closing the window** -- closing a window *detaches* it: the shells keep running and a tray icon (or *Window -> Reattach Detached Session*) brings the window back on the same live processes, nothing restarted. **Quit** -- from the tray, the app menu, `⌘Q` or `Alt+F4` -- is what actually ends them. This is the tmux-server half of the idea, with the same limit: an explicit quit, a crash or a reboot takes the processes with it, and what survives that is the saved session below
-- **Restore picks up the whole session, screens and all** -- every window that was open comes back, at the size and position it had, with its tabs, splits, directories, names *and* each pane's screen and scrollback replayed under a dim `restored` rule. The shells are new -- the rule is there because the ones that printed everything above it died with the app
-- **Session history** -- reopen the last closed tab or pane (`⌘⇧T` / `Ctrl+Shift+R`), repeatedly, walking back through what you closed; and pick your tabs, splits and directories back up where you left them after a restart. A pane that was running Claude Code remembers *which session*, so the restored terminal comes back with `claude --resume <id>` waiting at the prompt (or runs it, or ignores it -- your choice in Settings)
-- **Panes tell you when they're waiting** -- a dot on the tab and the pane's title-bar (plus the dock/taskbar) when Claude Code finishes a turn or stops to ask permission, so a session can run in a tab you're not looking at. It clears when you focus the pane or type into it. Settings picks between detecting it with no setup at all (a Claude session that's working is never silent, so a pane that goes quiet has stopped for you) and installing two Claude Code hooks that say so exactly; a terminal bell flags a pane either way (see [Waiting panes](#waiting-panes))
-- **Optional tab-bar clock** -- off by default; when on, its format is a token string (`HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`, `[at] HH:mm`) with a live preview in Settings. It wakes only when the displayed text would actually change -- once a minute unless the format shows seconds -- aligned to the boundary, and stops entirely while the window is hidden
-- **Per-OS keybindings** -- macOS uses `⌘`; Linux/Windows keep the Kitty-style `Ctrl+Shift+<key>` scheme
+Grab a build from [Releases](https://github.com/froquede/specterm/releases):
+AppImage or `.deb` on Linux, `.exe` on Windows, `.dmg` on macOS (Apple silicon).
+
+macOS is unsigned, so clear the quarantine flag once after installing:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Specterm.app
+```
+
+## What makes it different
+
+Most of what a terminal does, Specterm does the usual way. These are the parts
+that don't exist elsewhere, or don't exist together:
+
+- **Sessions survive the window closing.** Closing *detaches*: the shells keep
+  running and a tray icon brings the window back on the same live processes.
+  Quit is what actually ends them.
+- **Panes tell you when an agent is waiting.** A dot on the tab and the pane when
+  Claude Code finishes a turn or asks permission — plus any tool that emits a
+  standard notification sequence. `⌘⇧U` jumps to the next one.
+- **Copy out of full-screen programs.** Selecting text works inside Claude Code,
+  vim or htop, which normally take the mouse away from the terminal.
+- **Tabs move between windows with the shell still running.** Drag a tab past the
+  window edge; the process is handed over live, scrollback and all.
+- **Markdown preview and editor**, with Mermaid — and installed builds register
+  as a `.md` handler, so *Open With → Specterm* works.
+- **Restore brings back the screens.** Every window, tab, split, directory and
+  name comes back after a quit, with each pane's scrollback replayed.
+
+Everything else is what you'd expect: splits with draggable dividers, tabs,
+multiple windows, a filterable file sidebar with pinned favourites, find in
+scrollback, WebGL rendering, five built-in themes plus a 325-scheme base16
+gallery, and a tab bar that stands in for the title bar.
 
 ## Keybindings
 
-macOS uses the `⌘` command key. Linux and Windows use the Kitty-style
-`Ctrl+Shift+<key>` scheme (there is no `⌘`, and this keeps bare `Ctrl+<key>`
-free for terminal control codes).
+macOS uses `⌘`. Linux and Windows use the Kitty-style `Ctrl+Shift+<key>` scheme,
+which keeps bare `Ctrl+<key>` free for terminal control codes.
 
 | Action | macOS | Linux / Windows |
 |---|---|---|
@@ -40,324 +54,85 @@ free for terminal control codes).
 | Close tab | `⌘⇧W` | `Ctrl+Shift+Q` |
 | Close pane | `⌘W` | `Ctrl+Shift+W` |
 | Next / previous tab | `⌘⇧]` / `⌘⇧[` | `Ctrl+Shift+→` / `Ctrl+Shift+←` |
-| Split — new pane stacked (below) | `⌘D` | `Ctrl+Shift+S` |
-| Split — new pane side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
-| Focus next / previous pane | `⌘⌥→` / `⌘⌥←` | `Ctrl+Shift+Alt+→` / `Ctrl+Shift+Alt+←` |
+| Split — stacked | `⌘D` | `Ctrl+Shift+S` |
+| Split — side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
+| Focus pane left/right/up/down | `⌥`+arrow | `⌥`+arrow |
+| Go to a pane waiting on you | `⌘⇧U` | `Ctrl+Shift+U` |
 | Copy selection | `⌘C` | `Ctrl+Shift+C` |
-| Paste — image inline when the clipboard holds only an image, else text | `⌘⇧V` | `Ctrl+Shift+V` |
-| Paste as plain text | `⌘V` | `Ctrl+V` (xterm's own) |
-| Paste an image inline into Claude Code | `⌃V` (Claude's own) | `Alt+V` |
+| Paste (image inline if the clipboard holds only an image) | `⌘⇧V` | `Ctrl+Shift+V` |
+| Paste as plain text | `⌘V` | `Ctrl+V` |
+| Paste an image into Claude Code | `⌃V` | `Alt+V` |
 | Find in terminal | `⌘F` | `Ctrl+Shift+F` |
 | Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
-| Quit Specterm (ends detached sessions) | `⌘Q` | `Alt+F4` |
-| Reattach a detached session | Window menu / tray | Window menu / tray |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
-| Increase / decrease font size | `⌘=` / `⌘-` | `Ctrl+Shift+=` / `Ctrl+Shift+-` |
-| Reset font size | `⌘0` | `Ctrl+Shift+0` |
+| Markdown: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
+| Font size up / down / reset | `⌘=` / `⌘-` / `⌘0` | `Ctrl+Shift+=` / `-` / `0` |
+| Quit (ends detached sessions) | `⌘Q` | `Alt+F4` |
 
-The markdown preview and the text/code viewer each have their own find box, on
-the same `⌘F` / `Ctrl+Shift+F`, when that pane is focused. Fullscreen is the `⊞`
-icon in the tab bar.
+## Behaviours worth knowing
 
-## Selection and the mouse
+**Selection over mouse-tracking programs.** Full-screen programs turn on mouse
+tracking, and a terminal then hands them every button press — which is why you
+normally can't select text out of Claude Code or vim, and why every terminal's
+answer is *"hold Shift"*. Specterm tells the two intents apart: a **click** goes
+to the program, a **drag** past 3px becomes a local selection. `Shift+drag` still
+works, `Alt+drag` selects a column. See `src/lib/mouse-selection.ts`.
 
-Full-screen programs — Claude Code, vim, htop, lazygit — turn on **mouse
-tracking**, and at that point a terminal hands every button press to the program
-and switches its own selection off: the drag belongs to the app. That's why you
-normally can't select (and so can't copy) anything out of such a pane, and why
-every terminal's answer is *"hold Shift"*.
+**Moving tabs between windows.** Drag a tab — or a pane by its title-bar — past
+the window edge. Release over another Specterm window to move it there, anywhere
+else to make it a new window. The shell is handed over still running: its
+scrollback is serialized and replayed, and anything it prints mid-move is
+buffered and written back in order.
 
-Specterm tells the two intents apart instead:
+**Splits inherit the directory.** A new pane opens where the pane you split from
+is. Read from the shell's own process, so it works without configuring anything;
+`OSC 7` (which zsh and fish send by default) is used as a faster hint when present.
 
-| gesture | what happens |
-|---|---|
-| **click** | goes to the program — Claude keeps its clickable UI, hover highlighting and scroll |
-| **drag** (past 3px) | becomes a local selection, and the program is told nothing |
-| **Shift+drag** | xterm's own escape hatch — still works |
-| **Alt+drag** | column (rectangular) selection |
+**Waiting panes.** Four independent signals — the standard `OSC 9`/`777`/`99`
+notification sequences, the terminal bell, output-timing detection for Claude
+Code, and Claude's own hooks. Three of them need no setup. Optional desktop
+notifications are off by default. See [docs/waiting-panes.md](docs/waiting-panes.md).
 
-Panes with no mouse tracking behave exactly as before. See
-`src/lib/mouse-selection.ts`.
-
-## Moving tabs between windows
-
-Drag a tab — or any pane, by its title-bar — **past the edge of the window** and
-release. The tab outlines itself in the accent colour once the cursor is outside,
-so you can tell the drop will move it out rather than reorder it.
-
-| where you release | what happens |
-|---|---|
-| **over another Specterm window** | the tab moves into that window, which comes to the front |
-| **anywhere else** | it becomes a new window, opening where you dropped it |
-| **still inside this window** | the usual reorder / pane-split drop |
-
-The terminal is not restarted. The shell process is handed from one window to
-the other still running, its scrollback is serialized and replayed on the far
-side, and anything it prints during the move is buffered and written back in
-order — so a build or a long `tail -f` doesn't drop a line. A full-screen
-program (vim, htop, Claude Code) repaints itself in the new window exactly as it
-does on any terminal resize.
-
-Two guards, both no-ops rather than errors: a window's **only** tab can't be torn
-off, and neither can the **last pane of that only tab** — the move would just
-rebuild the same window somewhere else and leave an empty one behind.
-
-Windows are otherwise independent: each has its own tabs, sidebar and terminals,
-and closing one kills only the shells that belong to it. Theme, terminal font
-and pinned favourites are shared and update live in every open window; font zoom
-(`⌘=` / `⌘-`) stays per-window, like a browser's.
-
-Two things from [session history](#features) split along the same line, and the
-split is deliberate:
-
-- **The restored session belongs to one window** — the first one of the launch.
-  It restores what was open and is the only one that writes the snapshot back, so
-  a second window can't overwrite it with its own tabs. A window opened with `⌘N`
-  therefore starts on a plain terminal rather than a copy of everything you
-  already have open.
-- **The closed-tab stack is shared.** `⌘⇧T` reopens the last thing closed in
-  *any* window, which is what "last closed" ought to mean, and both windows keep
-  their view of it in step.
-
-## Settings
-
-Open with `⌘,` / `Ctrl+Shift+,`, or the ⚙ icon. Settings live in the sidebar and
-share its slot with the file tree — opening one closes the other. There is no
-**Save** button: changes persist as you make them, and a toast confirms once your
-edits settle.
-
-- **Theme** — see [Theming](#theming) below.
-- **Terminal font** — any monospace family installed on the system.
-- **Default terminal path** — where new terminals open and the file sidebar
-  starts. Blank uses your home directory.
-- **Unfocused pane opacity** — how far inactive split panes are washed out.
-- **Window opacity** — whole-window transparency, so the desktop shows through
-  the terminal. 100% is fully opaque (the default). Native on Windows/macOS; on
-  Linux it needs a compositing window manager (most desktops — GNOME, KDE, etc.
-  — qualify) and the `xprop` tool (from `x11-utils`, usually preinstalled).
-- **Layout** — the tab bar's corner (a 2×2 grid of the window's corners), its
-  height, the sidebar's width, and whether the bar auto-hides. The sidebar also
-  resizes by dragging the strip beside it; double-click to reset.
-- **Flag panes waiting on you** — see [Waiting panes](#waiting-panes) below.
-
-## Waiting panes
-
-A Claude Code session you left running in another tab has no way to get your
-attention, so you end up checking on it. Specterm flags the pane instead: a dot
-on its tab chip and on its title-bar, and the count on the dock icon (macOS,
-Unity) or a flashing taskbar entry (Windows and most Linux WMs) for when the
-whole window is behind something else.
-
-The dot goes out as soon as you focus the pane or type into it — answering the
-prompt *is* the acknowledgement, including in a split you never made active. A
-permission prompt is drawn in the accent colour and pulses (nothing moves until
-you answer); a finished turn is a quiet grey dot.
-
-Settings → **Flag panes waiting on you** chooses how it's found out:
-
-| mode | how |
-|---|---|
-| **On — detect it** (default) | No setup. A Claude session that's working repaints its spinner several times a second, and the two states where it wants you — turn finished, permission prompt up — are both perfectly silent. So *sustained output → silence* is the signal. It's read purely from the timing of the output stream, never from the screen, so a reworded Claude footer can't break it. Gated on a `claude` process actually running in that pane, which the session poll already knows. |
-| **On — let Claude say so** | Exact. Installs a `Notification` and a `Stop` hook into `~/.claude/settings.json`; each writes one escape sequence (`OSC 1337 ; Attention`) to `/dev/tty`, which is the pane's own pty — so it lands in the right pane with nothing to correlate, instantly, and it can tell a permission prompt apart from a finished turn. The two entries are added and removed from the same button and nothing else in that file is touched. macOS/Linux only (Windows has no `/dev/tty` a one-line hook can reach). |
-| **Off** | Nothing is watched and nothing is drawn. |
-
-A terminal bell flags a pane in every mode but *off* — it's how a program of any
-kind asks to be looked at, so a long `make` that ends with `\a` gets the same
-dot, and so does Claude Code with `preferredNotifChannel` set to
-`terminal_bell`.
-
-The trade-off of *detect it* is that an unrelated long command finishing in a
-pane where Claude is also running looks the same from outside the process. If
-that bothers you, the hooks mode has no false positives at all.
-
-See `src/stores/attention.ts`, `src/lib/claude-attention.ts` and
-`src/lib/claude-hooks.ts`.
-
-## Theming
-
-A theme drives both color surfaces at once — the xterm.js terminal palette and
-the app chrome (tabs, sidebar, panes, markdown reader) — and the choice is
-persisted.
-
-Built-ins: Tokyo Night (default), Catppuccin Mocha, Gruvbox Dark, Nord, and
-Catppuccin Latte (light).
-
-**Gallery:** Settings → Theme → *Browse gallery* lists 325
-[base16 / tinted-theming](https://github.com/tinted-theming/schemes) schemes
-(bundled, works offline) with swatches and a filter — click to apply.
-
-**Import your own:** add any base16 scheme three ways — *Paste…* (YAML or JSON,
-the `base00`–`base0F` colors), *Open file…* (`.yaml`/`.json`), or just drag a
-scheme file onto the window. base16 is the de-facto cross-editor terminal theme
-format, so most schemes you'll find online work as-is. Imported themes are saved
-locally and can be removed from the same panel.
-
-The bundled gallery is generated by `scripts/fetch-base16-schemes.mjs` (run it
-to refresh `src/data/base16-schemes.json` from upstream).
-
-### How it works
-
-- `src/lib/theme.ts` — the theme model (a 16-color ANSI palette + semantic UI
-  roles), the built-in themes, the base16 importer, and the two converters
-  (`themeToXterm`, `themeToCssVars`). Pure, no side effects.
-- `src/stores/theme.ts` — active-theme state + persistence; applies the theme by
-  writing CSS variables onto `:root` and pushing the palette into every live
-  terminal.
-- `src/styles/*.css` — the chrome reads `--bg`, `--fg`, `--accent`, `--ansi-*`,
-  etc.; defaults (Tokyo Night) live in the `:root` block of `global.css`.
-- `src/data/base16-schemes.json` — the bundled gallery, generated by
-  `scripts/fetch-base16-schemes.mjs` from tinted-theming/schemes.
-
-## Tech Stack
-
-- **Frontend:** SolidJS + TypeScript + xterm.js (WebGL renderer)
-- **Host:** Electron + node-pty
-- **Build:** Vite
-- **Markdown:** markdown-it + Mermaid
-- **Tests:** Playwright, driving the real Electron binary
+**Theming.** Themes drive the terminal palette and the app chrome at once.
+Settings → Theme → *Browse gallery* has 325 bundled
+[base16](https://github.com/tinted-theming/schemes) schemes; you can also paste,
+open or drag in your own.
 
 ## Development
 
 ```bash
 npm install
-# Rebuild native modules (node-pty) against Electron's ABI — required after
-# `npm install` / `npm ci`, or the PTY fails to load and terminals won't open.
+# Rebuild node-pty against Electron's ABI — required after install/ci,
+# or the PTY fails to load and terminals won't open.
 npx electron-builder install-app-deps
 npm run dev:electron
 ```
 
-### Windows: PowerShell shell fix
-
-`node-pty` needs a real shell to spawn. On Windows `process.env.SHELL` is
-unset, so the old `SHELL || "/bin/bash"` fallback tried to launch a binary that
-doesn't exist and the terminal died on open. The Electron main process
-(`electron/main.cjs`) now resolves the shell per platform:
-
-- **Windows:** `powershell.exe` (override with the `SPECTERM_SHELL` env var,
-  e.g. point it at `pwsh.exe` for PowerShell 7).
-- **macOS / Linux:** `$SHELL`, falling back to `/bin/bash`.
-
-The native `node-pty` addon is also kept out of the asar archive
-(`build.asarUnpack`) and must be rebuilt for Electron (see the
-`install-app-deps` step above) for the PTY to load in the packaged app.
-
-See [docs/windows-setup.md](docs/windows-setup.md) for further prerequisites and
-troubleshooting.
-
-## Tests
-
 ```bash
-npm run test:e2e        # vite build + node test/e2e.mjs
+npm run test:e2e        # main suite
+npm run test:e2e:all    # + multi-window, session continuity
+npm run test:perf       # startup budget
 ```
 
-An end-to-end suite that builds the app, launches the **real** Electron binary,
-and drives the actual UI — clicks, keyboard, drag-and-drop — asserting on
-observable behavior. It runs on Windows, macOS and Linux. See
-[test/README.md](test/README.md).
+The suites build the app, launch the **real** Electron binary and drive the
+actual UI. See [test/README.md](test/README.md).
 
-## Releases
+Windows needs a shell that `node-pty` can spawn; Specterm defaults to
+`powershell.exe`, overridable with `SPECTERM_SHELL`. See
+[docs/windows-setup.md](docs/windows-setup.md).
 
-Distributable installers are built in CI by `.github/workflows/release.yml`:
+Releasing is documented in [docs/releasing.md](docs/releasing.md).
 
-- **Linux** → AppImage + `.deb` (built in an Ubuntu 20.04 container, so the
-  native `node-pty` links against glibc 2.31 and runs on Ubuntu 20.04+)
-- **Windows** → NSIS installer (`.exe`)
-- **macOS** → `.dmg` + `.zip` (Apple silicon, unsigned)
+> `src/backends/` abstracts the host, and a dormant Tauri v2 implementation
+> exists alongside the Electron one. It does not currently work — ship and test
+> on Electron.
 
-Because the macOS build is unsigned, the first launch fails with *"Specterm is
-damaged and can't be opened"* — Gatekeeper's message for a quarantined ad-hoc
-bundle. Clear the quarantine attribute once after installing:
+## Contributing
 
-```bash
-xattr -dr com.apple.quarantine /Applications/Specterm.app
-```
-
-See [docs/macos-install.md](docs/macos-install.md) for the full explanation and
-what notarizing would take.
-
-Versioning is **semantic** (`MAJOR.MINOR.FIX`). To cut a release: land the work
-on `main`, bump `version` in `package.json`, update `CHANGELOG.md`, then push a
-matching tag — the tag push is what triggers the build and publishes a GitHub
-Release with every platform's assets.
-
-```bash
-# after bumping "version" in package.json (e.g. 0.12.0)
-git commit -am "chore: release v0.12.0"
-git push origin main
-git tag -a v0.12.0 -m "v0.12.0"
-git push origin refs/tags/v0.12.0
-```
-
-Two things the workflow won't do for you:
-
-- **Push the tag by its full ref.** Release work is staged on a branch named
-  after the version (`v0.12.0`), which collides with the tag of the same name —
-  `git push origin v0.12.0` is ambiguous and fails with *"matches more than
-  one"*. Use `refs/tags/…`, or delete the branch first.
-- **Write the release notes.** The workflow only uploads the binaries; the
-  GitHub Release body comes out empty. Fill it in afterwards
-  (`gh release edit <tag> --notes-file …`).
-
-## Project Structure
-
-```
-src/
-  App.tsx                  # Root component, chrome layout, keybinding setup
-  backends/                # Host abstraction (see "A note on Tauri" below)
-  components/
-    TabBar.tsx             # Tab strip + action icons
-    SplitContainer.tsx     # Recursive split layout
-    SplitHandle.tsx        # Draggable split divider
-    Pane.tsx               # Pane router (terminal or markdown)
-    TerminalPane.tsx       # xterm.js terminal instance
-    TerminalSearch.tsx     # Find bar over the active terminal
-    MarkdownPane.tsx       # Markdown renderer
-    FileTree.tsx           # Sidebar file browser + favourites
-    SettingsPanel.tsx      # Settings, in the sidebar slot
-    SidebarResizeHandle.tsx
-  lib/
-    pty.ts                 # PTY spawn/write/resize API
-    mouse-selection.ts     # Click-vs-drag selection over mouse-grabbing programs
-    split-tree.ts          # Split tree data structure
-    terminal-registry.ts   # Terminal instance tracking, font size/family
-    theme.ts               # Theme model + base16 importer
-    fonts.ts               # Installed monospace font detection
-    platform.ts            # Host OS + the ⌘ → Ctrl+Shift translation
-    fspath.ts              # Cross-platform paths + shell quoting
-    markdown.ts            # markdown-it + Mermaid setup
-    osc.ts                 # OSC sequence parser
-    claude-attention.ts    # Spotting a Claude pane that has gone quiet
-    claude-hooks.ts        # Installing the Claude Code hooks that say so exactly
-  stores/
-    tabs.ts                # Tab/pane/sidebar state
-    attention.ts           # Which panes are waiting on the user
-    settings.ts            # Persisted preferences
-    theme.ts               # Active theme + persistence
-    favorites.ts           # Pinned folders (fav-N)
-    keybindings.ts         # Keyboard shortcut registry + per-OS resolver
-    keymap.ts              # Declarative keymap (all shortcuts, macOS-first)
-electron/
-  main.cjs                 # Electron main process + IPC handlers
-  preload.cjs              # Context bridge
-test/
-  e2e.mjs                  # Playwright end-to-end suite
-```
-
-### A note on Tauri
-
-`src/backends/` abstracts the host behind an interface, and a Tauri v2
-implementation exists alongside the Electron one (`src-tauri/`, plus the
-`Dockerfile`). **It is not supported, and the app does not currently work on
-it.** The Rust side registers only the four PTY commands; `get_home_path` — which
-the backend invokes on startup — was never added, so the file sidebar can't even
-resolve where to open. Drive enumeration is a stub, and the clipboard falls back
-to `navigator.clipboard`, the exact path that made copy/paste unreliable on
-Electron before v0.10.0.
-
-**Ship and test on Electron.** The abstraction is kept because it costs little
-and keeps host calls in one place, but the Tauri implementation is dormant, not
-maintained. Reviving it means finishing the Rust commands first.
+Issues and pull requests are welcome. Contributions are accepted under the
+project's license (Apache-2.0, per its Section 5) — there's no CLA to sign.
 
 ## License
 
-MIT
+[Apache-2.0](LICENSE) — Copyright 2026 Roque Francisco and the Specterm
+contributors.

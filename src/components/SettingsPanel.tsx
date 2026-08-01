@@ -41,6 +41,8 @@ import {
   claudeAttentionMode,
   setClaudeAttentionMode,
   type ClaudeAttentionMode,
+  desktopNotifications,
+  setDesktopNotifications,
   tabBarCorner,
   setTabBarCorner,
   TAB_BAR_CORNERS,
@@ -1036,6 +1038,34 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               </Show>
             </Show>
           </div>
+
+          <Show when={claudeAttentionMode() !== "off"}>
+            <div class="settings-section">
+              <div class="settings-row">
+                <label class="settings-label" for="desktop-notifications">
+                  Also send a desktop notification
+                </label>
+                <input
+                  id="desktop-notifications"
+                  type="checkbox"
+                  class="settings-checkbox"
+                  checked={desktopNotifications()}
+                  onChange={(e) =>
+                    setDesktopNotifications(e.currentTarget.checked)
+                  }
+                />
+              </div>
+              <p class="settings-hint">
+                Off by default — the dot, the dock badge and the taskbar flash
+                already say it without interrupting anything. When on it stays
+                quiet: silent, one per pane per wait (not one per message), only
+                while this window is in the background, and never more than one
+                at a time however many panes finish together. Programs that send
+                a notification sequence (<code>OSC 9</code>, <code>777</code>,{" "}
+                <code>99</code>) have their message carried through.
+              </p>
+            </div>
+          </Show>
         </Category>
 
         {/* ---- Updates ---------------------------------------------------- */}

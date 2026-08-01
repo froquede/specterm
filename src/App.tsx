@@ -24,11 +24,15 @@ import {
   tabBarEdge,
   tabBarAutoHide,
   claudeAttentionMode,
+  desktopNotifications,
 } from "./stores/settings";
 import {
   attentionCount,
   clearAllAttention,
   setFocusedPane,
+  waitingPanes,
+  paneAttention,
+  paneAttentionMessage,
 } from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
@@ -51,6 +55,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // gets the boot budget instead. It was already mounted lazily; this makes it
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
+import type { PaneId } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
 import type { UnlistenFn } from "./backends";
@@ -156,6 +161,54 @@ export default function App() {
       .then((backend) => backend.setAttentionBadge(count))
       .catch(() => {
         /* No badge on this platform/backend — the in-window dots still show. */
+      });
+  });
+
+  // An OS notification for a pane that has *just* started waiting.
+  //
+  // Deliberately one per waiting episode, not one per signal: a pane that
+  // notifies twice, or notifies and then rings the bell, is still the same
+  // interruption. `notifiedPanes` is what makes that true — a pane is added
+  // when it is announced and removed once it stops waiting, so the next time
+  // it stops it can announce again.
+  //
+  // Panes that start waiting while the window is focused are marked as
+  // announced without notifying: the dot is right there, and firing later
+  // (when the user tabs away) would be a notification about something they
+  // already saw.
+  const notifiedPanes = new Set<PaneId>();
+  createEffect(() => {
+    const waiting = waitingPanes();
+    const live = new Set(waiting);
+    for (const id of notifiedPanes) {
+      if (!live.has(id)) notifiedPanes.delete(id);
+    }
+
+    const fresh = waiting.filter((id) => !notifiedPanes.has(id));
+    for (const id of fresh) notifiedPanes.add(id);
+
+    if (fresh.length === 0 || !desktopNotifications()) return;
+    if (typeof document !== "undefined" && document.hasFocus()) return;
+
+    // Only ever one, however many panes came up at once — a burst of finished
+    // agents should not be a burst of popups.
+    const paneId = fresh[0];
+    const extra = fresh.length - 1;
+    const message = paneAttentionMessage(paneId);
+    const kind = paneAttention(paneId);
+    const title =
+      kind === "permission" ? "Waiting for your answer" : "Specterm";
+    const body = [
+      message || "A pane is waiting for you",
+      extra > 0 ? `and ${extra} more` : "",
+    ]
+      .filter(Boolean)
+      .join(" — ");
+
+    void getBackend()
+      .then((backend) => backend.notifyWaiting({ title, body }))
+      .catch(() => {
+        /* No notification service here — the badge and the dot still say it. */
       });
   });
 

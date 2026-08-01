@@ -186,6 +186,14 @@ export class TauriBackend implements Backend {
     });
   }
 
+  async notifyWaiting(_payload: {
+    title: string;
+    body: string;
+  }): Promise<void> {
+    // Would need the Tauri notification plugin and its permission prompt.
+    // Electron is the shipping target; the in-window dot still shows.
+  }
+
   async setAttentionBadge(_count: number): Promise<void> {
     // Tauri exposes no badge/attention API from JS (Electron's setBadgeCount
     // and flashFrame have no counterpart), and Electron is the shipping target.

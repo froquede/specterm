@@ -92,6 +92,18 @@ export const CLAUDE_ATTENTION_MODES = ["off", "heuristic", "hooks"] as const;
 export type ClaudeAttentionMode = (typeof CLAUDE_ATTENTION_MODES)[number];
 export const CLAUDE_ATTENTION_MODE_DEFAULT: ClaudeAttentionMode = "heuristic";
 
+// --- Desktop notifications -------------------------------------------------
+// Whether a pane that starts waiting also raises an OS notification, on top of
+// the dot, the dock badge and the taskbar flash that are always there.
+//
+// Off by default, for the same reason the clock is: this is the only thing in
+// the app that reaches outside its own window and interrupts whatever the
+// person is doing, so it should be asked for rather than assumed. When on it
+// stays deliberately quiet — one notification per waiting episode rather than
+// one per message, never while the window is focused (the dot has already said
+// it), and no sound.
+export const DESKTOP_NOTIFICATIONS_DEFAULT = false;
+
 // --- Clock -----------------------------------------------------------------
 // An optional clock in the tab bar. Off by default: it's the one piece of
 // chrome that would otherwise redraw on a timer forever, and a terminal that
@@ -147,6 +159,7 @@ interface Persisted {
   backgroundSessions: boolean;
   customTitleBar: boolean;
   claudeAttentionMode: ClaudeAttentionMode;
+  desktopNotifications: boolean;
   clockEnabled: boolean;
   clockFormat: string;
 }
@@ -165,6 +178,7 @@ const DEFAULTS: Persisted = {
   customTitleBar: true,
   sessionRestoreMode: SESSION_RESTORE_MODE_DEFAULT,
   claudeAttentionMode: CLAUDE_ATTENTION_MODE_DEFAULT,
+  desktopNotifications: DESKTOP_NOTIFICATIONS_DEFAULT,
   clockEnabled: false,
   clockFormat: CLOCK_FORMAT_DEFAULT,
 };
@@ -232,6 +246,10 @@ function load(): Persisted {
       )
         ? p.claudeAttentionMode
         : DEFAULTS.claudeAttentionMode,
+      desktopNotifications:
+        typeof p.desktopNotifications === "boolean"
+          ? p.desktopNotifications
+          : DEFAULTS.desktopNotifications,
       clockEnabled:
         typeof p.clockEnabled === "boolean"
           ? p.clockEnabled
@@ -278,6 +296,9 @@ const [sessionRestoreMode, setSessionRestoreModeSignal] =
   createSignal<SessionRestoreMode>(initial.sessionRestoreMode);
 const [claudeAttentionMode, setClaudeAttentionModeSignal] =
   createSignal<ClaudeAttentionMode>(initial.claudeAttentionMode);
+const [desktopNotifications, setDesktopNotificationsSignal] = createSignal(
+  initial.desktopNotifications
+);
 const [clockEnabled, setClockEnabledSignal] = createSignal(initial.clockEnabled);
 const [clockFormat, setClockFormatSignal] = createSignal(initial.clockFormat);
 
@@ -295,6 +316,7 @@ export {
   customTitleBar,
   sessionRestoreMode,
   claudeAttentionMode,
+  desktopNotifications,
   clockEnabled,
   clockFormat,
 };
@@ -346,6 +368,7 @@ function persist() {
         customTitleBar: customTitleBar(),
         sessionRestoreMode: sessionRestoreMode(),
         claudeAttentionMode: claudeAttentionMode(),
+        desktopNotifications: desktopNotifications(),
         clockEnabled: clockEnabled(),
         clockFormat: clockFormat(),
       } satisfies Persisted)
@@ -447,6 +470,7 @@ function reloadFromStorage() {
   pushBackgroundSessions();
   setSessionRestoreModeSignal(p.sessionRestoreMode);
   setClaudeAttentionModeSignal(p.claudeAttentionMode);
+  setDesktopNotificationsSignal(p.desktopNotifications);
   setClockEnabledSignal(p.clockEnabled);
   setClockFormatSignal(p.clockFormat);
   applyCssVars();
@@ -546,6 +570,11 @@ export function setClaudeAttentionMode(v: ClaudeAttentionMode) {
   setClaudeAttentionModeSignal(
     CLAUDE_ATTENTION_MODES.includes(v) ? v : CLAUDE_ATTENTION_MODE_DEFAULT
   );
+  persist();
+}
+
+export function setDesktopNotifications(v: boolean) {
+  setDesktopNotificationsSignal(v);
   persist();
 }
 

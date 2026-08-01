@@ -22,6 +22,7 @@ import {
   registerOscHandler,
   registerCwdHandler,
   registerAttentionHandler,
+  registerNotificationHandler,
 } from "./osc";
 import { noteOutput, noteInput, forgetPane } from "./claude-attention";
 import { markAttention, clearAttention } from "../stores/attention";
@@ -764,6 +765,17 @@ export async function createTerminalInstance(
   term.onBell(() => {
     if (claudeAttentionMode() === "off") return;
     markAttention(paneId, "bell");
+  });
+
+  // The standard desktop-notification sequences (OSC 9/777/99, see lib/osc.ts).
+  // Same request as the bell, with something to say — so it follows the bell's
+  // rule exactly and is honored in both non-off modes. That is deliberate:
+  // these need no hooks and no configuration, so gating them behind the *how
+  // Claude is detected* setting would switch off a signal that has nothing to
+  // do with Claude.
+  registerNotificationHandler(term, (text) => {
+    if (claudeAttentionMode() === "off") return;
+    markAttention(paneId, "notify", text);
   });
 
   // The shell's own report of its directory, when it sends one. Free and

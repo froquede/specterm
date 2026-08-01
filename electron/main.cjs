@@ -10,6 +10,7 @@ const {
   screen,
   Tray,
   nativeImage,
+  Notification,
 } = require("electron");
 const path = require("path");
 const os = require("os");
@@ -1963,6 +1964,36 @@ ipcMain.handle("set-attention-badge", (event, count) => {
   const win = windowOf(event);
   if (!win || win.isDestroyed()) return;
   win.flashFrame(n > 0 && !win.isFocused());
+});
+
+// One OS notification for a pane that has just started waiting. Opt-in, and the
+// renderer has already decided it is warranted (the setting is on, the window
+// is unfocused, the pane is newly waiting) — this end only has to draw it.
+//
+// Deliberately quiet: `silent` so it never makes a sound on top of the terminal
+// bell that may have arrived with it, and no actions or buttons. Clicking it
+// brings the window that raised it forward, which is the only thing anyone
+// wants from a notification about a pane.
+ipcMain.handle("notify-waiting", (event, payload) => {
+  if (!Notification.isSupported()) return;
+
+  const title = String(payload?.title ?? "").slice(0, 120) || "Specterm";
+  const body = String(payload?.body ?? "").slice(0, 240);
+  const win = windowOf(event);
+
+  try {
+    const notification = new Notification({ title, body, silent: true });
+    notification.on("click", () => {
+      if (!win || win.isDestroyed()) return;
+      if (win.isMinimized()) win.restore();
+      win.show();
+      win.focus();
+    });
+    notification.show();
+  } catch (_) {
+    // No notification service on this desktop (a bare Linux session with no
+    // daemon running). The badge and the in-window dot still say it.
+  }
 });
 
 // === Application menu ===
