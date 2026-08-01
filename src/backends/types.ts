@@ -201,6 +201,11 @@ export interface Backend {
   // Show a path in the OS file manager (Explorer/Finder/Nautilus). A directory
   // opens itself; a file is revealed selected in its containing folder.
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
+  // Hand a link to the OS default browser. Only http(s) and mailto are honored;
+  // anything else is dropped, since the links reaching this come from markdown
+  // the user opened. Never navigates the window — a navigation that lands
+  // replaces the whole app with the target.
+  openExternal(url: string): Promise<void>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
   // A file the OS asked the app to open (Finder "Open With", double-click, CLI
   // path arg). Fires once per file, replaying any that queued before subscribe.

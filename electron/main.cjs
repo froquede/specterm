@@ -643,26 +643,47 @@ function createWindow(opts = {}) {
     return { action: "deny" };
   });
 
-  // Send genuinely external links to the default browser, but never hijack
-  // in-app navigations. Comparing full URLs treated every same-origin reload
-  // (the Vite dev server's, a trailing-slash difference, a hash change) as
-  // "external" and fired openExternal + preventDefault on it — in dev that
-  // preventing-then-reopening looped the browser and stalled the renderer.
-  // Gate on origin instead: same-origin (and non-http, e.g. file://) stays in
-  // the window; only a different http(s) origin goes out.
+  // Send genuinely external links to the default browser, and let nothing else
+  // move the window off the app. Deny-by-default, because a navigation that
+  // lands is unrecoverable: the whole UI is replaced by whatever the target is
+  // (a chunk under dist/assets renders as a wall of minified JS) with no way
+  // back short of restarting.
+  //
+  // Origin alone can't decide this. A file:// URL has an opaque origin, so
+  // Chromium reports "null" for both sides and every file:// target — including
+  // links out of the app's own directory — compares as same-origin. Split the
+  // two protocols instead:
+  //
+  //   http(s): same origin stays (the Vite dev server reloads itself, and
+  //     treating that as external looped openExternal and stalled the
+  //     renderer); a different origin goes to the browser.
+  //   everything else (file:, and any scheme we don't serve the app over):
+  //     only the app's own document may load. Nothing routes a stray file://
+  //     to the OS — a markdown file is untrusted input, and a click should
+  //     never hand it a launch.
   win.webContents.on("will-navigate", (event, url) => {
+    let allowed = false;
     let external = false;
     try {
       const target = new URL(url);
       const current = new URL(win.webContents.getURL());
-      external = /^https?:$/.test(target.protocol) && target.origin !== current.origin;
+      if (/^https?:$/.test(target.protocol)) {
+        allowed = target.origin === current.origin;
+        external = !allowed;
+      } else {
+        // Same document (a fragment-only change never reaches will-navigate,
+        // but a self-reload does) is the only non-http navigation we allow.
+        allowed =
+          target.protocol === current.protocol && target.pathname === current.pathname;
+      }
     } catch {
-      external = false;
+      // An unparseable URL is not the app's document.
+      allowed = false;
     }
-    if (external) {
-      event.preventDefault();
-      shell.openExternal(url);
-    }
+    if (allowed) return;
+    event.preventDefault();
+    if (external) shell.openExternal(url);
+    else console.warn(`[nav] blocked in-window navigation to ${url}`);
   });
 
   // Notify the renderer when the OS fullscreen state changes (e.g. macOS green
@@ -1344,6 +1365,26 @@ ipcMain.handle("reveal-in-file-manager", async (_event, targetPath, isDirectory)
   } else {
     shell.showItemInFolder(targetPath);
   }
+});
+
+// Hand a link to the OS default browser. The renderer asks for this explicitly
+// rather than letting the click navigate and catching it in will-navigate:
+// relying on the navigation meant a link the guard didn't recognize took the
+// window with it. Only web and mail schemes pass — openExternal will hand a
+// file:// or a custom scheme to whatever app claims it, and the links here come
+// from markdown the user opened, not from us.
+ipcMain.handle("open-external", async (_event, url) => {
+  let protocol;
+  try {
+    protocol = new URL(url).protocol;
+  } catch {
+    return;
+  }
+  if (!/^(https?|mailto):$/.test(protocol)) {
+    console.warn(`[nav] refused to open ${protocol} link externally`);
+    return;
+  }
+  await shell.openExternal(url);
 });
 
 // True when the OS clipboard holds a bitmap. The renderer uses this to decide

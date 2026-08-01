@@ -129,6 +129,8 @@ contextBridge.exposeInMainWorld("specterm", {
   revealInFileManager: (path, isDirectory) =>
     ipcRenderer.invoke("reveal-in-file-manager", path, isDirectory),
 
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
+
   clipboardHasImage: () => ipcRenderer.invoke("clipboard-has-image"),
 
   clipboardReadText: () => ipcRenderer.invoke("clipboard-read-text"),

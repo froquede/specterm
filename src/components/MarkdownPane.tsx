@@ -361,17 +361,36 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     }, 300);
   }
 
+  // Every click on a link in the preview is handled here and nowhere else. The
+  // one thing a link must never do is navigate: the preview shares its document
+  // with the whole app, so a click that reaches the default handler swaps
+  // Specterm out for the target and there is no way back. Bailing out early
+  // used to leave exactly that hole open for any href that wasn't a .md.
   function handleContentClick(e: MouseEvent) {
     const anchor = (e.target as HTMLElement).closest("a");
     if (!anchor) return;
     const href = anchor.getAttribute("href");
-    if (!href || !href.endsWith(".md")) return;
+    if (!href) return;
 
     e.preventDefault();
 
+    // Web and mail links go to the OS. Asking the host directly beats letting
+    // the navigation start and catching it in the main process — that only
+    // worked for the schemes the guard recognized.
+    if (/^(https?|mailto):/i.test(href)) {
+      void getBackend().then((backend) => backend.openExternal(href));
+      return;
+    }
+
+    // A link into another document: keep the path, drop the fragment and query
+    // so "notes.md#section" is still recognized as markdown and still resolves
+    // to a readable path.
+    const path = href.split(/[?#]/)[0];
+    if (!path || !path.toLowerCase().endsWith(".md")) return;
+
     // Resolve relative path against current file's directory
     const dir = props.filePath.substring(0, props.filePath.lastIndexOf("/"));
-    const resolved = href.startsWith("/") ? href : dir + "/" + href;
+    const resolved = path.startsWith("/") ? path : dir + "/" + path;
     const mode = isAccelClick(e) ? "tab" : "split";
     props.onOpenMarkdown?.(resolved, mode);
   }

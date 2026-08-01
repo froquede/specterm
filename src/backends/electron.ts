@@ -34,6 +34,7 @@ interface SpectermAPI {
   readDirStats(path: string): Promise<FileEntryStats[]>;
   listDrives(): Promise<DriveEntry[]>;
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
+  openExternal(url: string): Promise<void>;
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
@@ -173,6 +174,10 @@ export class ElectronBackend implements Backend {
 
   async listDrives(): Promise<DriveEntry[]> {
     return this.api.listDrives();
+  }
+
+  async openExternal(url: string): Promise<void> {
+    return this.api.openExternal(url);
   }
 
   async revealInFileManager(path: string, isDirectory: boolean): Promise<void> {

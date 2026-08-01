@@ -132,6 +132,20 @@ export class TauriBackend implements Backend {
     await open(target);
   }
 
+  async openExternal(url: string): Promise<void> {
+    // Same scheme allowlist the Electron host applies: the plugin hands the URL
+    // to whatever app claims it, and these links come from opened markdown.
+    let protocol: string;
+    try {
+      protocol = new URL(url).protocol;
+    } catch {
+      return;
+    }
+    if (!/^(https?|mailto):$/.test(protocol)) return;
+    const { open } = await import("@tauri-apps/plugin-shell");
+    await open(url);
+  }
+
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     return listen("fs-change", () => cb());
   }
