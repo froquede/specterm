@@ -65,21 +65,41 @@ function applyUpdaterEvent(e: UpdaterEvent) {
 }
 
 let initialized = false;
+let subscription: Promise<void> | null = null;
 
-// Subscribe to host updater events and run the launch-time check. The
-// single-instance lock (see electron/main.cjs) makes a second launch of an
-// already-running Specterm forward to the existing window without re-running
-// the renderer, so this fires exactly once per real cold start — "check on
-// open", manual thereafter.
-export async function initUpdater() {
+// Listening is not the same as checking, and they must not share a gate. Only
+// one window per launch is handed the check claim (see windowBootArg in
+// electron/main.cjs), but the host broadcasts every updater event to *every*
+// window, and any window's Settings panel can start a check. A window that
+// subscribed only when it owned the claim heard nothing back from its own
+// button: the phase went to "checking" and stayed there for the life of the
+// window. So every window subscribes; only the claim holder auto-checks.
+function ensureSubscribed() {
+  subscription ??= (async () => {
+    const backend = await getBackend();
+    await backend.onUpdaterEvent(applyUpdaterEvent);
+  })();
+  return subscription;
+}
+
+// Subscribe to host updater events, and run the launch-time check if this
+// window is the one that owns it. The single-instance lock (see
+// electron/main.cjs) makes a second launch of an already-running Specterm
+// forward to the existing window without re-running the renderer, so the check
+// fires exactly once per real cold start — "check on open", manual thereafter.
+export async function initUpdater(autoCheck: boolean) {
   if (initialized) return;
   initialized = true;
+  await ensureSubscribed();
+  if (!autoCheck) return;
   const backend = await getBackend();
-  await backend.onUpdaterEvent(applyUpdaterEvent);
   await backend.checkForUpdate();
 }
 
 export async function checkForUpdate() {
+  // A manual check may be the first thing this window ever asks of the updater
+  // — subscribe before asking, or the reply lands with nobody home.
+  await ensureSubscribed();
   const backend = await getBackend();
   setUpdaterError(null);
   setUpdaterPhase("checking");

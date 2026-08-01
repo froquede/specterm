@@ -222,6 +222,36 @@ try {
   await winA.keyboard.press(SETTINGS_KEY);
   await winA.waitForTimeout(600);
 
+  // --- updater replies reach a window that didn't own the launch check -----
+  // Only the first window is handed the check claim (windowBootArg in
+  // electron/main.cjs), but every window's Settings has the button, and the
+  // host broadcasts updater events to all of them. A window that subscribed
+  // only when it owned the claim never heard its own answer: the button went
+  // to "Checking…" and stayed there for the life of the window. Unpackaged the
+  // host replies "dev", which the store reads as "you're current", so the
+  // label has to come back on its own.
+  await winB.keyboard.press(SETTINGS_KEY);
+  await winB.waitForSelector(".updater-button", { timeout: 10000 });
+  const updaterText = async () =>
+    (await winB.locator(".updater-button .updater-label.base").innerText()).trim();
+  await winB.locator(".updater-button").click();
+  let settledLabel = null;
+  for (let i = 0; i < 40; i++) {
+    const label = await updaterText();
+    if (!/Checking/i.test(label)) {
+      settledLabel = label;
+      break;
+    }
+    await winB.waitForTimeout(250);
+  }
+  check(
+    "a window that didn't own the launch check still hears the updater reply",
+    !!settledLabel,
+    settledLabel ? `label=${settledLabel}` : "stuck on Checking…"
+  );
+  await winB.keyboard.press(SETTINGS_KEY);
+  await winB.waitForTimeout(600);
+
   // --- tear a tab off ------------------------------------------------------
   // A second tab, so the move isn't refused as "the window's only tab".
   await winA.locator(".xterm-helper-textarea:visible").last().click({ force: true });

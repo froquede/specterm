@@ -361,8 +361,10 @@ export default function App() {
 
     // Check GitHub for a newer release once per app launch — the first window
     // owns that check, so opening more windows doesn't re-hit the feed. Any
-    // later check is the manual button in Settings.
-    if (boot.autoCheckUpdates) void initUpdater();
+    // later check is the manual button in Settings. Every window still starts
+    // listening: updater events are broadcast app-wide, and this window's own
+    // Settings button needs an ear for the answer.
+    void initUpdater(boot.autoCheckUpdates);
 
     // When the OS window regains focus, return the cursor to the active pane —
     // and, since the user is now looking at it, put out any attention flag it
