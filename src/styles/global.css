@@ -476,6 +476,46 @@ body,
   letter-spacing: 0.01em;
 }
 
+/* Folds or unfolds every category at once. No chip chrome: a bordered box in a
+   header bar reads as a field to type into, and this is the one thing up here
+   you press. The sign carries it instead — leading, the way a sign is written,
+   and at full label weight so the control is legible at rest and only takes the
+   accent when the pointer is on it. Pinned to the trailing edge, away from the
+   title it shares the row with. */
+.settings-fold-all {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.settings-fold-all:hover {
+  color: var(--accent);
+}
+
+/* The one control in the header, so it's also the one that has to say where the
+   keyboard is. */
+.settings-fold-all:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.settings-fold-all-icon {
+  display: flex;
+  align-items: center;
+}
+
 /* One category — a foldable group of related settings. The panel below used to
    be a single undivided column of every setting there is; these are what tell
    you where you are in it. */

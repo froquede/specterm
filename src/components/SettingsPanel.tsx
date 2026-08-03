@@ -90,7 +90,13 @@ import {
   installHooks,
   removeHooks,
 } from "../lib/claude-hooks";
-import { IconChevronDown, IconSettings, ICON_STROKE } from "../lib/icons";
+import {
+  IconChevronDown,
+  IconMinus,
+  IconPlus,
+  IconSettings,
+  ICON_STROKE,
+} from "../lib/icons";
 import {
   IconAppearance,
   IconLayout,
@@ -109,6 +115,24 @@ interface SettingsPanelProps {
 // persisted to disk either — this is a working position, not a preference, and
 // it costs nothing to start a new session with everything in view.
 const [collapsed, setCollapsed] = createSignal<ReadonlySet<string>>(new Set());
+
+// Every category the panel renders, in order. Keep in sync with the <Category>
+// ids below — it's what the header's fold-everything control acts on.
+const CATEGORY_IDS = [
+  "appearance",
+  "layout",
+  "terminal",
+  "sessions",
+  "updates",
+] as const;
+
+// One click that either folds the whole panel away or brings it all back. The
+// label states what the click does, so it only reads "Collapse all" when every
+// category is open; a single folded one turns it back into "Expand all", which
+// is the move you want next when the panel is part-folded.
+const allCategoriesOpen = () => collapsed().size === 0;
+const toggleAllCategories = () =>
+  setCollapsed(allCategoriesOpen() ? new Set(CATEGORY_IDS) : new Set<string>());
 
 // One category of settings: a header that folds it away, and the fields.
 //
@@ -468,6 +492,24 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <span class="settings-title">Settings</span>
         {/* No Save button — changes persist live and autosave (see the effect
             above). Esc closes the sidebar. */}
+        {/* The label is the accessible name and it changes with the state, so
+            there is nothing for aria-expanded to add: this folds five
+            categories, it doesn't disclose a region of its own.
+
+            Plus and minus rather than a caret: a caret points somewhere, and
+            this control doesn't move to a place — it adds or takes away
+            everything below it at once. */}
+        <button class="settings-fold-all" onClick={toggleAllCategories}>
+          <span class="settings-fold-all-icon">
+            <Show
+              when={allCategoriesOpen()}
+              fallback={<IconPlus size={13} stroke-width={ICON_STROKE} />}
+            >
+              <IconMinus size={13} stroke-width={ICON_STROKE} />
+            </Show>
+          </span>
+          {allCategoriesOpen() ? "Collapse all" : "Expand all"}
+        </button>
       </div>
       <Show when={saved()}>
         <div class="settings-saved-bar" role="status" aria-live="polite">
