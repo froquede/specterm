@@ -210,9 +210,9 @@ const PTY_RESIZE_THROTTLE_MS = 55;
 const instances = new Map<string, TerminalInstance>();
 
 // Font zoom (Ghostty-style: ⌘= / ⌘- / ⌘0). Applies to every open terminal.
-const DEFAULT_FONT_SIZE = 14;
-const MIN_FONT_SIZE = 6;
-const MAX_FONT_SIZE = 40;
+export const DEFAULT_FONT_SIZE = 14;
+export const MIN_FONT_SIZE = 6;
+export const MAX_FONT_SIZE = 40;
 const FONT_SIZE_STORAGE_KEY = "specterm.fontSize";
 
 // Restore the last zoom level from a previous session, clamped to the valid
@@ -229,11 +229,16 @@ function loadFontSize(): number {
   return DEFAULT_FONT_SIZE;
 }
 
-let currentFontSize = loadFontSize();
+// Reactive so the Settings panel's font-size slider can both read and drive it,
+// the same way it does with terminalFontFamily below.
+const [terminalFontSize, setTerminalFontSizeSignal] = createSignal<number>(
+  loadFontSize()
+);
+export { terminalFontSize };
 
 function persistFontSize() {
   try {
-    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(currentFontSize));
+    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(terminalFontSize()));
   } catch {
     // localStorage unavailable — zoom just won't persist this session
   }
@@ -243,7 +248,7 @@ function applyFontSize() {
   persistFontSize();
   for (const instance of instances.values()) {
     if (instance.disposed) continue;
-    instance.term.options.fontSize = currentFontSize;
+    instance.term.options.fontSize = terminalFontSize();
     if (instance.container) {
       try {
         safeFit(instance.term, instance.fitAddon);
@@ -256,22 +261,32 @@ function applyFontSize() {
   // ⌘= / ⌘- / ⌘0 scale the .md reader in lockstep with the terminal font.
   document.documentElement.style.setProperty(
     "--md-font-scale",
-    (currentFontSize / DEFAULT_FONT_SIZE).toString()
+    (terminalFontSize() / DEFAULT_FONT_SIZE).toString()
   );
 }
 
 export function increaseFontSize() {
-  currentFontSize = Math.min(MAX_FONT_SIZE, currentFontSize + 1);
+  setTerminalFontSizeSignal((v) => Math.min(MAX_FONT_SIZE, v + 1));
   applyFontSize();
 }
 
 export function decreaseFontSize() {
-  currentFontSize = Math.max(MIN_FONT_SIZE, currentFontSize - 1);
+  setTerminalFontSizeSignal((v) => Math.max(MIN_FONT_SIZE, v - 1));
   applyFontSize();
 }
 
 export function resetFontSize() {
-  currentFontSize = DEFAULT_FONT_SIZE;
+  setTerminalFontSizeSignal(DEFAULT_FONT_SIZE);
+  applyFontSize();
+}
+
+// Absolute set, for the Settings panel's slider (as opposed to the relative
+// ⌘=/⌘- steps above).
+export function setTerminalFontSize(size: number) {
+  const clamped = Number.isFinite(size)
+    ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size))
+    : DEFAULT_FONT_SIZE;
+  setTerminalFontSizeSignal(clamped);
   applyFontSize();
 }
 
@@ -279,7 +294,7 @@ export function resetFontSize() {
 // opens at the same scale as the terminal even before the first ⌘=/⌘-/⌘0.
 document.documentElement.style.setProperty(
   "--md-font-scale",
-  (currentFontSize / DEFAULT_FONT_SIZE).toString()
+  (terminalFontSize() / DEFAULT_FONT_SIZE).toString()
 );
 
 // Terminal font family. Unlike zoom (driven by keyboard), this is a persisted
@@ -770,7 +785,7 @@ export async function createTerminalInstance(
 
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: currentFontSize,
+    fontSize: terminalFontSize(),
     fontFamily: xtermFontFamily(),
     allowTransparency: true,
     theme: currentXtermTheme,

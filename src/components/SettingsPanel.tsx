@@ -81,6 +81,12 @@ import type { Theme } from "../lib/theme";
 import {
   terminalFontFamily,
   setTerminalFontFamily,
+  terminalFontSize,
+  setTerminalFontSize,
+  resetFontSize,
+  MIN_FONT_SIZE,
+  MAX_FONT_SIZE,
+  DEFAULT_FONT_SIZE,
 } from "../lib/terminal-registry";
 import { detectMonospaceFonts } from "../lib/fonts";
 import { formatClock } from "../lib/clock-format";
@@ -170,6 +176,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // into the signal for the live preview, the % label and persistence.
   let sliderRef: HTMLInputElement | undefined;
   let windowSliderRef: HTMLInputElement | undefined;
+  let fontSizeSliderRef: HTMLInputElement | undefined;
   let fileRef: HTMLInputElement | undefined;
 
   // base16 paste import: a collapsible textarea so the panel stays compact.
@@ -288,6 +295,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   function resetWindow() {
     resetWindowOpacity();
     if (windowSliderRef) windowSliderRef.value = String(WINDOW_OPACITY_DEFAULT);
+  }
+
+  function resetTerminalFontSize() {
+    resetFontSize();
+    if (fontSizeSliderRef) fontSizeSliderRef.value = String(DEFAULT_FONT_SIZE);
   }
 
   function applyImport() {
@@ -644,6 +656,41 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 ? "Detecting installed monospace fonts…"
                 : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
             </p>
+          </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="font-size">
+                Terminal font size
+              </label>
+              <span class="settings-value">{terminalFontSize()}px</span>
+            </div>
+            <input
+              ref={(el) => {
+                // Same uncontrolled-slider reasoning as the opacity sliders
+                // below — a reactive `value={...}` binding cancels an
+                // in-progress thumb drag.
+                fontSizeSliderRef = el;
+                el.value = String(terminalFontSize());
+              }}
+              id="font-size"
+              class="settings-slider"
+              type="range"
+              min={MIN_FONT_SIZE}
+              max={MAX_FONT_SIZE}
+              step={1}
+              onInput={(e) => setTerminalFontSize(Number(e.currentTarget.value))}
+            />
+            <div class="settings-row">
+              <p class="settings-hint">
+                Also adjustable with ⌘= / ⌘- / ⌘0 while a terminal is focused.
+              </p>
+              <Show when={terminalFontSize() !== DEFAULT_FONT_SIZE}>
+                <button class="settings-reset" onClick={resetTerminalFontSize}>
+                  Reset
+                </button>
+              </Show>
+            </div>
           </div>
 
           <div class="settings-section">
