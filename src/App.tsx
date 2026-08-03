@@ -5,6 +5,7 @@ import {
   onMount,
   createEffect,
   createMemo,
+  createSignal,
   onCleanup,
 } from "solid-js";
 import {
@@ -39,7 +40,9 @@ import { initUpdater } from "./stores/updater";
 import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
-import { shellQuoteCd } from "./lib/fspath";
+import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
+import { classifyDrop } from "./lib/file-drop";
+import { collectLeaves } from "./lib/split-tree";
 import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
 import TitleStrip from "./components/TitleStrip";
@@ -63,6 +66,9 @@ import type { UnlistenFn } from "./backends";
 export default function App() {
   const store = useTabStore();
 
+  // True while OS files are being dragged over the window — drives the hint
+  // that says what a release will do.
+  const [fileDragActive, setFileDragActive] = createSignal(false);
 
   // The file tree and the settings panel share one slot in .app-body, so the
   // store models it as a single `sidebarView` — there's no state in which both
@@ -238,6 +244,29 @@ export default function App() {
       writePty(inst.ptyId, `${shellQuoteCd(path)}\r`);
       inst.term.focus();
     }
+  }
+
+  // Put file paths into the active pane's prompt without running anything — the
+  // drop half of "drag a screenshot at Claude". Deliberately unsubmitted: the
+  // path is an argument to a line the user is still writing, and a stray CR
+  // here would run whatever was already typed there.
+  function attachToPrompt(paths: string[]) {
+    const tab = store.activeTab;
+    if (!tab) return;
+    // Normally the pane the files landed on. When that pane has no prompt to
+    // attach to (an image dropped on a markdown preview), fall back to any
+    // terminal in the tab rather than dropping the paths on the floor.
+    const inst =
+      getTerminalInstance(tab.activePaneId) ??
+      collectLeaves(tab.root)
+        .map((leaf) => getTerminalInstance(leaf.id))
+        .find((candidate) => candidate && candidate.ptyId !== null);
+    if (!inst || inst.ptyId === null) return;
+    // Padded both sides: the line may already hold half a typed command, and a
+    // path glued to the word before it is neither a valid argument nor
+    // something Claude will recognize as a file.
+    writePty(inst.ptyId, ` ${paths.map(shellQuotePath).join(" ")} `);
+    inst.term.focus();
   }
 
   function handleOpenMarkdown(path: string, mode: "split" | "tab") {
@@ -469,29 +498,122 @@ export default function App() {
     );
     onCleanup(() => unlistenOpenPath?.());
 
-    // Drag a base16 theme file (.yaml/.json) onto the window to import it. Only
-    // OS file drops are intercepted — internal pane drags don't carry a "Files"
-    // type, so they fall through to the pane drag-and-drop logic untouched. The
-    // preventDefault on dragover is required, or the drop navigates the window
-    // to the file instead of firing our handler.
+    // Files dragged in from the OS. Only OS file drops are intercepted —
+    // internal pane drags don't carry a "Files" type, so they fall through to
+    // the pane drag-and-drop logic untouched. The preventDefault on dragover is
+    // required, or the drop navigates the window to the file instead of firing
+    // our handler.
     const isFileDrag = (e: DragEvent) =>
       Array.from(e.dataTransfer?.types ?? []).includes("Files");
-    const onDragOver = (e: DragEvent) => {
-      if (isFileDrag(e)) e.preventDefault();
+
+    // dragenter/dragleave fire once per element the cursor crosses, so a plain
+    // boolean flickers off the moment the pointer moves between two panes.
+    // Counting entries against leaves is what makes the hint stable.
+    let dragDepth = 0;
+    const onDragEnter = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      dragDepth++;
+      setFileDragActive(true);
     };
+    const onDragLeave = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      dragDepth = Math.max(0, dragDepth - 1);
+      if (dragDepth === 0) setFileDragActive(false);
+    };
+    const endFileDrag = () => {
+      dragDepth = 0;
+      setFileDragActive(false);
+    };
+    const onDragOver = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      // "copy" is what the OS shows as a plus cursor — nothing here moves or
+      // consumes the original file.
+      if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+    };
+
     const onDrop = async (e: DragEvent) => {
       if (!isFileDrag(e)) return;
       e.preventDefault();
-      const file = e.dataTransfer?.files?.[0];
-      if (!file) return;
-      if (!importBase16Theme(await file.text())) {
-        console.warn(`[theme] "${file.name}" is not a valid base16 scheme`);
+      endFileDrag();
+      const dt = e.dataTransfer;
+      if (!dt) return;
+
+      // Everything the DataTransfer holds has to be read *before* the first
+      // await: it is neutered as soon as this handler returns. The File objects
+      // survive on their own, but the entries — our only synchronous "is this a
+      // folder?" — do not, and neither does dt.files itself.
+      const files = Array.from(dt.files);
+      const isDir = Array.from(dt.items).map(
+        (item) => item.webkitGetAsEntry()?.isDirectory ?? false
+      );
+
+      // A drop acts on the pane it landed on, not on whichever pane happened to
+      // be active — the cursor was pointing at one of them, and that is the
+      // answer the user gave.
+      const paneEl = (e.target as Element | null)?.closest?.("[data-pane-id]");
+      const droppedOn = paneEl?.getAttribute("data-pane-id");
+      if (droppedOn) store.setActivePaneId(droppedOn);
+
+      const backend = await getBackend();
+      const dropped = files.map((file, i) => ({
+        file,
+        path: backend.filePathFor(file),
+        mime: file.type,
+        isDirectory: isDir[i] ?? false,
+      }));
+
+      // Paths bound for the prompt are batched: dropping three screenshots at
+      // once should write one line, not race three writes into the pty.
+      const toPrompt: string[] = [];
+      // Two folders in one drop can't both be the working directory; the first
+      // wins and the rest are ignored rather than firing a burst of cds.
+      let changedDir = false;
+      for (const item of dropped) {
+        const path = item.path;
+        if (!path) {
+          console.warn(`[drop] no path for "${item.file.name}" on this host`);
+          continue;
+        }
+        switch (classifyDrop({ path, mime: item.mime, isDirectory: item.isDirectory })) {
+          case "directory":
+            if (!changedDir) {
+              cdActivePane(path);
+              changedDir = true;
+            }
+            break;
+          case "markdown":
+            handleOpenMarkdown(path, "split");
+            break;
+          case "theme":
+            // A .yaml/.json/.txt is a theme only if it parses as one; when it
+            // doesn't it was just a text file, so it opens like any other.
+            if (!importBase16Theme(await item.file.text())) {
+              handleOpenFile(path, "split");
+            }
+            break;
+          case "text":
+            handleOpenFile(path, "split");
+            break;
+          case "image":
+          case "path":
+            toPrompt.push(path);
+            break;
+        }
       }
+      if (toPrompt.length > 0) attachToPrompt(toPrompt);
     };
+
+    window.addEventListener("dragenter", onDragEnter);
+    window.addEventListener("dragleave", onDragLeave);
     window.addEventListener("dragover", onDragOver);
+    window.addEventListener("dragend", endFileDrag);
     window.addEventListener("drop", onDrop);
     onCleanup(() => {
+      window.removeEventListener("dragenter", onDragEnter);
+      window.removeEventListener("dragleave", onDragLeave);
       window.removeEventListener("dragover", onDragOver);
+      window.removeEventListener("dragend", endFileDrag);
       window.removeEventListener("drop", onDrop);
     });
   });
@@ -597,6 +719,20 @@ export default function App() {
             }
           >
             {(dt) => <div class={`drop-indicator drop-indicator-${dt().edge}`} />}
+          </Show>
+          {/* What a release will do with the files under the cursor. Purely a
+              hint — pointer-events are off, so it can't eat the drop it's
+              describing. */}
+          <Show when={fileDragActive()}>
+            <div class="file-drop-overlay">
+              <div class="file-drop-card">
+                <span class="file-drop-title">Drop to open</span>
+                <span class="file-drop-hint">
+                  Markdown and text open in a new pane · folders cd · images go
+                  to the prompt, ready for Claude
+                </span>
+              </div>
+            </div>
           </Show>
         </div>
       </div>

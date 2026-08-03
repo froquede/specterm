@@ -1176,6 +1176,49 @@ body,
   inset: 50% 0 0 0;
 }
 
+/* OS files dragged over the window. A wash over the whole split area rather
+   than a per-pane target: the routing is decided by what the file *is*, so
+   promising a precise landing spot would be a lie. pointer-events stay off so
+   the overlay can't swallow the drop it is describing. */
+.file-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  border: 2px dashed var(--accent);
+  pointer-events: none;
+}
+
+.file-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  padding: 14px 20px;
+  text-align: center;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.file-drop-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.file-drop-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
 /* Drop-zone indicator shown on a tab's leading/trailing edge while another
    tab is being dragged over it, previewing where it will land. */
 .tab-drop-indicator {
