@@ -61,6 +61,12 @@ interface TabBarProps {
 // plain click must not trigger a reorder.
 const DRAG_THRESHOLD = 4;
 
+// Cooldown between wheel-driven tab switches. A trackpad swipe fires dozens of
+// small wheel events for one gesture — without this, a single swipe over the
+// tab strip would flip through half the open tabs instead of moving one at a
+// time the way a physical mouse wheel's notches do.
+const WHEEL_SWITCH_THROTTLE_MS = 220;
+
 // Is anything in this tab waiting on the user, and if so what's the most urgent
 // of it? A tab is only ever a summary of its panes: the dot says "there is
 // something in here", the pane title-bars inside say which pane. A permission
@@ -228,6 +234,28 @@ export default function TabBar(props: TabBarProps) {
     window.addEventListener("pointercancel", onCancel);
   }
 
+  // Scrolling over the tab strip switches the active tab instead of scrolling
+  // it — mirrors ⌘]/⌘[ (see keymap.ts's tab.next/tab.prev), wrapping past
+  // either end rather than stopping.
+  let lastWheelSwitchAt = 0;
+  function onTabListWheel(e: WheelEvent) {
+    const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+    e.preventDefault();
+
+    const now = Date.now();
+    if (now - lastWheelSwitchAt < WHEEL_SWITCH_THROTTLE_MS) return;
+
+    const tabs = props.tabs;
+    if (tabs.length < 2) return;
+    const idx = tabs.findIndex((t) => t.id === props.activeTabId);
+    if (idx === -1) return;
+
+    lastWheelSwitchAt = now;
+    const next = delta > 0 ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length;
+    props.onSelect(tabs[next].id);
+  }
+
   const sidebarKey = () => shortcutLabel("B");
   const settingsKey = () => shortcutLabel(",");
 
@@ -277,7 +305,7 @@ export default function TabBar(props: TabBarProps) {
           <IconSettings size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
       </div>
-      <div class="tab-list">
+      <div class="tab-list" onWheel={onTabListWheel}>
         <For each={props.tabs}>
           {(tab) => (
             <div
