@@ -27,8 +27,28 @@ md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   return defaultFence(tokens, idx, options, env, self);
 };
 
-export function renderMarkdown(source: string): string {
-  return md.render(source);
+// A relative `![alt](./diagram.png)` is written relative to the note's own
+// folder, but the preview pane's document lives at dist/index.html — so
+// resolve it against the note's directory the same way MarkdownPane already
+// resolves relative links to other notes. Anything already absolute or
+// carrying its own scheme (http:, data:, file:, ...) is left untouched.
+const defaultImage =
+  md.renderer.rules.image ||
+  function (tokens, idx, options, _env, self) {
+    return self.renderToken(tokens, idx, options);
+  };
+
+md.renderer.rules.image = (tokens, idx, options, env, self) => {
+  const token = tokens[idx];
+  const src = token.attrGet("src");
+  if (src && env?.baseDir && !/^[a-z][a-z0-9+.-]*:/i.test(src) && !src.startsWith("/")) {
+    token.attrSet("src", `${env.baseDir}/${src}`);
+  }
+  return defaultImage(tokens, idx, options, env, self);
+};
+
+export function renderMarkdown(source: string, baseDir?: string): string {
+  return md.render(source, { baseDir });
 }
 
 let mermaidLoaded = false;
