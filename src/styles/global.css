@@ -717,6 +717,37 @@ body,
   border-color: var(--accent);
 }
 
+/* A select wearing its own caret. Chromium draws the native one hard against
+   the border whatever padding the element carries — it is laid out beside the
+   control, not inside it — so the field looked cropped. Dropping the native
+   appearance and placing the caret ourselves also makes it the same chevron,
+   from the same icon set, as every other disclosure in the panel, and it
+   follows the theme because it inherits a color instead of being painted into
+   a background image. */
+.settings-select-wrap {
+  position: relative;
+  display: block;
+  margin: 8px 0 0;
+}
+
+.settings-select-wrap .settings-select {
+  margin: 0;
+  appearance: none;
+  /* Room for the caret plus the gap it needs from the text beside it. */
+  padding-right: 30px;
+}
+
+.settings-select-caret {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--fg-muted);
+  /* The caret is part of the field, not a target of its own: clicks belong to
+     the select underneath. */
+  pointer-events: none;
+}
+
 .settings-textarea {
   width: 100%;
   margin: 8px 0 0;

@@ -176,6 +176,22 @@ function Category(props: {
   );
 }
 
+// A select and the caret that belongs to it. Chromium's own caret sits hard
+// against the border no matter what padding the field carries, so the panel
+// draws its own — see .settings-select-wrap.
+function SelectField(props: { children: JSX.Element }) {
+  return (
+    <span class="settings-select-wrap">
+      {props.children}
+      <IconChevronDown
+        class="settings-select-caret"
+        size={14}
+        stroke-width={ICON_STROKE}
+      />
+    </span>
+  );
+}
+
 // Six representative swatches for a gallery row: background, accent, and the
 // four most recognizable ANSI hues.
 function swatches(t: Theme): string[] {
@@ -533,20 +549,22 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 </button>
               </Show>
             </div>
-            <select
-              id="theme-select"
-              class="settings-select"
-              value={activeTheme().id}
-              onChange={(e) => setActiveTheme(e.currentTarget.value)}
-            >
-              <For each={availableThemes()}>
-                {(t) => <option value={t.id}>{t.name}</option>}
-              </For>
-              {/* Keep the picker showing the active gallery theme by name. */}
-              <Show when={activeTheme().id.startsWith("gallery-")}>
-                <option value={activeTheme().id}>{activeTheme().name}</option>
-              </Show>
-            </select>
+            <SelectField>
+              <select
+                id="theme-select"
+                class="settings-select"
+                value={activeTheme().id}
+                onChange={(e) => setActiveTheme(e.currentTarget.value)}
+              >
+                <For each={availableThemes()}>
+                  {(t) => <option value={t.id}>{t.name}</option>}
+                </For>
+                {/* Keep the picker showing the active gallery theme by name. */}
+                <Show when={activeTheme().id.startsWith("gallery-")}>
+                  <option value={activeTheme().id}>{activeTheme().name}</option>
+                </Show>
+              </select>
+            </SelectField>
 
             <div class="settings-actions">
               <button
@@ -655,32 +673,34 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 </button>
               </Show>
             </div>
-            <select
-              id="font-select"
-              class="settings-select"
-              value={terminalFontFamily()}
-              onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
-            >
-              <option value="">Default (bundled)</option>
-              {/* Keep a persisted pick visible even if detection hasn't run or
-                  no longer lists it (e.g. font uninstalled). */}
-              <Show
-                when={
-                  terminalFontFamily() && !fonts().includes(terminalFontFamily())
-                }
+            <SelectField>
+              <select
+                id="font-select"
+                class="settings-select"
+                value={terminalFontFamily()}
+                onChange={(e) => setTerminalFontFamily(e.currentTarget.value)}
               >
-                <option value={terminalFontFamily()}>
-                  {terminalFontFamily()}
-                </option>
-              </Show>
-              <For each={fonts()}>
-                {(f) => (
-                  <option value={f} style={{ "font-family": `'${f}', monospace` }}>
-                    {f}
+                <option value="">Default (bundled)</option>
+                {/* Keep a persisted pick visible even if detection hasn't run or
+                    no longer lists it (e.g. font uninstalled). */}
+                <Show
+                  when={
+                    terminalFontFamily() && !fonts().includes(terminalFontFamily())
+                  }
+                >
+                  <option value={terminalFontFamily()}>
+                    {terminalFontFamily()}
                   </option>
-                )}
-              </For>
-            </select>
+                </Show>
+                <For each={fonts()}>
+                  {(f) => (
+                    <option value={f} style={{ "font-family": `'${f}', monospace` }}>
+                      {f}
+                    </option>
+                  )}
+                </For>
+              </select>
+            </SelectField>
             <p class="settings-hint">
               {fontsLoading()
                 ? "Detecting installed monospace fonts…"
@@ -997,18 +1017,20 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 Resumable sessions
               </label>
             </div>
-            <select
-              id="session-restore-mode"
-              class="settings-select"
-              value={sessionRestoreMode()}
-              onChange={(e) =>
-                setSessionRestoreMode(e.currentTarget.value as SessionRestoreMode)
-              }
-            >
-              <option value="off">Ignore them</option>
-              <option value="type">Type the resume command</option>
-              <option value="run">Run the resume command</option>
-            </select>
+            <SelectField>
+              <select
+                id="session-restore-mode"
+                class="settings-select"
+                value={sessionRestoreMode()}
+                onChange={(e) =>
+                  setSessionRestoreMode(e.currentTarget.value as SessionRestoreMode)
+                }
+              >
+                <option value="off">Ignore them</option>
+                <option value="type">Type the resume command</option>
+                <option value="run">Run the resume command</option>
+              </select>
+            </SelectField>
             <p class="settings-hint">
               When a restored pane was running Claude Code, its session is
               remembered. "Type" leaves <code>claude --resume …</code> at the
@@ -1022,20 +1044,22 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 Flag panes waiting on you
               </label>
             </div>
-            <select
-              id="claude-attention-mode"
-              class="settings-select"
-              value={claudeAttentionMode()}
-              onChange={(e) =>
-                setClaudeAttentionMode(
-                  e.currentTarget.value as ClaudeAttentionMode
-                )
-              }
-            >
-              <option value="off">Off</option>
-              <option value="heuristic">On — detect it</option>
-              <option value="hooks">On — let Claude say so</option>
-            </select>
+            <SelectField>
+              <select
+                id="claude-attention-mode"
+                class="settings-select"
+                value={claudeAttentionMode()}
+                onChange={(e) =>
+                  setClaudeAttentionMode(
+                    e.currentTarget.value as ClaudeAttentionMode
+                  )
+                }
+              >
+                <option value="off">Off</option>
+                <option value="heuristic">On — detect it</option>
+                <option value="hooks">On — let Claude say so</option>
+              </select>
+            </SelectField>
             <p class="settings-hint">
               A dot on the tab and on the pane's title-bar when Claude Code has
               finished a turn or is asking permission, so you can leave it running
