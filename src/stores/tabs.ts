@@ -394,10 +394,9 @@ function paneTitle(leaf: SplitNode): string {
   if (leaf.pane.kind === "terminal") {
     return getTerminalInstance(leaf.id)?.title || "Terminal";
   }
-  return (
-    leaf.pane.filePath.split(/[\\/]/).pop() ||
-    (leaf.pane.kind === "markdown" ? "Markdown" : "Text")
-  );
+  const fallback =
+    leaf.pane.kind === "markdown" ? "Markdown" : leaf.pane.kind === "image" ? "Image" : "Text";
+  return leaf.pane.filePath.split(/[\\/]/).pop() || fallback;
 }
 
 // Recursive tree operations (return new objects for immutability)
@@ -765,6 +764,25 @@ export function useTabStore() {
       const tab: Tab = {
         id: nanoid(8),
         title: filePath.split(/[\\/]/).pop() || "Text",
+        manualTitle: false,
+        root: leaf,
+        activePaneId: leaf.id,
+        paneHistory: [],
+      };
+      update((s) => ({
+        ...s,
+        tabs: [...s.tabs, tab],
+        activeTabId: tab.id,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId),
+      }));
+      return tab;
+    },
+
+    createImageTab(filePath: string) {
+      const leaf = createLeaf({ kind: "image", filePath });
+      const tab: Tab = {
+        id: nanoid(8),
+        title: filePath.split(/[\\/]/).pop() || "Image",
         manualTitle: false,
         root: leaf,
         activePaneId: leaf.id,
