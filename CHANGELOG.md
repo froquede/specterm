@@ -1,5 +1,92 @@
 # Changelog
 
+## 0.19.0 — 2026-08-06
+
+### Added
+- **Mermaid diagrams in terminal output are drawn, not just printed.** The
+  markdown preview has rendered them since the beginning; a coding agent
+  answering with a flowchart in the pane next to it left you thirty lines of
+  arrows and brackets to assemble in your head. A chip now appears beside the
+  block, and clicking it draws the diagram over the pane — pan, zoom and
+  double-click-to-reset, the same viewport the preview uses. Esc closes it, `←`
+  and `→` step between several in one pane, and *Copy source* puts the mermaid
+  back on the clipboard.
+
+  It reads the screen, so it has nothing to do with which program produced the
+  output: a fenced ```` ```mermaid ```` block from `cat`, `git show` or a
+  heredoc is recognized exactly as readily as one Claude Code rendered. That
+  second shape is the harder one, and is why this is more than a regex. Claude
+  prints a fenced block *without* its fences — the info string on one line, the
+  body under it, and prose resuming at the same indentation — so nothing marks
+  where the diagram ends. The extent is guessed by grammar and settled by the
+  parser, which drops trailing lines until the block parses.
+
+  It also hard-wraps its output to the terminal width, so the long lines that
+  make a diagram worth drawing arrive on screen split in two. Where the pane is
+  running Claude Code, the block's *location* is read off the screen and its
+  *text* out of the session transcript, which holds what was actually written.
+  The screen copy stays as the fallback, which is what everything else gets.
+
+  Nothing is loaded until you click: mermaid is the largest dependency in the
+  app and stays a lazy chunk, and detection is deliberately done with a regex
+  rather than by asking the parser, so a pane that merely prints a diagram never
+  pays for one. Full-screen programs (vim, less, htop) are left alone — the
+  alternate screen is a picture that gets repainted, not a stream of output, and
+  a chip pinned to a line of it would point at whatever scrolled under it next.
+
+  Measured, because the pty-output path is the one that must never grow work:
+  **0.74µs per chunk** (a timestamp and a field write — the per-pane debounce
+  this started as cost 3.5µs, or ~16ms of pure timer churn for a 24MB dump), and
+  **0.8ms for a scan** over a full 400-row window, which happens only on the
+  quiet after a burst. The interval that notices that quiet is shared by every
+  pane and stops itself when they are all idle, so a window doing nothing has no
+  timer of ours armed. Frame-interval p50/p95/p99 under a 24MB dump, a 3,000-line
+  build and a slow drip are unchanged against `main`; ten open/print/close cycles
+  return the heap to its starting size with no decorations left behind.
+- **Specterm has an app icon.** The builds shipped with Electron's default one:
+  the dock, the taskbar, the installer and the .app bundle all showed the
+  Electron atom. macOS gets a proper `.icns` drawn to Apple's icon grid (the
+  artwork at 824 of a 1024 canvas, so it sits at the same visual size as
+  everything beside it in the dock), Linux gets the full set of sizes, and
+  Windows converts from the same png. `scripts/make-icons.sh` regenerates all of
+  it from `build/icon.png`.
+- **Drop a pane on the tab bar to give it a tab of its own.** Anywhere on the bar
+  that isn't a tab chip — past the last tab, on the `+`, on the stretch the
+  window drags by — is now a drop target: the bar lights up, a ghost chip shows
+  where the tab will appear, and the live terminal moves across as it does for
+  every other pane drag. Getting a pane into a new tab used to mean opening an
+  empty tab first and then dragging onto its chip.
+- **The window you're dragging onto lights up.** Take a tab or a pane over
+  another Specterm window and it shows, across its whole surface, that releasing
+  will drop the tab in there. It has no way of noticing on its own — every
+  pointer event during a drag belongs to the window the gesture started in — so
+  the source reports where the cursor is and the app passes it on to whatever is
+  underneath.
+- **Merge a torn-off window back.** Dropping a window's *only* tab onto another
+  Specterm window now moves it there and closes the window it left. Previously
+  that was refused along with every other last-tab move, so a window could be
+  created by a drag but never undone by one. Dropping the only tab on empty
+  desktop is still a no-op — that move would rebuild the same window a few
+  pixels over and leave an empty one behind.
+- **Terminal font size is a setting**, not just a shortcut — so the size you like
+  survives a restart instead of being retyped every launch.
+- **Images open from the file tree.** Clicking a `.png`, `.jpg`, `.gif`, `.webp`
+  or `.svg` opens it in a pane of its own, alongside the markdown and text
+  viewers, rather than doing nothing.
+- **Scroll over the tab bar to switch tabs.**
+- **Drop files onto the window to open them.** A markdown file opens its
+  preview, anything else opens the viewer, and a directory takes the sidebar
+  there.
+- **Collapse the whole settings panel at once**, instead of one category at a
+  time.
+
+### Fixed
+- A tab adopted from another window went to the front without recording where
+  focus came from, so the previous-tab shortcut skipped past the tab you were
+  just on.
+- A markdown preview resolved relative image paths against the app rather than
+  against the file, so `![](./shot.png)` next to the note never loaded.
+
 ## 0.18.2 — 2026-08-01
 
 ### Fixed
@@ -344,7 +431,6 @@
 - **A corrupt snapshot can no longer put an unchecked command at your prompt.**
   The resumable-session block in a saved snapshot was typed into a shell without
   ever being validated. Every field is now checked before it is read back.
-
 ## 0.16.0 — 2026-07-29
 
 ### Added

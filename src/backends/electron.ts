@@ -28,7 +28,9 @@ interface SpectermAPI {
   readProcessEnv(pid: number, names: string[]): Promise<Record<string, string>>;
   onPtyOutput(cb: (id: number, data: Uint8Array) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
+  filePathFor(file: File): string | null;
   readTextFile(path: string): Promise<string>;
+  readFileTail(path: string, maxBytes: number): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   readDirStats(path: string): Promise<FileEntryStats[]>;
@@ -74,6 +76,10 @@ interface SpectermAPI {
   detachedSessionCount(): Promise<number>;
   writeScreens(screens: Record<string, string> | null): void;
   readScreens(): Promise<Record<string, string>>;
+  beginTransfer(): Promise<{ toWindow: boolean }>;
+  dragHover(): void;
+  dragEnd(): void;
+  onDragOver(cb: (over: boolean) => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
@@ -156,8 +162,16 @@ export class ElectronBackend implements Backend {
     return this.api.onPtyExit(cb);
   }
 
+  filePathFor(file: File): string | null {
+    return this.api.filePathFor(file);
+  }
+
   async readTextFile(path: string): Promise<string> {
     return this.api.readTextFile(path);
+  }
+
+  async readFileTail(path: string, maxBytes: number): Promise<string> {
+    return this.api.readFileTail(path, maxBytes);
   }
 
   async writeTextFile(path: string, content: string): Promise<void> {
@@ -267,6 +281,10 @@ export class ElectronBackend implements Backend {
     return this.api.quitApp();
   }
 
+  async beginTransfer(): Promise<{ toWindow: boolean }> {
+    return this.api.beginTransfer();
+  }
+
   async dropTransfer(tab: TransferTab): Promise<void> {
     return this.api.dropTransfer(tab);
   }
@@ -319,6 +337,18 @@ export class ElectronBackend implements Backend {
 
   async detachedSessionCount(): Promise<number> {
     return this.api.detachedSessionCount();
+  }
+
+  dragHover(): void {
+    this.api.dragHover();
+  }
+
+  dragEnd(): void {
+    this.api.dragEnd();
+  }
+
+  async onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn> {
+    return this.api.onDragOver(cb);
   }
 
   broadcast(channel: string, payload?: unknown): void {

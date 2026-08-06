@@ -23,6 +23,13 @@ export const [dropTarget, setDropTarget] = createSignal<{
 // tab bar or the drag ends.
 export const [dropTabId, setDropTabId] = createSignal<string | null>(null);
 
+// True while the cursor is over the tab bar but not over any chip in it — the
+// empty stretch, the drag region, the "+" button. Releasing there gives the
+// dragged pane a tab of its own. Without this the only way to get a pane into a
+// new tab was to open an empty one first and then drag onto its chip, which is
+// two gestures for one intent.
+export const [dropNewTab, setDropNewTab] = createSignal(false);
+
 // Edge thresholds: the central 40% box is "center" (swap); otherwise the
 // nearest border decides the split side.
 export function computeDropEdge(

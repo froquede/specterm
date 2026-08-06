@@ -73,7 +73,8 @@ export interface UpdaterEvent {
 export type TransferPane =
   | { kind: "terminal"; ptyId: number; scrollback: string; title: string }
   | { kind: "markdown"; filePath: string }
-  | { kind: "text"; filePath: string };
+  | { kind: "text"; filePath: string }
+  | { kind: "image"; filePath: string };
 
 export type TransferNode =
   | { type: "leaf"; pane: TransferPane }
@@ -190,7 +191,23 @@ export interface Backend {
   ): Promise<Record<string, string>>;
 
   // Filesystem
+  // Absolute path of a file that arrived via drag-and-drop, or null when the
+  // host can't tell us (a drag out of a web page, an unsupported host). Sync on
+  // purpose: a DataTransfer is dead the moment its drop handler returns, so the
+  // routing that depends on this can't be waiting on a promise.
+  filePathFor(file: File): string | null;
   readTextFile(path: string): Promise<string>;
+  // The last `maxBytes` of a file, as text, with the leading partial line
+  // dropped so every line that comes back is whole.
+  //
+  // Exists because of one caller: the diagram detector reads Claude Code
+  // transcripts to recover the exact source of a mermaid block, and those files
+  // routinely pass 30MB. readTextFile would hand the render thread the whole
+  // thing to allocate and decode for the sake of the few kilobytes at the end
+  // that were just written. Returns "" for a missing or unreadable file —
+  // every caller treats the transcript as an optional improvement on what it
+  // could already read off the screen.
+  readFileTail(path: string, maxBytes: number): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   // Same listing with modification times. Returns [] for a missing directory
@@ -240,7 +257,9 @@ export interface Backend {
   minimizeWindow(): Promise<void>;
   /** Toggles, and resolves to whether the window ended up maximized. */
   toggleMaximizeWindow(): Promise<boolean>;
-  /** The same gesture as the X on a native frame — so it detaches like any close. */
+  /** The same gesture as the X on a native frame — so it detaches like any close.
+   *  Also how a window that has just given its last tab away closes itself: the
+   *  content moved into another window, so there is nothing left to show. */
   closeWindow(): Promise<void>;
   isMaximized(): Promise<boolean>;
   // Fires when the window is maximized or restored, including from outside the app
@@ -273,12 +292,29 @@ export interface Backend {
   // End the whole app, detached sessions and all. Distinct from closing a window,
   // which with background sessions on parks it instead (see below).
   quitApp(): Promise<void>;
+  // Announce a released tear-off and learn where it lands, before this window
+  // gives anything up. `toWindow` is true when the cursor is over another
+  // Specterm window; only then is handing over the window's last tab sensible
+  // (otherwise the move would just rebuild this window somewhere else). The
+  // host remembers the answer for the dropTransfer that follows, so a cursor
+  // that keeps moving during the handover can't change the destination
+  // underneath a decision already made on it.
+  beginTransfer(): Promise<{ toWindow: boolean }>;
   // Land a torn-off tab wherever the cursor released it: into another Specterm
   // window if one is under it, otherwise into a new window of its own. The host
   // decides, since only it can see the real cursor and every window's bounds.
   dropTransfer(tab: TransferTab): Promise<void>;
   // A tab another window tore off and dropped onto this one.
   onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn>;
+  // Called as a drag that has left this window moves, so the host can light up
+  // whichever window is under the cursor. Fire-and-forget, on pointermove.
+  dragHover(): void;
+  // That drag ended (dropped, cancelled): put any highlight out.
+  dragEnd(): void;
+  // A drag from another window is over this one, or has just left it. The
+  // gesture belongs to the window it started in, so this is the only way this
+  // window hears about a drop heading its way.
+  onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn>;
 
   // --- Detaching (closing a window without stopping its shells) -------------
   //

@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.18.2",
+  "version": "0.19.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
@@ -27,6 +27,7 @@
     "test:e2e": "vite build && node test/e2e.mjs",
     "test:e2e:all": "vite build && node test/run-all.mjs",
     "test:e2e:session": "vite build && node test/e2e-session.mjs",
+    "test:e2e:diagrams": "vite build && node test/e2e-diagrams.mjs",
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "hero:gif": "vite build && node scripts/hero-gif.mjs",
@@ -71,7 +72,8 @@
       "dist/**/*",
       "electron/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "build/icon.png"
     ],
     "linux": {
       "target": [
@@ -81,7 +83,8 @@
       "category": "TerminalEmulator",
       "desktop": {
         "StartupNotify": "true"
-      }
+      },
+      "icon": "build/icons"
     },
     "deb": {
       "afterInstall": "build/linux/after-install.tpl"
@@ -98,12 +101,14 @@
         }
       ],
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,

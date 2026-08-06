@@ -1,6 +1,6 @@
 # E2E test suite
 
-Three Playwright-driven end-to-end suites. Each builds the app, launches the
+Four Playwright-driven end-to-end suites. Each builds the app, launches the
 **real** Electron binary, and drives the actual UI (clicks, keyboard, settings),
 asserting on observable behavior.
 
@@ -19,6 +19,15 @@ asserting on observable behavior.
   Alt+F4 quits rather than detaching, and the custom title bar — which lives here
   rather than in the main suite because turning it off only takes effect on the
   *next* window.
+
+- **`e2e-diagrams.mjs`** — mermaid blocks found in terminal output: the chip, the
+  overlay, and where the diagram's text came from. Separate because it runs the
+  app under a **sandboxed `HOME`** — half of what it covers is the detector
+  recovering the exact source from a Claude Code transcript, and a synthetic
+  transcript has no business being written into the developer's real
+  `~/.claude`. The transcript it plants deliberately names a node the screen
+  does not, so the check can only pass if that path actually ran; with identical
+  text in both it would go green over dead code.
 
 Two traps `e2e-session.mjs` documents in its header and exists to stay out of,
 because both produce a green run that proves nothing:

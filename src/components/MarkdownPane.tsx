@@ -197,7 +197,8 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     const md = content();
     if (!md || !contentRef) return;
 
-    renderedHtml = renderMarkdown(md);
+    const dir = props.filePath.substring(0, props.filePath.lastIndexOf("/"));
+    renderedHtml = renderMarkdown(md, dir);
     contentRef.innerHTML = renderedHtml;
     await renderMermaidBlocks(contentRef);
 

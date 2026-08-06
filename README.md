@@ -20,10 +20,13 @@ xattr -dr com.apple.quarantine /Applications/Specterm.app
 ## Features
 
 Splits with draggable dividers, tabs, and multiple windows — with tabs that tear
-off and move between them. A filterable file sidebar with pinned favourites.
+off, move between windows and merge back, and panes that become tabs of their own
+by being dropped on the tab bar. A filterable file sidebar with pinned favourites.
 Markdown preview and editor with Mermaid, and a syntax-highlighted viewer for
-everything else. Find in scrollback, WebGL rendering, five built-in themes plus
-a 325-scheme base16 gallery, and a tab bar that stands in for the title bar.
+everything else. Mermaid blocks that go past in *terminal output* are drawn too:
+a chip appears beside the block and clicking it opens the diagram over the pane.
+Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
+base16 gallery, and a tab bar that stands in for the title bar.
 
 ## Keybindings
 
@@ -65,9 +68,17 @@ works, `Alt+drag` selects a column. See `src/lib/mouse-selection.ts`.
 
 **Moving tabs between windows.** Drag a tab — or a pane by its title-bar — past
 the window edge. Release over another Specterm window to move it there, anywhere
-else to make it a new window. The shell is handed over still running: its
-scrollback is serialized and replayed, and anything it prints mid-move is
-buffered and written back in order.
+else to make it a new window. The window under the cursor lights up across its
+whole surface: it can't feel the drag itself — the pointer belongs to the window
+the gesture started in — so the app tells it where the cursor is. The shell is
+handed over still running: its scrollback is serialized and replayed, and
+anything it prints mid-move is buffered and written back in order. It goes both
+ways: dropping a window's only tab onto another window merges it back, and the
+window it left closes itself.
+
+**Moving a pane out of its split.** Drop a pane on the **tab bar** — anywhere
+that isn't a tab chip — and it gets a tab of its own. Drop it on a chip and it
+joins that tab; drop it back over the panes and it splits or swaps as usual.
 
 **Splits inherit the directory.** A new pane opens where the pane you split from
 is. Read from the shell's own process, so it works without configuring anything;
@@ -92,6 +103,49 @@ npm install
 npx electron-builder install-app-deps
 npm run dev:electron
 ```
+
+### The app icon
+
+`build/icon.png` is the source of truth: the artwork alone, square, transparent,
+edge to edge. Everything else is generated from it by `scripts/make-icons.sh`
+(macOS only — `sips` and `iconutil` do the work), which writes:
+
+- `build/icon.icns` — macOS. The artwork is scaled to 824 on a 1024 canvas,
+  which is the margin macOS app icons are drawn with; letting electron-builder
+  convert the full-bleed png instead makes Specterm sit visibly larger than
+  everything else in the dock.
+- `build/icon-dock.png` — the same shape at 512, for the dock icon of an
+  unpackaged run. It exists because `nativeImage` can't read an `.icns` at all,
+  so `app.dock.setIcon` needs a png that already carries the margin.
+- `build/icons/*.png` — Linux, at the sizes desktops ask for.
+
+Windows needs nothing generated: electron-builder converts `build/icon.png` to
+an `.ico` at build time.
+
+Replacing the icon means replacing that one png and re-running the script. The
+same png is also packaged (it's in `build.files`) and used as the window icon on
+Linux and Windows, and as the dock icon when running unpackaged on macOS — where
+the app would otherwise appear as Electron itself.
+
+### Windows: PowerShell shell fix
+
+`node-pty` needs a real shell to spawn. On Windows `process.env.SHELL` is
+unset, so the old `SHELL || "/bin/bash"` fallback tried to launch a binary that
+doesn't exist and the terminal died on open. The Electron main process
+(`electron/main.cjs`) now resolves the shell per platform:
+
+- **Windows:** `powershell.exe` (override with the `SPECTERM_SHELL` env var,
+  e.g. point it at `pwsh.exe` for PowerShell 7).
+- **macOS / Linux:** `$SHELL`, falling back to `/bin/bash`.
+
+The native `node-pty` addon is also kept out of the asar archive
+(`build.asarUnpack`) and must be rebuilt for Electron (see the
+`install-app-deps` step above) for the PTY to load in the packaged app.
+
+See [docs/windows-setup.md](docs/windows-setup.md) for further prerequisites and
+troubleshooting.
+
+## Tests
 
 ```bash
 npm run test:e2e        # main suite

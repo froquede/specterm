@@ -201,9 +201,9 @@ export default function FileTree(props: FileTreeProps) {
     if (entry.isDirectory) {
       navigateTo(entry.path);
     } else {
-      // Any file opens — markdown renders as a preview, everything else in the
-      // read-only text viewer (which refuses binaries itself). See App's
-      // handleOpenFile.
+      // Any file opens — markdown renders as a preview, an image opens in the
+      // image viewer, everything else in the read-only text viewer (which
+      // refuses binaries itself). See App's handleOpenFile.
       props.onOpenFile(entry.path, mode);
     }
   }

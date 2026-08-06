@@ -87,6 +87,32 @@ export function equalPath(a: string, b: string): boolean {
  * for the host OS's default shell. Windows terminals default to PowerShell
  * (pwsh/powershell), where the bash `cd 'x'\''y'` escaping is wrong.
  */
+// Characters a shell passes through untouched, so a path made only of these
+// needs no quoting at all. Deliberately conservative — anything outside this set
+// (spaces, quotes, globs, $, &, parentheses…) sends the path down the quoted
+// path below.
+const BARE_PATH = /^[A-Za-z0-9_@%+=:,.\\/-]+$/;
+
+/**
+ * Render a path for insertion into a prompt line the user is still typing — a
+ * dropped image handed to whatever is running in the pane. Unlike shellQuoteCd
+ * this builds no command, and it quotes only when it has to.
+ *
+ * The restraint is the point: what usually reads that line is not a shell but a
+ * program prompting inside one (Claude Code, say, which attaches an image when
+ * it sees its path). Those read the raw characters, so a path wrapped in quotes
+ * it didn't ask for is a path it may not recognize. Quoting is kept for the
+ * paths a shell would genuinely mangle.
+ */
+export function shellQuotePath(path: string): string {
+  if (BARE_PATH.test(path)) return path;
+  // PowerShell doubles an embedded single quote; POSIX shells end the quoted
+  // run, escape the quote, and open a new one.
+  return WIN
+    ? `'${path.replace(/'/g, "''")}'`
+    : `'${path.replace(/'/g, "'\\''")}'`;
+}
+
 export function shellQuoteCd(path: string): string {
   if (WIN) {
     // PowerShell escapes a single quote by doubling it; -LiteralPath avoids

@@ -91,8 +91,23 @@ export class TauriBackend implements Backend {
     });
   }
 
+  // Tauri swallows OS file drops in the webview and reports them through its own
+  // drag-drop event instead, so the File objects the DOM sees carry no path.
+  // Nothing to answer with here; the drop routing skips paths it can't resolve.
+  filePathFor(_file: File): string | null {
+    return null;
+  }
+
   async readTextFile(path: string): Promise<string> {
     return readTextFile(path);
+  }
+
+  // No bounded read in the fs plugin, and the one caller (the diagram detector
+  // reading a Claude transcript) treats an empty answer as "nothing extra to
+  // learn" and falls back to what it read off the screen. Reading a 30MB
+  // transcript whole to serve that would cost more than the feature is worth.
+  async readFileTail(_path: string, _maxBytes: number): Promise<string> {
+    return "";
   }
 
   async writeTextFile(path: string, content: string): Promise<void> {
@@ -256,6 +271,12 @@ export class TauriBackend implements Backend {
   // Nothing outlives the window here, so closing it is already quitting.
   async quitApp(): Promise<void> {}
 
+  // No second window to drop onto, so a tear-off here can never be a merge —
+  // reporting false keeps the store's "don't give away your last tab" guard on.
+  async beginTransfer(): Promise<{ toWindow: boolean }> {
+    return { toWindow: false };
+  }
+
   async dropTransfer(_tab: TransferTab): Promise<void> {}
 
   async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
@@ -297,6 +318,15 @@ export class TauriBackend implements Backend {
 
   async detachedSessionCount(): Promise<number> {
     return 0;
+  }
+
+  // No other window to light up, and none to be lit up by.
+  dragHover(): void {}
+
+  dragEnd(): void {}
+
+  async onDragOver(_cb: (over: boolean) => void): Promise<UnlistenFn> {
+    return () => {};
   }
 
   // With one window there is nobody to sync with, so a broadcast has no

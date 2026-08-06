@@ -1,0 +1,15 @@
+  Fluxo de autenticacao:
+
+  mermaid
+  sequenceDiagram
+      participant U as Usuario
+      participant W as Web
+      participant A as Auth0
+      U->>W: abre /login
+      W->>A: redirect authorize
+      A-->>W: code
+      W->>A: troca code por token
+      A-->>W: id_token
+      W-->>U: sessao aberta
+
+  O token vive 30 minutos e o refresh acontece em background.

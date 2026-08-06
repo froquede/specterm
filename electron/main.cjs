@@ -395,6 +395,30 @@ const WINDOW_HEIGHT = 800;
 // the user expected to find again. The cost of being too patient is a window that
 // takes a moment to vanish, once, when a renderer has already broken.
 const DETACH_TIMEOUT_MS = 4000;
+// The app icon, as a file the runtime can load.
+//
+// Packaged, each platform takes its icon from the bundle: the .icns inside the
+// .app on macOS, the .ico linked into the .exe on Windows, the .desktop entry on
+// Linux. This is for everything that happens outside that — the window and
+// taskbar icon on Linux and Windows, and the dock icon when running unpackaged,
+// which would otherwise be Electron's own. It's listed in the build's `files`
+// so the packaged app has it too. See build/icon.png.
+const APP_ICON = path.join(__dirname, "../build/icon.png");
+const appIcon = fs.existsSync(APP_ICON) ? APP_ICON : undefined;
+
+// The macOS dock is the one place that must NOT get the icon above. Every icon
+// in the dock is drawn at 824 of a 1024 canvas, and the png is the full-bleed
+// artwork — handing it over renders Specterm a quarter larger than everything
+// beside it. This one carries that margin.
+//
+// It has to be a png: nativeImage can't read an .icns at all (not this app's,
+// not the system's — createFromPath returns an empty image either way), so the
+// .icns the bundle ships is no use here.
+//
+// Only ever read unpackaged — a packaged app takes its dock icon from the
+// bundle — so it doesn't need to be in the build's `files`.
+const DOCK_ICON = path.join(__dirname, "../build/icon-dock.png");
+const dockIcon = fs.existsSync(DOCK_ICON) ? DOCK_ICON : undefined;
 
 // Where a torn-off tab's new window should sit: centered on the drop point, but
 // nudged back inside the display it landed on so no window opens with its title
@@ -586,6 +610,8 @@ function createWindow(opts = {}) {
     height: WINDOW_HEIGHT,
     ...(opts.bounds || {}),
     title: "Specterm",
+    // Ignored on macOS, where the icon comes from the bundle.
+    ...(appIcon && !isMac ? { icon: appIcon } : {}),
     autoHideMenuBar: true,
     // Held back and then shown *inactive* below, so the window appears where it
     // belongs without pulling focus off whatever has it.
@@ -760,7 +786,11 @@ function createWindow(opts = {}) {
     reapUnparkedPtys(wcId);
 
     windowLayouts.delete(wcId);
-    attentionCounts.delete(wcId);
+    pendingDrops.delete(wcId);
+    // Nothing to keep lit, and nothing to put out later either.
+    if (dragTarget === win) clearDragTarget();
+    // Its panes are gone, so whatever they were waiting for comes off the badge.
+    if (attentionCounts.delete(wcId)) refreshBadge();
     killPtysOwnedBy(wc);
     const watcher = fsWatchers.get(wcId);
     if (watcher) {
@@ -1318,6 +1348,37 @@ ipcMain.handle("get-hostname", () => {
 
 ipcMain.handle("read-text-file", async (_event, filePath) => {
   return fs.promises.readFile(filePath, "utf-8");
+});
+
+// The tail of a file, without reading the rest of it. Claude Code transcripts
+// are tens of megabytes and the diagram detector only ever wants the last turn,
+// so this reads a bounded window off the end and drops the partial first line
+// so the caller always gets whole lines. A file that can't be read is "" — the
+// caller has a screen-scraped fallback and doesn't need the distinction.
+ipcMain.handle("read-file-tail", async (_event, filePath, maxBytes) => {
+  const limit = Math.max(1, Math.min(Number(maxBytes) || 0, 64 * 1024 * 1024));
+  let handle;
+  try {
+    handle = await fs.promises.open(filePath, "r");
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - limit);
+    const length = size - start;
+    if (length <= 0) return "";
+    const buf = Buffer.allocUnsafe(length);
+    await handle.read(buf, 0, length, start);
+    const text = buf.toString("utf-8");
+    if (start === 0) return text;
+    // Started mid-file, so the first line is a fragment — and, having been cut
+    // at a byte offset, possibly mid-character too. Both go with the newline.
+    // No newline in the whole window means the window is one long partial line
+    // and there is nothing complete in it to return.
+    const nl = text.indexOf("\n");
+    return nl === -1 ? "" : text.slice(nl + 1);
+  } catch (_) {
+    return "";
+  } finally {
+    await handle?.close().catch(() => {});
+  }
 });
 
 ipcMain.handle("write-text-file", async (_event, filePath, content) => {
@@ -1929,20 +1990,12 @@ ipcMain.handle("park-session", (event, payload) => {
   if (win && !win.isDestroyed()) win.destroy();
 });
 
-// The landing half of a tear-off. The renderer has already released the tab's
-// PTYs; here we decide where it goes, using the OS cursor position rather than
-// anything the renderer measured — a drag that leaves the window may stop
-// delivering pointer events to it, but the real cursor is always knowable.
-//
-// Drop over another Specterm window and the tab moves into it; drop anywhere
-// else and it becomes a window of its own, centered on where it landed.
-ipcMain.handle("drop-transfer", (event, tab) => {
-  if (!tab) return;
-  const point = screen.getCursorScreenPoint();
-  const source = windowOf(event);
-
+// The Specterm window under a screen point, ignoring the one the drag came from.
+// Minimized windows don't count: they occupy bounds nobody can see, so dropping
+// "on" one would make a tab vanish into a window that isn't on screen.
+function windowAtPoint(point, exclude) {
   for (const win of openWindows()) {
-    if (win === source) continue;
+    if (win === exclude || win.isMinimized()) continue;
     const b = win.getBounds();
     if (
       point.x >= b.x &&
@@ -1950,11 +2003,112 @@ ipcMain.handle("drop-transfer", (event, tab) => {
       point.y >= b.y &&
       point.y < b.y + b.height
     ) {
-      win.webContents.send("adopt-tab", tab);
-      if (win.isMinimized()) win.restore();
-      raise(win);
-      return;
+      return win;
     }
+  }
+  return null;
+}
+
+// Where each window's in-flight tear-off is headed, keyed by webContents id and
+// consumed by the "drop-transfer" that follows. See "begin-transfer".
+const pendingDrops = new Map();
+
+// The window currently showing "a drag is hovering you", if any.
+//
+// The destination of a cross-window drag is the one place that can't tell the
+// drag is happening: pointer events during a drag stay with the window the
+// gesture started in, so the window about to receive a tab hears nothing at all.
+// The source pings us as it moves, and we hand that on to whatever is under the
+// cursor — the only process that can see both the real cursor and every window.
+let dragTarget = null;
+let dragIdleTimer = null;
+
+function setDragTarget(win) {
+  if (dragTarget === win) return;
+  if (dragTarget && !dragTarget.isDestroyed()) {
+    dragTarget.webContents.send("drag-over", false);
+  }
+  dragTarget = win;
+  if (dragTarget && !dragTarget.isDestroyed()) {
+    dragTarget.webContents.send("drag-over", true);
+  }
+}
+
+function clearDragTarget() {
+  if (dragIdleTimer) {
+    clearTimeout(dragIdleTimer);
+    dragIdleTimer = null;
+  }
+  setDragTarget(null);
+}
+
+// A drag that goes quiet without ending — the source window was killed, the
+// gesture was swallowed by the OS — must not leave another window lit up
+// forever. Each ping re-arms this; silence puts the highlight out.
+const DRAG_IDLE_MS = 1000;
+
+ipcMain.on("drag-hover", (event) => {
+  setDragTarget(
+    windowAtPoint(screen.getCursorScreenPoint(), windowOf(event))
+  );
+  if (dragIdleTimer) clearTimeout(dragIdleTimer);
+  dragIdleTimer = setTimeout(clearDragTarget, DRAG_IDLE_MS);
+});
+
+ipcMain.on("drag-end", () => clearDragTarget());
+
+// The opening half of a tear-off, called the instant the drag is released.
+//
+// It answers one question — does the release land on another Specterm window? —
+// and remembers the answer. The renderer needs it *before* it commits to the
+// move, because handing a window's last tab away is only sensible when the tab
+// is going somewhere that already exists; otherwise the move would rebuild this
+// window somewhere else and leave an empty one behind.
+//
+// The target is recorded rather than resolved twice, because serializing the
+// tab's screens takes a few frames and the cursor does not stand still: reading
+// the cursor again in "drop-transfer" could answer differently from what the
+// renderer was told, and the renderer has already acted on the first answer.
+ipcMain.handle("begin-transfer", (event) => {
+  const source = windowOf(event);
+  const point = screen.getCursorScreenPoint();
+  const target = windowAtPoint(point, source);
+  pendingDrops.set(event.sender.id, { target, point });
+  // The drag is over — whatever was lit up has served its purpose, and the
+  // destination is about to be told about the tab itself.
+  clearDragTarget();
+  return { toWindow: target !== null };
+});
+
+// The landing half of a tear-off. The renderer has already released the tab's
+// PTYs; here we place it, using where "begin-transfer" said the drag ended —
+// decided from the OS cursor, never from anything the renderer measured, since
+// a drag that leaves the window may stop delivering pointer events to it.
+//
+// Drop over another Specterm window and the tab moves into it; drop anywhere
+// else and it becomes a window of its own, centered on where it landed.
+ipcMain.handle("drop-transfer", (event, tab) => {
+  if (!tab) return;
+  const source = windowOf(event);
+  const pending = pendingDrops.get(event.sender.id);
+  pendingDrops.delete(event.sender.id);
+  const point = pending ? pending.point : screen.getCursorScreenPoint();
+  // A recorded target that has closed in the meantime falls through to a new
+  // window, so the tab is never lost. Reading the cursor here is the fallback
+  // for a drop that was never announced, not the normal path.
+  let target;
+  if (pending) {
+    target =
+      pending.target && !pending.target.isDestroyed() ? pending.target : null;
+  } else {
+    target = windowAtPoint(point, source);
+  }
+
+  if (target) {
+    target.webContents.send("adopt-tab", tab);
+    if (target.isMinimized()) target.restore();
+    target.focus();
+    return;
   }
 
   raise(createWindow({ tab, bounds: windowBoundsAt(point) }));
@@ -1983,25 +2137,28 @@ ipcMain.on("broadcast", (event, channel, payload) => {
 //     unfocused — flashing the window someone is already typing in is noise —
 //     and always lowered when it isn't needed, since on Windows it otherwise
 //     keeps flashing until the window is activated.
-// Each window reports its own count, so they're kept per window: the flash belongs
-// to the window whose panes are waiting, and the badge — which the OS has exactly
-// one of — is their total. Before this, both halves read a `mainWindow` singleton
-// that the multi-window work had already replaced with a Set, so every update threw
-// and the taskbar flash never fired at all.
+//
+// Each window reports only its own count, so the two halves are scoped
+// differently: the taskbar flash is raised on the window that reported (its
+// panes are the ones waiting), while the badge — one number on one dock icon —
+// is the total across every window. Summing is what keeps a second window's
+// waiting pane from overwriting the first window's count with its own.
 const attentionCounts = new Map();
 
-ipcMain.handle("set-attention-badge", (event, count) => {
-  const n = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
-  attentionCounts.set(event.sender.id, n);
-
+function refreshBadge() {
   let total = 0;
-  for (const value of attentionCounts.values()) total += value;
+  for (const n of attentionCounts.values()) total += n;
   try {
     app.setBadgeCount(total);
   } catch (_) {
     /* No badge support on this desktop — the flash below still applies. */
   }
+}
 
+ipcMain.handle("set-attention-badge", (event, count) => {
+  const n = Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0;
+  attentionCounts.set(event.sender.id, n);
+  refreshBadge();
   const win = windowOf(event);
   if (!win || win.isDestroyed()) return;
   win.flashFrame(n > 0 && !win.isFocused());
@@ -2547,6 +2704,14 @@ app.whenReady().then(() => {
   }
 
   loadSessionPrefs();
+  // Unpackaged on macOS there is no bundle to take an icon from, so `npm run
+  // dev:electron` would sit in the dock as Electron's own atom. Packaged, the
+  // .icns is already the app's identity and this would be redundant.
+  if (process.platform === "darwin" && !app.isPackaged && dockIcon) {
+    const image = nativeImage.createFromPath(dockIcon);
+    if (!image.isEmpty()) app.dock?.setIcon(image);
+  }
+
   buildAppMenu();
 
   // One window per window that was open when the app last quit, each where it was.

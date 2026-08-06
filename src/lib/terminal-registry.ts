@@ -25,6 +25,7 @@ import {
   registerNotificationHandler,
 } from "./osc";
 import { noteOutput, noteInput, forgetPane } from "./claude-attention";
+import { noteDiagramOutput, forgetDiagrams } from "./terminal-diagrams";
 import { markAttention, clearAttention } from "../stores/attention";
 import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
@@ -210,9 +211,9 @@ const PTY_RESIZE_THROTTLE_MS = 55;
 const instances = new Map<string, TerminalInstance>();
 
 // Font zoom (Ghostty-style: ⌘= / ⌘- / ⌘0). Applies to every open terminal.
-const DEFAULT_FONT_SIZE = 14;
-const MIN_FONT_SIZE = 6;
-const MAX_FONT_SIZE = 40;
+export const DEFAULT_FONT_SIZE = 14;
+export const MIN_FONT_SIZE = 6;
+export const MAX_FONT_SIZE = 40;
 const FONT_SIZE_STORAGE_KEY = "specterm.fontSize";
 
 // Restore the last zoom level from a previous session, clamped to the valid
@@ -229,11 +230,16 @@ function loadFontSize(): number {
   return DEFAULT_FONT_SIZE;
 }
 
-let currentFontSize = loadFontSize();
+// Reactive so the Settings panel's font-size slider can both read and drive it,
+// the same way it does with terminalFontFamily below.
+const [terminalFontSize, setTerminalFontSizeSignal] = createSignal<number>(
+  loadFontSize()
+);
+export { terminalFontSize };
 
 function persistFontSize() {
   try {
-    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(currentFontSize));
+    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(terminalFontSize()));
   } catch {
     // localStorage unavailable — zoom just won't persist this session
   }
@@ -243,7 +249,7 @@ function applyFontSize() {
   persistFontSize();
   for (const instance of instances.values()) {
     if (instance.disposed) continue;
-    instance.term.options.fontSize = currentFontSize;
+    instance.term.options.fontSize = terminalFontSize();
     if (instance.container) {
       try {
         safeFit(instance.term, instance.fitAddon);
@@ -256,22 +262,32 @@ function applyFontSize() {
   // ⌘= / ⌘- / ⌘0 scale the .md reader in lockstep with the terminal font.
   document.documentElement.style.setProperty(
     "--md-font-scale",
-    (currentFontSize / DEFAULT_FONT_SIZE).toString()
+    (terminalFontSize() / DEFAULT_FONT_SIZE).toString()
   );
 }
 
 export function increaseFontSize() {
-  currentFontSize = Math.min(MAX_FONT_SIZE, currentFontSize + 1);
+  setTerminalFontSizeSignal((v) => Math.min(MAX_FONT_SIZE, v + 1));
   applyFontSize();
 }
 
 export function decreaseFontSize() {
-  currentFontSize = Math.max(MIN_FONT_SIZE, currentFontSize - 1);
+  setTerminalFontSizeSignal((v) => Math.max(MIN_FONT_SIZE, v - 1));
   applyFontSize();
 }
 
 export function resetFontSize() {
-  currentFontSize = DEFAULT_FONT_SIZE;
+  setTerminalFontSizeSignal(DEFAULT_FONT_SIZE);
+  applyFontSize();
+}
+
+// Absolute set, for the Settings panel's slider (as opposed to the relative
+// ⌘=/⌘- steps above).
+export function setTerminalFontSize(size: number) {
+  const clamped = Number.isFinite(size)
+    ? Math.min(MAX_FONT_SIZE, Math.max(MIN_FONT_SIZE, size))
+    : DEFAULT_FONT_SIZE;
+  setTerminalFontSizeSignal(clamped);
   applyFontSize();
 }
 
@@ -279,7 +295,7 @@ export function resetFontSize() {
 // opens at the same scale as the terminal even before the first ⌘=/⌘-/⌘0.
 document.documentElement.style.setProperty(
   "--md-font-scale",
-  (currentFontSize / DEFAULT_FONT_SIZE).toString()
+  (terminalFontSize() / DEFAULT_FONT_SIZE).toString()
 );
 
 // Terminal font family. Unlike zoom (driven by keyboard), this is a persisted
@@ -770,7 +786,7 @@ export async function createTerminalInstance(
 
   const term = new Terminal({
     cursorBlink: true,
-    fontSize: currentFontSize,
+    fontSize: terminalFontSize(),
     fontFamily: xtermFontFamily(),
     allowTransparency: true,
     theme: currentXtermTheme,
@@ -1080,16 +1096,22 @@ export async function attachTerminal(
   // Every chunk is also timed by the attention heuristic (lib/claude-attention),
   // which reads nothing from the data — only when it arrived — to spot a pane
   // that was working and has gone quiet.
+  // The diagram detector is timed off the same chunks, and for the same reason
+  // — it wants the moment the burst *ends*, when whatever was printed is whole.
+  // It costs a timestamp per chunk; the waiting is done by one interval shared
+  // across panes, which stops itself when they are all quiet.
   const onShellReady = takePendingRestore(paneId, instance.ptyId);
   const writeChunk = onShellReady
     ? (data: Uint8Array) => {
         term.write(data);
         noteOutput(paneId);
+        noteDiagramOutput(paneId, instance!);
         onShellReady();
       }
     : (data: Uint8Array) => {
         term.write(data);
         noteOutput(paneId);
+        noteDiagramOutput(paneId, instance!);
       };
 
   instance.unlistenOutput = await onPtyOutput((id, data) => {
@@ -1315,6 +1337,7 @@ export function releaseTerminal(paneId: string) {
   cancelRevival(paneId);
   clearAttention(paneId);
   forgetPane(paneId);
+  forgetDiagrams(paneId);
 
   const instance = instances.get(paneId);
   if (!instance) return;
@@ -1340,6 +1363,7 @@ export function destroyTerminal(paneId: string) {
   // and the timer behind it go with it.
   clearAttention(paneId);
   forgetPane(paneId);
+  forgetDiagrams(paneId);
 
   const instance = instances.get(paneId);
   if (!instance) return;

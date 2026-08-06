@@ -64,9 +64,9 @@ function snapshotPane(paneId: string, pane: PaneType): SnapshotPane {
       screenKey: paneId,
     };
   }
-  return pane.kind === "markdown"
-    ? { kind: "markdown", filePath: pane.filePath }
-    : { kind: "text", filePath: pane.filePath };
+  if (pane.kind === "markdown") return { kind: "markdown", filePath: pane.filePath };
+  if (pane.kind === "image") return { kind: "image", filePath: pane.filePath };
+  return { kind: "text", filePath: pane.filePath };
 }
 
 export function snapshotNode(node: SplitNode): SnapshotNode {
@@ -102,9 +102,9 @@ function hydratePane(pane: SnapshotPane): PaneType {
     // ptyId null = "not spawned yet", exactly like a freshly created pane.
     return { kind: "terminal", ptyId: null, cwd: pane.cwd };
   }
-  return pane.kind === "markdown"
-    ? { kind: "markdown", filePath: pane.filePath }
-    : { kind: "text", filePath: pane.filePath };
+  if (pane.kind === "markdown") return { kind: "markdown", filePath: pane.filePath };
+  if (pane.kind === "image") return { kind: "image", filePath: pane.filePath };
+  return { kind: "text", filePath: pane.filePath };
 }
 
 // Everything a hydrated pane needs that the live tree can't hold — its resumable
@@ -191,7 +191,7 @@ function isSnapshotPane(v: unknown): v is SnapshotPane {
       isSessionMeta(p.session)
     );
   }
-  if (p.kind === "markdown" || p.kind === "text") {
+  if (p.kind === "markdown" || p.kind === "text" || p.kind === "image") {
     return typeof p.filePath === "string";
   }
   return false;

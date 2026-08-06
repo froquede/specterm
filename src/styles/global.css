@@ -213,9 +213,14 @@ body,
   transform: translateY(calc(100% - var(--tab-bar-peek)));
 }
 
-/* Revealed on hover, and whenever focus lands inside it (keyboard users). */
+/* Revealed on hover, and whenever focus lands inside it (keyboard users).
+   Also for the whole of a pane drag: the bar is a drop target then, and one you
+   can't aim at is one you can't use. Hover alone wouldn't do it — a drag holds
+   pointer capture on the pane's title-bar, so :hover stays with the captured
+   element and never reaches the bar. */
 .app[data-tab-autohide="true"] .tab-bar:hover,
-.app[data-tab-autohide="true"] .tab-bar:focus-within {
+.app[data-tab-autohide="true"] .tab-bar:focus-within,
+.app[data-tab-autohide="true"] .tab-bar.pane-dragging {
   transform: none;
 }
 
@@ -261,6 +266,53 @@ body,
   color: var(--fg);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* A dragged pane is over the bar but not over any chip — releasing gives it a
+   tab of its own. The bar itself is the drop target here, so it's the bar that
+   lights up, with a ghost chip standing in for the tab about to appear. */
+.tab-bar.drop-new-tab {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-chrome));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tab-ghost {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-right: none;
+  outline: 1px dashed var(--accent);
+  outline-offset: -3px;
+  pointer-events: none;
+}
+
+/* The receiving end of a cross-window drag: a tab is being dragged over this
+   window from another one, and releasing drops it in here. Nothing in this
+   window is under the cursor as far as it knows — the host is what tells it the
+   drag is there — so the whole window is the target, and says so.
+
+   pointer-events:none throughout: the drag belongs to another window, and this
+   must not interfere with anything happening in this one. z-index sits above
+   the panes and the tab bar (40) so it reads as a state of the window itself. */
+.window-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}
+
+.window-drop-label {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 35%);
 }
 
 /* Dragged past the window's own edge: releasing moves this tab (or pane) into
@@ -476,6 +528,46 @@ body,
   letter-spacing: 0.01em;
 }
 
+/* Folds or unfolds every category at once. No chip chrome: a bordered box in a
+   header bar reads as a field to type into, and this is the one thing up here
+   you press. The sign carries it instead — leading, the way a sign is written,
+   and at full label weight so the control is legible at rest and only takes the
+   accent when the pointer is on it. Pinned to the trailing edge, away from the
+   title it shares the row with. */
+.settings-fold-all {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.settings-fold-all:hover {
+  color: var(--accent);
+}
+
+/* The one control in the header, so it's also the one that has to say where the
+   keyboard is. */
+.settings-fold-all:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+
+.settings-fold-all-icon {
+  display: flex;
+  align-items: center;
+}
+
 /* One category — a foldable group of related settings. The panel below used to
    be a single undivided column of every setting there is; these are what tell
    you where you are in it. */
@@ -675,6 +767,37 @@ body,
 .settings-select:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+/* A select wearing its own caret. Chromium draws the native one hard against
+   the border whatever padding the element carries — it is laid out beside the
+   control, not inside it — so the field looked cropped. Dropping the native
+   appearance and placing the caret ourselves also makes it the same chevron,
+   from the same icon set, as every other disclosure in the panel, and it
+   follows the theme because it inherits a color instead of being painted into
+   a background image. */
+.settings-select-wrap {
+  position: relative;
+  display: block;
+  margin: 8px 0 0;
+}
+
+.settings-select-wrap .settings-select {
+  margin: 0;
+  appearance: none;
+  /* Room for the caret plus the gap it needs from the text beside it. */
+  padding-right: 30px;
+}
+
+.settings-select-caret {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  transform: translateY(-50%);
+  color: var(--fg-muted);
+  /* The caret is part of the field, not a target of its own: clicks belong to
+     the select underneath. */
+  pointer-events: none;
 }
 
 .settings-textarea {
@@ -1136,6 +1259,49 @@ body,
   inset: 50% 0 0 0;
 }
 
+/* OS files dragged over the window. A wash over the whole split area rather
+   than a per-pane target: the routing is decided by what the file *is*, so
+   promising a precise landing spot would be a lie. pointer-events stay off so
+   the overlay can't swallow the drop it is describing. */
+.file-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: color-mix(in srgb, var(--bg) 62%, transparent);
+  border: 2px dashed var(--accent);
+  pointer-events: none;
+}
+
+.file-drop-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: 420px;
+  padding: 14px 20px;
+  text-align: center;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.file-drop-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.file-drop-hint {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-muted);
+}
+
 /* Drop-zone indicator shown on a tab's leading/trailing edge while another
    tab is being dragged over it, previewing where it will land. */
 .tab-drop-indicator {
@@ -1343,4 +1509,152 @@ body.resizing-sidebar {
 
 body.resizing-sidebar .xterm {
   pointer-events: none;
+}
+
+/* --- diagrams found in terminal output ------------------------------------
+   The chip is an xterm *decoration*: an element anchored to a buffer line, so
+   it scrolls with the block it belongs to and disposes itself when that line
+   falls out of the scrollback. xterm positions and sizes it inline, which is
+   why nothing here sets left/top — only how it looks and the fact that it can
+   be clicked at all, since the layer it lives in is otherwise inert. */
+.terminal-diagram-chip {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border: 1px solid rgba(122, 162, 247, 0.35);
+  border-radius: 4px;
+  background: rgba(122, 162, 247, 0.12);
+  color: #7aa2f7;
+  font-size: 0.78em;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: visible;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.terminal-diagram-chip:hover {
+  background: rgba(122, 162, 247, 0.24);
+  border-color: rgba(122, 162, 247, 0.6);
+}
+
+/* The drawing itself, over the pane it was found in. Inset rather than filling
+   the pane so the terminal stays visible around it — the output is the context
+   the diagram is being read in, and covering it entirely would be the modal
+   this deliberately isn't. */
+.diagram-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(22, 22, 30, 0.97);
+  border: 1px solid #292e42;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.diagram-overlay-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  background: #16161e;
+  border-bottom: 1px solid #292e42;
+}
+
+.diagram-overlay-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a9b1d6;
+  font-size: 12px;
+}
+
+.diagram-overlay-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.diagram-overlay-count {
+  min-width: 30px;
+  text-align: center;
+  color: #565f89;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diagram-overlay-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #a9b1d6;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.diagram-overlay-btn:hover {
+  background: #292e42;
+}
+
+.diagram-overlay-copy {
+  color: #565f89;
+}
+
+/* Drag to pan, wheel to zoom, double-click to reset — the same viewport the
+   markdown preview uses (lib/mermaid.ts owns the behaviour for both). */
+.diagram-overlay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  padding: 10px;
+}
+
+.diagram-overlay-body .mermaid-viewport {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Mermaid refused the block. Showing the source is the whole point of the
+   fallback: the guess about where the block ended is visible in it, which is
+   the only way to tell a bad guess from a genuinely broken diagram. */
+.diagram-overlay-error {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  color: #a9b1d6;
+  font-size: 12px;
+}
+.diagram-overlay-error p {
+  margin: 0 0 8px;
+  color: #e0af68;
+}
+.diagram-overlay-error pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: #1a1b26;
+  border: 1px solid #292e42;
+  border-radius: 6px;
+  color: #c0caf5;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
 }

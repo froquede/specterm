@@ -4,7 +4,9 @@ import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
 import MarkdownPane from "./MarkdownPane";
 import TextPane from "./TextPane";
+import ImagePane from "./ImagePane";
 import TerminalSearch from "./TerminalSearch";
+import DiagramOverlay from "./DiagramOverlay";
 import { searchPaneId } from "../stores/terminal-search";
 import {
   paneAttention,
@@ -18,10 +20,12 @@ import {
   setDropTarget,
   dropTabId,
   setDropTabId,
+  dropNewTab,
+  setDropNewTab,
   computeDropEdge,
   isRootEdgeDrop,
 } from "../stores/pane-drag";
-import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
+import { tearingOff, trackTearOff, endTearOff } from "../stores/tear-off";
 import { IconGrip, IconX, ICON_STROKE } from "../lib/icons";
 
 interface PaneProps {
@@ -39,6 +43,9 @@ interface PaneProps {
     atRoot?: boolean
   ) => void;
   onDropToTab?: (sourceId: PaneId, tabId: string) => void;
+  // Released on the tab bar itself rather than on one of its chips: the pane
+  // becomes a tab of its own, at the end of the bar.
+  onDropToNewTab?: (sourceId: PaneId) => void;
   // Released outside the window: hand this pane off to another window (or a new
   // one), where it lands as a tab of its own.
   onTearOff?: (sourceId: PaneId) => void;
@@ -58,9 +65,16 @@ export default function Pane(props: PaneProps) {
   // Label shown in the title-bar: the shell-reported title for terminals, the
   // file name for markdown and text panes.
   const label = () => {
-    if (props.pane.kind === "markdown" || props.pane.kind === "text") {
-      const filePath = (props.pane as PaneType & { kind: "markdown" | "text" }).filePath;
-      return filePath.split(/[\\/]/).pop() || (props.pane.kind === "markdown" ? "Markdown" : "Text");
+    if (
+      props.pane.kind === "markdown" ||
+      props.pane.kind === "text" ||
+      props.pane.kind === "image"
+    ) {
+      const { kind, filePath } = props.pane as PaneType & {
+        kind: "markdown" | "text" | "image";
+      };
+      const fallback = kind === "markdown" ? "Markdown" : kind === "image" ? "Image" : "Text";
+      return filePath.split(/[\\/]/).pop() || fallback;
     }
     return termTitle();
   };
@@ -75,11 +89,12 @@ export default function Pane(props: PaneProps) {
 
     function onMove(ev: PointerEvent) {
       // Dragged clear of the window: nothing in here can be a drop target any
-      // more, and releasing means "move this pane out".
-      setTearingOff(isOutsideWindow(ev));
-      if (tearingOff()) {
+      // more, and releasing means "move this pane out". The host is told as we
+      // go, so the window under the cursor can show what is heading its way.
+      if (trackTearOff(ev)) {
         setDropTarget(null);
         setDropTabId(null);
+        setDropNewTab(false);
         return;
       }
       // Overlays are pointer-events:none, so this resolves to the pane under
@@ -91,10 +106,20 @@ export default function Pane(props: PaneProps) {
       const overTabId = tabEl?.getAttribute("data-tab-id");
       if (overTabId) {
         setDropTarget(null);
+        setDropNewTab(false);
         setDropTabId(overTabId);
         return;
       }
       setDropTabId(null);
+      // Over the tab bar but not over a chip — the empty stretch past the last
+      // tab, the "+" button, the window-drag region. Releasing there means "make
+      // this a tab of its own".
+      if (el?.closest(".tab-bar")) {
+        setDropTarget(null);
+        setDropNewTab(true);
+        return;
+      }
+      setDropNewTab(false);
       const paneEl = el?.closest<HTMLElement>("[data-pane-id]");
       const targetId = paneEl?.getAttribute("data-pane-id");
       if (!paneEl || !targetId || targetId === paneId) {
@@ -119,13 +144,16 @@ export default function Pane(props: PaneProps) {
       bar.removeEventListener("pointercancel", onUp);
       const dt = dropTarget();
       const tabId = dropTabId();
+      const newTab = dropNewTab();
       const tearOff = tearingOff();
       setDraggingPaneId(null);
       setDropTarget(null);
       setDropTabId(null);
-      setTearingOff(false);
+      setDropNewTab(false);
+      endTearOff();
       if (tearOff) props.onTearOff?.(paneId);
       else if (tabId) props.onDropToTab?.(paneId, tabId);
+      else if (newTab) props.onDropToNewTab?.(paneId);
       else if (dt) props.onDrop?.(paneId, dt.paneId, dt.edge, dt.root);
     }
 
@@ -143,7 +171,8 @@ export default function Pane(props: PaneProps) {
       setDraggingPaneId(null);
       setDropTarget(null);
       setDropTabId(null);
-      setTearingOff(false);
+      setDropNewTab(false);
+      endTearOff();
     }
   });
 
@@ -159,7 +188,7 @@ export default function Pane(props: PaneProps) {
       // same attribute, and this template is reactive, so a re-render for any
       // other reason would wipe a classList-applied token until its own effect
       // caught up.
-      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
+      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""} ${props.pane.kind === "image" ? "pane-image" : ""} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
       data-pane-id={paneId}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}
@@ -220,8 +249,18 @@ export default function Pane(props: PaneProps) {
         <Show when={props.pane.kind === "text" ? (props.pane as PaneType & { kind: "text" }).filePath : null} keyed>
           {(filePath) => <TextPane filePath={filePath} isActive={props.isActive} />}
         </Show>
+        <Show when={props.pane.kind === "image" ? (props.pane as PaneType & { kind: "image" }).filePath : null} keyed>
+          {(filePath) => <ImagePane filePath={filePath} />}
+        </Show>
         <Show when={props.pane.kind === "terminal" && searchPaneId() === paneId}>
           <TerminalSearch paneId={paneId} />
+        </Show>
+        {/* A mermaid block that went past in this pane's output, drawn over it.
+            Mounted for every terminal pane and empty until one is opened — the
+            component is a few hundred bytes and mermaid itself is behind a lazy
+            import, so an idle pane pays nothing for it. */}
+        <Show when={props.pane.kind === "terminal"}>
+          <DiagramOverlay paneId={paneId} />
         </Show>
       </div>
       <Show when={isDropHere()}>

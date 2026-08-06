@@ -1,0 +1,27 @@
+  Não, o nf-dataform não guarda dado nenhum
+
+  Ele é só o gerador de SQL. O armazém é o BigQuery.
+
+  mermaid
+  flowchart TD
+      subgraph src["Fontes"]
+          PG["PG por tenant<br/>(pg_nexfar_*)"]
+          MG["Mongo/Ferret<br/>(mongo_nexfar_*)"]
+          ERP["ERP do distribuidor<br/>(result_*, target, winthor, infarma)"]
+      end
+      PG & MG & ERP -->|Airbyte| RAW
+
+      subgraph RAW["Landing RAW — 1 dataset POR TENANT (isolamento físico)"]
+          T["mixfarma · mapemi · granderio · grupomtf · abs<br/>treemed · gruponova · plena · farmeslog · movefarma<br/>medicamental · medicamental_hospitalar
+  · navarromed<br/>grupodimebras · vendaspharlab · demo"]
+      end
+
+      RAW -->|"UNION ALL + distributorId"| STG["stg_nexfar (26 tabelas)<br/>★ AQUI CENTRALIZA"]
+      STG --> NEX["nexfar (50 tabelas)<br/>regra de negócio: suggestion,<br/>promoted, restock, nearby, orders…"]
+      NEX --> BI["bi_nexfar (80 views)<br/>camada de PowerBI/relatório"]
+
+      EXT["Fontes externas:<br/>clickup · mixpanel · sonar"] --> BI
+      INT["nexfar_internal<br/>(referência interna)"] --> NEX
+
+  O ponto exato onde deixa de ser por tenant é o stg_nexfar. Cada tabela de lá é
+  um UNION ALL de todos os tenants carimbando distributorId.
