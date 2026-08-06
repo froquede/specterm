@@ -60,6 +60,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 import type { PaneId } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
+import { dragOver, setDragOver } from "./stores/tear-off";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
 import type { UnlistenFn } from "./backends";
 
@@ -310,14 +311,24 @@ export default function App() {
   // Move a tab (or a single pane, which becomes a tab) out of this window,
   // because the drag was released outside it. The store snapshots it and hands
   // its PTYs over; the host decides where it lands — another Specterm window if
-  // one is under the cursor, otherwise a new window there. Both steps refuse
-  // quietly when the move would leave this window with nothing.
+  // one is under the cursor, otherwise a new window there.
+  //
+  // The host is asked *first*, because where the drop landed is what decides
+  // whether this window may give away everything it has. Dropping its last tab
+  // on empty desktop is refused (it would rebuild this window a few pixels over
+  // and leave an empty one behind), but dropping it onto another window is a
+  // merge — the gesture that puts a torn-off window back where it came from —
+  // and that leaves this window with nothing left to show, so it closes.
   async function tearOff(kind: "tab" | "pane", id: string) {
-    const transfer =
-      kind === "tab" ? await store.takeTab(id) : await store.takePane(id);
-    if (!transfer) return;
     const backend = await getBackend();
+    const { toWindow } = await backend.beginTransfer();
+    const transfer =
+      kind === "tab"
+        ? await store.takeTab(id, { allowLast: toWindow })
+        : await store.takePane(id, { allowLast: toWindow });
+    if (!transfer) return;
     await backend.dropTransfer(transfer);
+    if (store.state.tabs.length === 0) await backend.closeWindow();
   }
 
   // Move keyboard focus back into the active tab's terminal (or, if that pane
@@ -445,6 +456,21 @@ export default function App() {
         unlistenAdopt = un;
       });
     onCleanup(() => unlistenAdopt?.());
+
+    // A drag from another window is hovering this one. It can't be felt from
+    // here — the pointer events all belong to the window the drag started in —
+    // so the host watches the cursor and tells us. All this window does with it
+    // is say so; the drop itself still arrives as an adopt-tab above.
+    let unlistenDragOver: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) => backend.onDragOver(setDragOver))
+      .then((un) => {
+        unlistenDragOver = un;
+      });
+    onCleanup(() => {
+      unlistenDragOver?.();
+      setDragOver(false);
+    });
 
     // Watch for resumable programs (Claude Code) running in the panes, so a
     // closed tab remembers not just where it was but what it was doing. Polls
@@ -643,6 +669,14 @@ export default function App() {
           see TitleStrip, which decides for itself and renders nothing
           otherwise. */}
       <TitleStrip />
+      {/* A drag from another window is over this one. Drawn across the whole
+          window because that is the granularity of the drop: wherever it is
+          released in here, the tab lands as a tab. */}
+      <Show when={dragOver()}>
+        <div class="window-drop-overlay">
+          <span class="window-drop-label">Drop here to move in</span>
+        </div>
+      </Show>
       <TabBar
         tabs={store.state.tabs}
         activeTabId={store.state.activeTabId}
@@ -711,6 +745,10 @@ export default function App() {
                   store.movePaneToTab(sourceId, tabId);
                   // The moved pane is now the target tab's active pane; bring
                   // keyboard focus with it once it lands in the newly shown tab.
+                  requestAnimationFrame(() => focusPaneReliably(sourceId));
+                }}
+                onDropPaneToNewTab={(sourceId) => {
+                  store.movePaneToNewTab(sourceId);
                   requestAnimationFrame(() => focusPaneReliably(sourceId));
                 }}
                 onTearOffPane={(sourceId) => void tearOff("pane", sourceId)}

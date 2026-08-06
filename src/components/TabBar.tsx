@@ -25,8 +25,8 @@ import {
   tabDropTarget,
   setTabDropTarget,
 } from "../stores/tab-drag";
-import { draggingPaneId, dropTabId } from "../stores/pane-drag";
-import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
+import { draggingPaneId, dropTabId, dropNewTab } from "../stores/pane-drag";
+import { tearingOff, trackTearOff, endTearOff } from "../stores/tear-off";
 import {
   paneAttention,
   paneAttentionMessage,
@@ -177,9 +177,9 @@ export default function TabBar(props: TabBarProps) {
         setDraggingTabId(tabId);
       }
       // Dragged clear of the window: no reorder target can apply any more, and
-      // releasing here means "move this tab out".
-      setTearingOff(isOutsideWindow(ev));
-      if (tearingOff()) {
+      // releasing here means "move this tab out". The host is told as we go, so
+      // the window under the cursor can show it is about to receive this tab.
+      if (trackTearOff(ev)) {
         setTabDropTarget(null);
         return;
       }
@@ -211,7 +211,7 @@ export default function TabBar(props: TabBarProps) {
         const tearOff = tearingOff();
         setDraggingTabId(null);
         setTabDropTarget(null);
-        setTearingOff(false);
+        endTearOff();
         if (tearOff) {
           suppressClick = true;
           props.onTearOff(tabId);
@@ -226,7 +226,7 @@ export default function TabBar(props: TabBarProps) {
       teardown();
       setDraggingTabId(null);
       setTabDropTarget(null);
-      setTearingOff(false);
+      endTearOff();
     }
 
     window.addEventListener("pointermove", onMove);
@@ -262,8 +262,31 @@ export default function TabBar(props: TabBarProps) {
   // The bar's three regions are ordered by CSS (see .tab-bar[data-side]), so
   // anchoring the tabs and icons to the right corner is a reflow, not a
   // different DOM: the tabs keep their left-to-right reading order either way.
+  // A pane is being dragged over the bar itself, not over any chip in it:
+  // releasing gives it a tab of its own. The whole bar lights up, and a ghost
+  // chip shows where that tab will appear.
+  //
+  // Not for a pane that is already the whole tab, though: it has nothing to
+  // detach from, so the drop is a no-op and lighting the bar up would promise
+  // something that doesn't happen.
+  const activeTab = () => props.tabs.find((t) => t.id === props.activeTabId);
+  const newTabDrop = () => {
+    if (draggingPaneId() === null || !dropNewTab()) return false;
+    const tab = activeTab();
+    return !!tab && collectLeaves(tab.root).length > 1;
+  };
+
   return (
-    <div class="tab-bar" data-side={tabBarSide()}>
+    <div
+      class="tab-bar"
+      classList={{
+        "drop-new-tab": newTabDrop(),
+        // A pane is in flight anywhere: keep an auto-hidden bar out where it can
+        // be aimed at, since it is one of the places the pane can land.
+        "pane-dragging": draggingPaneId() !== null,
+      }}
+      data-side={tabBarSide()}
+    >
       <div class="tab-actions">
         {/* The sidebar toggle shows what the click will do, not what is: the
             panel-with-an-arrow pair reads as "open this" / "close this", where
@@ -394,6 +417,12 @@ export default function TabBar(props: TabBarProps) {
             </div>
           )}
         </For>
+        {/* Where the pane will land if it's released now. */}
+        <Show when={newTabDrop()}>
+          <div class="tab tab-ghost">
+            <span class="tab-title">New tab</span>
+          </div>
+        </Show>
       </div>
       {/* Immediately after the last tab, on whichever side the tabs grow —
           which is the only place it can be if it is going to mean "one more

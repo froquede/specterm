@@ -76,6 +76,10 @@ interface SpectermAPI {
   detachedSessionCount(): Promise<number>;
   writeScreens(screens: Record<string, string> | null): void;
   readScreens(): Promise<Record<string, string>>;
+  beginTransfer(): Promise<{ toWindow: boolean }>;
+  dragHover(): void;
+  dragEnd(): void;
+  onDragOver(cb: (over: boolean) => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
@@ -277,6 +281,10 @@ export class ElectronBackend implements Backend {
     return this.api.quitApp();
   }
 
+  async beginTransfer(): Promise<{ toWindow: boolean }> {
+    return this.api.beginTransfer();
+  }
+
   async dropTransfer(tab: TransferTab): Promise<void> {
     return this.api.dropTransfer(tab);
   }
@@ -329,6 +337,18 @@ export class ElectronBackend implements Backend {
 
   async detachedSessionCount(): Promise<number> {
     return this.api.detachedSessionCount();
+  }
+
+  dragHover(): void {
+    this.api.dragHover();
+  }
+
+  dragEnd(): void {
+    this.api.dragEnd();
+  }
+
+  async onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn> {
+    return this.api.onDragOver(cb);
   }
 
   broadcast(channel: string, payload?: unknown): void {

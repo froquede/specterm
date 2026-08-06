@@ -221,6 +221,12 @@ contextBridge.exposeInMainWorld("specterm", {
 
   readScreens: () => ipcRenderer.invoke("session:read-screens"),
 
+  // Announce a released tear-off and learn where it is headed, before anything
+  // is handed over: `{ toWindow: true }` means the cursor is over another
+  // Specterm window, which is the only case in which giving away this window's
+  // last tab makes sense.
+  beginTransfer: () => ipcRenderer.invoke("begin-transfer"),
+
   // Hand a serialized tab to wherever the cursor let go: another Specterm
   // window if one is under it, otherwise a new window of its own.
   dropTransfer: (tab) => ipcRenderer.invoke("drop-transfer", tab),
@@ -259,6 +265,20 @@ contextBridge.exposeInMainWorld("specterm", {
   // The two session settings the host has to know before any window exists: how
   // many windows to reopen at launch, and whether closing one detaches it.
   pushSessionPrefs: (prefs) => ipcRenderer.send("session:prefs", prefs),
+
+  // Fire-and-forget position report for a drag that has left this window, so the
+  // host can light up whatever is under the cursor. `send`, not `invoke`: this
+  // runs on pointermove and there is nothing to wait for.
+  dragHover: () => ipcRenderer.send("drag-hover"),
+
+  dragEnd: () => ipcRenderer.send("drag-end"),
+
+  // This window is the one under a drag happening in another window.
+  onDragOver: (cb) => {
+    const handler = (_event, over) => cb(over);
+    ipcRenderer.on("drag-over", handler);
+    return () => ipcRenderer.removeListener("drag-over", handler);
+  },
 
   // Cross-window state sync (settings, theme, favorites).
   broadcast: (channel, payload) =>

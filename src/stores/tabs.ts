@@ -270,6 +270,11 @@ function scheduleSessionSave() {
   // to stay quiet is having already written the last one (see sessionFrozen).
   if (sessionFrozen || !restoreLastSession()) return;
 
+  // A window with no tabs is a transient state, not a session: it means a
+  // tear-off just handed the last tab away and the window is on its way out.
+  // Writing that would replace a perfectly good saved session with nothing.
+  if (state().tabs.length === 0) return;
+
   saveSession(() => {
     const s = state();
     const index = s.tabs.findIndex((t) => t.id === s.activeTabId);
@@ -617,13 +622,19 @@ export function useTabStore() {
       return transfers;
     },
 
-    // A tab another window tore off and dropped onto this one.
+    // A tab another window tore off and dropped onto this one. It arrives active,
+    // and the tab that *was* active goes on the focus history — so the
+    // previous-tab shortcut takes you back where you were, exactly as it would
+    // after opening a tab here.
     adoptTab(transfer: TransferTab) {
       const tab = rebuildTab(transfer);
       update((s) => ({
         ...s,
         tabs: [...s.tabs, tab],
         activeTabId: tab.id,
+        // `|| null`: a window emptied by a tear-off has no active tab, and "" is
+        // not an id anyone can come back to.
+        tabHistory: pushMru(s.tabHistory, s.activeTabId || null),
       }));
       return tab;
     },
@@ -636,11 +647,23 @@ export function useTabStore() {
     // snapshot and everything after is in the buffer — nothing is lost, nothing
     // arrives twice. Then the terminals are dropped without killing the shells.
     //
-    // Refuses on the window's only tab: that move would just rebuild this window
-    // somewhere else and leave an empty one behind.
-    async takeTab(tabId: TabId): Promise<TransferTab | null> {
+    // Refuses on the window's only tab — that move would just rebuild this
+    // window somewhere else and leave an empty one behind — unless `allowLast`
+    // says the tab is going into a window that already exists. Merging a window
+    // back into another one is the whole point of being able to do it: without
+    // that exception a torn-off window, which holds exactly one tab, could never
+    // be dragged home again.
+    //
+    // When the last tab does leave, this window is left with no tabs at all
+    // rather than a replacement terminal: the caller closes the window, and
+    // spawning a shell (running the user's rc files) to kill it a tick later is
+    // exactly what that would be.
+    async takeTab(
+      tabId: TabId,
+      opts: { allowLast?: boolean } = {}
+    ): Promise<TransferTab | null> {
       const s = state();
-      if (s.tabs.length <= 1) return null;
+      if (s.tabs.length <= 1 && !opts.allowLast) return null;
       const tab = s.tabs.find((t) => t.id === tabId);
       if (!tab) return null;
 
@@ -655,11 +678,10 @@ export function useTabStore() {
       if (idx === -1) return transfer; // closed under us mid-handover
       const remaining = current.tabs.filter((t) => t.id !== tabId);
       if (remaining.length === 0) {
-        const fresh = createTerminalTab();
         update(() => ({
           ...current,
-          tabs: [fresh],
-          activeTabId: fresh.id,
+          tabs: [],
+          activeTabId: "",
           tabHistory: [],
         }));
         return transfer;
@@ -688,15 +710,21 @@ export function useTabStore() {
     },
 
     // Hand a single pane to another window, where it lands as a one-pane tab.
-    // Same release-then-serialize ordering as takeTab. Refuses when it is the
-    // last pane of the window's only tab.
-    async takePane(paneId: PaneId): Promise<TransferTab | null> {
+    // Same release-then-serialize ordering as takeTab, and the same `allowLast`
+    // exception: the window's last pane may leave when it is going into another
+    // window, which then leaves this one empty for the caller to close.
+    async takePane(
+      paneId: PaneId,
+      opts: { allowLast?: boolean } = {}
+    ): Promise<TransferTab | null> {
       const s = state();
       const tab = s.tabs.find((t) => findLeafNode(t.root, paneId));
       if (!tab) return null;
       const leaf = findLeafNode(tab.root, paneId);
       if (!leaf) return null;
-      if (s.tabs.length <= 1 && tab.root.type === "leaf") return null;
+      if (s.tabs.length <= 1 && tab.root.type === "leaf" && !opts.allowLast) {
+        return null;
+      }
 
       await releasePty(livePtyIds(leaf));
       const transfer = await serializeLeaf(leaf, paneTitle(leaf));
@@ -711,17 +739,20 @@ export function useTabStore() {
       const pruned = closePane(current.tabs[idx].root, paneId);
       if (pruned === null) {
         // That was the tab's only pane — the tab goes with it, and out of the
-        // focus history along with it.
+        // focus history along with it. If it was also the window's only tab
+        // (allowLast), the window is left empty for its caller to close.
         const remaining = current.tabs.filter((_, i) => i !== idx);
         const fallback = remaining.length
           ? remaining[Math.min(idx, remaining.length - 1)]
-          : createTerminalTab();
+          : null;
         const alive = new Set(remaining.map((t) => t.id));
         update(() => ({
           ...current,
-          tabs: remaining.length ? remaining : [fallback],
+          tabs: remaining,
           activeTabId:
-            current.activeTabId === tab.id ? fallback.id : current.activeTabId,
+            current.activeTabId === tab.id
+              ? (fallback?.id ?? "")
+              : current.activeTabId,
           tabHistory: current.tabHistory.filter((id) => alive.has(id)),
         }));
         return transfer;
@@ -1163,6 +1194,47 @@ export function useTabStore() {
         tabHistory: pushMru(s.tabHistory, s.activeTabId).filter(
           (id) => id !== targetTabId && alive.has(id)
         ),
+      }));
+    },
+
+    // Pull a pane out of its split and give it a tab of its own — the gesture is
+    // dropping it on the tab bar itself rather than on one of the chips in it.
+    // Same mechanics as movePaneToTab: the leaf keeps its id, so the live
+    // terminal rides along through the remount instead of being rebuilt.
+    //
+    // No-op for a pane that is already a whole tab: there is nothing to detach
+    // it from, and the "move" would be the tab it is already in.
+    movePaneToNewTab(sourcePaneId: PaneId) {
+      const s = state();
+      const srcIdx = s.tabs.findIndex((t) => findLeafNode(t.root, sourcePaneId));
+      if (srcIdx === -1) return;
+
+      const srcTab = s.tabs[srcIdx];
+      const leaf = findLeafNode(srcTab.root, sourcePaneId);
+      if (!leaf) return;
+
+      const prunedSrc = closePane(srcTab.root, sourcePaneId);
+      if (prunedSrc === null) return; // the pane *is* the tab
+
+      const tab: Tab = {
+        id: nanoid(8),
+        title: paneTitle(leaf),
+        manualTitle: false,
+        root: leaf,
+        activePaneId: sourcePaneId,
+        paneHistory: [],
+      };
+
+      update(() => ({
+        ...s,
+        tabs: [
+          ...s.tabs.map((t, i) =>
+            i === srcIdx ? reseatFocus(t, prunedSrc, sourcePaneId) : t
+          ),
+          tab,
+        ],
+        activeTabId: tab.id,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId || null),
       }));
     },
 

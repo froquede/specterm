@@ -271,6 +271,12 @@ export class TauriBackend implements Backend {
   // Nothing outlives the window here, so closing it is already quitting.
   async quitApp(): Promise<void> {}
 
+  // No second window to drop onto, so a tear-off here can never be a merge —
+  // reporting false keeps the store's "don't give away your last tab" guard on.
+  async beginTransfer(): Promise<{ toWindow: boolean }> {
+    return { toWindow: false };
+  }
+
   async dropTransfer(_tab: TransferTab): Promise<void> {}
 
   async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
@@ -312,6 +318,15 @@ export class TauriBackend implements Backend {
 
   async detachedSessionCount(): Promise<number> {
     return 0;
+  }
+
+  // No other window to light up, and none to be lit up by.
+  dragHover(): void {}
+
+  dragEnd(): void {}
+
+  async onDragOver(_cb: (over: boolean) => void): Promise<UnlistenFn> {
+    return () => {};
   }
 
   // With one window there is nobody to sync with, so a broadcast has no
