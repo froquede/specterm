@@ -171,6 +171,30 @@ async function heuristicFromTranscripts(cwd: string): Promise<string | null> {
 }
 
 /**
+ * Where this pane's transcript is, if it has one.
+ *
+ * The session id is the exact answer and is used when the poll has found one;
+ * without it this falls back to the same newest-transcript-in-the-project rule
+ * `detect` uses, which is right except when two sessions share a directory.
+ *
+ * Read by lib/terminal-diagrams.ts, which wants the *text Claude actually
+ * wrote* rather than the reflowed copy on screen. Nothing else should need it:
+ * a transcript is a record of a conversation, and this app has no business
+ * reading one for any purpose beyond recovering something it already displayed.
+ */
+export async function transcriptPath(
+  cwd: string,
+  sessionId?: string
+): Promise<string | null> {
+  if (!cwd) return null;
+  const id = sessionId ?? (await heuristicFromTranscripts(cwd));
+  if (!id) return null;
+  const backend = await getBackend();
+  const home = await backend.getHomePath();
+  return `${home}/.claude/projects/${projectDirName(cwd)}/${id}${TRANSCRIPT_EXT}`;
+}
+
+/**
  * Is this session still there to be resumed?
  *
  * A recorded id is a *remembered* fact, and by the time it is read back the

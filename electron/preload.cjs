@@ -132,6 +132,9 @@ contextBridge.exposeInMainWorld("specterm", {
 
   readTextFile: (path) => ipcRenderer.invoke("read-text-file", path),
 
+  readFileTail: (path, maxBytes) =>
+    ipcRenderer.invoke("read-file-tail", path, maxBytes),
+
   writeTextFile: (path, content) =>
     ipcRenderer.invoke("write-text-file", path, content),
 

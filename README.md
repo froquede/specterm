@@ -22,8 +22,10 @@ xattr -dr com.apple.quarantine /Applications/Specterm.app
 Splits with draggable dividers, tabs, and multiple windows — with tabs that tear
 off and move between them. A filterable file sidebar with pinned favourites.
 Markdown preview and editor with Mermaid, and a syntax-highlighted viewer for
-everything else. Find in scrollback, WebGL rendering, five built-in themes plus
-a 325-scheme base16 gallery, and a tab bar that stands in for the title bar.
+everything else. Mermaid blocks that go past in *terminal output* are drawn too:
+a chip appears beside the block and clicking it opens the diagram over the pane.
+Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
+base16 gallery, and a tab bar that stands in for the title bar.
 
 ## Keybindings
 
