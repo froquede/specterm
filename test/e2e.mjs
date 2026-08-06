@@ -1720,7 +1720,110 @@ try {
     try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch {}
   }
 
-  // 18) Tab rename, close, and drag-to-reorder — the tab bar's own pointer
+  // 18) A markdown pane keeps its place in a long document. Switching tabs
+  // recreates every pane in the tab, and toggling Edit/Preview swaps the whole
+  // view — both used to drop a half-read document back at the top, which is the
+  // reader's equivalent of losing your page.
+  const scrollDir = path.join(os.tmpdir(), `specterm-mdscroll-${process.pid}`);
+  fs.mkdirSync(scrollDir, { recursive: true });
+  const longNote = path.join(scrollDir, "long.md");
+  fs.writeFileSync(
+    longNote,
+    "# Long\n\n" +
+      Array.from({ length: 300 }, (_, i) => `Paragraph ${i} of a long document.`).join("\n\n") +
+      "\n"
+  );
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, scrollDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+    const scrollSrcTab = await activeTab();
+
+    await clickEntry(win, "long.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForTimeout(400);
+
+    // Scroll into the middle of the document the way a reader would, then give
+    // the debounced persist a moment.
+    const scrolled = await win.evaluate(() => {
+      const el = document.querySelector(".markdown-content");
+      el.scrollTop = 900;
+      return el.scrollTop;
+    });
+    await win.waitForTimeout(600);
+
+    if (scrolled > 0) {
+      // Away to a new tab and back — the pane is torn down and rebuilt.
+      await win.locator(".tab-new").click();
+      await win.waitForTimeout(1200);
+      await win.locator(`.tab[data-tab-id="${scrollSrcTab}"]`).click();
+      await win.waitForSelector(".markdown-content", { timeout: 8000 });
+      await win.waitForTimeout(900);
+      const afterTabSwitch = await win.evaluate(
+        () => document.querySelector(".markdown-content")?.scrollTop ?? -1
+      );
+      check(
+        "markdown keeps its scroll position across a tab switch",
+        Math.abs(afterTabSwitch - scrolled) < 40,
+        `was ${scrolled}, came back at ${afterTabSwitch}`
+      );
+
+      // Edit → Preview rebuilds the rendered view from scratch.
+      await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+      await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+      await win.waitForTimeout(500);
+      await win.locator(".markdown-toolbar-btn", { hasText: "Preview" }).first().click();
+      await win.waitForSelector(".markdown-content", { timeout: 8000 });
+      await win.waitForTimeout(900);
+      const afterToggle = await win.evaluate(
+        () => document.querySelector(".markdown-content")?.scrollTop ?? -1
+      );
+      check(
+        "markdown keeps its scroll position across an Edit/Preview toggle",
+        Math.abs(afterToggle - scrolled) < 40,
+        `was ${scrolled}, came back at ${afterToggle}`
+      );
+
+      // Find rewrites the container's innerHTML; closing it must not send the
+      // reader back to the top.
+      await win.locator(".markdown-toolbar-btn", { hasText: "Search" }).first().click();
+      await win.waitForSelector(".markdown-search input", { timeout: 8000 });
+      await win.locator(".markdown-search input").fill("Paragraph 150");
+      // Jumping to a match is a *smooth* scroll, so poll until it settles rather
+      // than racing the animation.
+      const contentScrollTop = () =>
+        win.evaluate(() => document.querySelector(".markdown-content")?.scrollTop ?? -1);
+      let atMatch = -1;
+      for (let i = 0; i < 12; i++) {
+        await win.waitForTimeout(300);
+        const now = await contentScrollTop();
+        if (i > 1 && now === atMatch) break;
+        atMatch = now;
+      }
+      await win.locator(".markdown-search-btn", { hasText: "×" }).first().click();
+      await win.waitForTimeout(500);
+      const afterClose = await contentScrollTop();
+      check(
+        "closing find stays on the match instead of jumping to the top",
+        atMatch > 0 && Math.abs(afterClose - atMatch) < 40,
+        `match at ${atMatch}, after close ${afterClose}`
+      );
+    } else {
+      skip("markdown keeps its scroll position across a tab switch", "document did not scroll");
+      skip("markdown keeps its scroll position across an Edit/Preview toggle", "document did not scroll");
+      skip("closing find stays on the match instead of jumping to the top", "document did not scroll");
+    }
+  } finally {
+    try { fs.rmSync(scrollDir, { recursive: true, force: true }); } catch {}
+  }
+
+  // 19) Tab rename, close, and drag-to-reorder — the tab bar's own pointer
   // handling. The reorder drag must NOT swallow the close button's click or the
   // title's double-click: a setPointerCapture on pointerdown once retargeted the
   // follow-up click/dblclick to the tab itself, so the × merely re-selected the
@@ -1842,7 +1945,7 @@ try {
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
   }
 
-  // 19) F2 stands aside for full-screen programs. It renames the tab at a shell
+  // 20) F2 stands aside for full-screen programs. It renames the tab at a shell
   // prompt, but the moment something takes the alternate screen buffer (htop,
   // vim, mc — all of which bind F2 themselves) the key stops being ours and
   // reaches the program instead. macOS uses ⌘R, which no terminal program can
@@ -2019,7 +2122,7 @@ try {
     await win.waitForTimeout(600);
   }
 
-  // 20) A pane running Claude Code remembers which session it was, so closing
+  // 21) A pane running Claude Code remembers which session it was, so closing
   // the tab records how to pick it back up.
   //
   // The session is identified from the transcript Claude Code keeps per project
@@ -2076,7 +2179,7 @@ try {
     }
   }
 
-  // 21) Session history: reopening what was closed, and restoring what was open.
+  // 22) Session history: reopening what was closed, and restoring what was open.
   //
   // The interesting assertion in all three checks is the *directory*, not the
   // tab count: a restored pane that comes back at the startup path has restored
@@ -2161,7 +2264,7 @@ try {
 
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
-  // 22) Restore on boot. The only check that needs a second launch: quit the
+  // 23) Restore on boot. The only check that needs a second launch: quit the
   // app and start it again against the *same* profile, since the snapshot lives
   // in localStorage under the user-data dir. Enabled by default, so nothing is
   // toggled first — this is what a normal restart does.

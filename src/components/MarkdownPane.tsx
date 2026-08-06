@@ -49,6 +49,34 @@ function clearDraft(filePath: string) {
   }
 }
 
+// How far the reader was scrolled, kept per file path. A markdown pane is torn
+// down and rebuilt far more often than it looks: switching tabs recreates every
+// pane in the tab (SplitContainer keys panes by leaf id), moving a pane between
+// splits/tabs/windows does the same, toggling Edit/Preview swaps the whole view,
+// and find rewrites the container's innerHTML. Each of those left the reader
+// back at the top of a long document. Persisted alongside the draft, and for the
+// same reason: it costs nothing and it survives a reload or a move to another
+// window.
+const SCROLL_PREFIX = "specterm.mdscroll:";
+const scrollKey = (filePath: string) => SCROLL_PREFIX + filePath;
+function readScrollTop(filePath: string): number {
+  try {
+    const raw = localStorage.getItem(scrollKey(filePath));
+    const top = raw === null ? NaN : Number(raw);
+    return Number.isFinite(top) && top > 0 ? top : 0;
+  } catch {
+    return 0;
+  }
+}
+function writeScrollTop(filePath: string, top: number) {
+  try {
+    if (top > 0) localStorage.setItem(scrollKey(filePath), String(Math.round(top)));
+    else localStorage.removeItem(scrollKey(filePath));
+  } catch {
+    // localStorage full/unavailable — the pane just reopens at the top.
+  }
+}
+
 export default function MarkdownPane(props: MarkdownPaneProps) {
   let contentRef!: HTMLDivElement;
   let searchInputRef!: HTMLInputElement;
@@ -71,6 +99,44 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
 
   // Store the original rendered HTML so we can re-highlight without re-rendering
   let renderedHtml = "";
+
+  // Last known scroll offset of the reader, mirrored to localStorage (debounced,
+  // since scroll fires continuously) and re-applied after every DOM rebuild.
+  let scrollTop = 0;
+  let scrollTimer: number | null = null;
+
+  function rememberScroll() {
+    if (!contentRef) return;
+    scrollTop = contentRef.scrollTop;
+    if (scrollTimer) clearTimeout(scrollTimer);
+    scrollTimer = window.setTimeout(
+      () => writeScrollTop(props.filePath, scrollTop),
+      250
+    );
+  }
+
+  // Put the reader back where it was after the content was (re)rendered. Applied
+  // twice: once now, and once on the next frame because content that lays out
+  // late — mermaid SVGs, images without dimensions — can still be growing the
+  // document, and a scrollTop set against a short document is clamped.
+  function restoreScroll() {
+    if (!contentRef || scrollTop <= 0) return;
+    const target = scrollTop;
+    contentRef.scrollTop = target;
+    requestAnimationFrame(() => {
+      if (contentRef && mode() === "read") contentRef.scrollTop = target;
+    });
+  }
+
+  // Replacing innerHTML empties the container for an instant, which clamps its
+  // scrollTop to 0 — so every find keystroke, and closing find, threw a long
+  // document back to the top. Carry the offset across the swap.
+  function setContentHtml(html: string) {
+    if (!contentRef) return;
+    const top = contentRef.scrollTop;
+    contentRef.innerHTML = html;
+    contentRef.scrollTop = top;
+  }
 
   // `force` re-reads from disk and discards any draft (the Refresh button); the
   // default honors a persisted draft so unsaved edits survive a move/reload.
@@ -173,6 +239,9 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   });
 
   onMount(() => {
+    // Same idea as the draft: a pane that was recreated (tab switch, pane move,
+    // reload) comes back where it was being read.
+    scrollTop = readScrollTop(props.filePath);
     // loadFile() restores a persisted draft when there is one, so a pane moved
     // between tabs (or reopened after a reload/close) comes back with its unsaved
     // edits rather than the on-disk copy.
@@ -184,6 +253,8 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
   // live editor if it's up, else the buffer the editor effect's cleanup carried
   // back into content().
   onCleanup(() => {
+    if (scrollTimer) clearTimeout(scrollTimer);
+    writeScrollTop(props.filePath, scrollTop);
     if (draftTimer) clearTimeout(draftTimer);
     if (!dirty()) return;
     const buffer = editorView ? editorView.state.doc.toString() : content();
@@ -204,13 +275,17 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     const q = searchQuery();
     if (q && searchOpen()) {
       applyHighlights(q);
+    } else {
+      // Fresh DOM starts at the top; put the reader back where they were. Skipped
+      // when find is active, since applyHighlights scrolls to the first match.
+      restoreScroll();
     }
   });
 
   function applyHighlights(query: string) {
     if (!contentRef || !query) {
       if (contentRef && renderedHtml) {
-        contentRef.innerHTML = renderedHtml;
+        setContentHtml(renderedHtml);
       }
       setMatchCount(0);
       setCurrentMatch(0);
@@ -328,9 +403,10 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     setSearchQuery("");
     setMatchCount(0);
     setCurrentMatch(0);
-    // Restore original HTML
+    // Restore original HTML, staying on the passage the user had navigated to.
     if (contentRef && renderedHtml) {
-      contentRef.innerHTML = renderedHtml;
+      setContentHtml(renderedHtml);
+      rememberScroll();
     }
   }
 
@@ -344,7 +420,7 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     if (!value) {
       // Restore immediately when cleared
       if (contentRef && renderedHtml) {
-        contentRef.innerHTML = renderedHtml;
+        setContentHtml(renderedHtml);
       }
       setMatchCount(0);
       setCurrentMatch(0);
@@ -354,7 +430,7 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     searchTimeout = window.setTimeout(() => {
       // Re-render from original HTML before highlighting
       if (contentRef && renderedHtml) {
-        contentRef.innerHTML = renderedHtml;
+        setContentHtml(renderedHtml);
       }
       applyHighlights(value);
     }, 300);
@@ -502,7 +578,12 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
         <div ref={editorRef} class="markdown-editor" />
       </Show>
       <Show when={mode() === "read"}>
-        <div ref={contentRef} class="markdown-content" onClick={handleContentClick} />
+        <div
+          ref={contentRef}
+          class="markdown-content"
+          onClick={handleContentClick}
+          onScroll={rememberScroll}
+        />
       </Show>
     </div>
   );
