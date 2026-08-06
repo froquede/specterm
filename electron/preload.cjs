@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require("electron");
+const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // What kind of window this is, stamped into our own launch arguments by the main
 // process (see `additionalArguments` in main.cjs). Read here, at preload time,
@@ -115,6 +115,21 @@ contextBridge.exposeInMainWorld("specterm", {
   },
 
   // Filesystem
+  //
+  // Where a dropped File actually lives on disk. Electron ≥32 removed the
+  // non-standard `File.path` the web used to expose, and webUtils only exists in
+  // the preload — so a drop handler in the renderer has no other way to learn a
+  // path. Synchronous (no IPC): the drop handler has to read the DataTransfer
+  // before it is neutered.
+  filePathFor: (file) => {
+    try {
+      return webUtils.getPathForFile(file) || null;
+    } catch (_) {
+      // Not a real OS file (a drag from inside a web page, say) — no path.
+      return null;
+    }
+  },
+
   readTextFile: (path) => ipcRenderer.invoke("read-text-file", path),
 
   writeTextFile: (path, content) =>

@@ -28,6 +28,7 @@ interface SpectermAPI {
   readProcessEnv(pid: number, names: string[]): Promise<Record<string, string>>;
   onPtyOutput(cb: (id: number, data: Uint8Array) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
+  filePathFor(file: File): string | null;
   readTextFile(path: string): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
@@ -154,6 +155,10 @@ export class ElectronBackend implements Backend {
 
   async onPtyExit(cb: (id: number) => void): Promise<UnlistenFn> {
     return this.api.onPtyExit(cb);
+  }
+
+  filePathFor(file: File): string | null {
+    return this.api.filePathFor(file);
   }
 
   async readTextFile(path: string): Promise<string> {

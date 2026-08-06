@@ -91,6 +91,13 @@ export class TauriBackend implements Backend {
     });
   }
 
+  // Tauri swallows OS file drops in the webview and reports them through its own
+  // drag-drop event instead, so the File objects the DOM sees carry no path.
+  // Nothing to answer with here; the drop routing skips paths it can't resolve.
+  filePathFor(_file: File): string | null {
+    return null;
+  }
+
   async readTextFile(path: string): Promise<string> {
     return readTextFile(path);
   }
