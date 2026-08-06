@@ -1083,7 +1083,8 @@ export async function attachTerminal(
   // that was working and has gone quiet.
   // The diagram detector is timed off the same chunks, and for the same reason
   // — it wants the moment the burst *ends*, when whatever was printed is whole.
-  // Both cost a timer reschedule per chunk and nothing else.
+  // It costs a timestamp per chunk; the waiting is done by one interval shared
+  // across panes, which stops itself when they are all quiet.
   const onShellReady = takePendingRestore(paneId, instance.ptyId);
   const writeChunk = onShellReady
     ? (data: Uint8Array) => {

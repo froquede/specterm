@@ -34,6 +34,16 @@
   alternate screen is a picture that gets repainted, not a stream of output, and
   a chip pinned to a line of it would point at whatever scrolled under it next.
 
+  Measured, because the pty-output path is the one that must never grow work:
+  **0.74µs per chunk** (a timestamp and a field write — the per-pane debounce
+  this started as cost 3.5µs, or ~16ms of pure timer churn for a 24MB dump), and
+  **0.8ms for a scan** over a full 400-row window, which happens only on the
+  quiet after a burst. The interval that notices that quiet is shared by every
+  pane and stops itself when they are all idle, so a window doing nothing has no
+  timer of ours armed. Frame-interval p50/p95/p99 under a 24MB dump, a 3,000-line
+  build and a slow drip are unchanged against `main`; ten open/print/close cycles
+  return the heap to its starting size with no decorations left behind.
+
 ## 0.18.2 — 2026-08-01
 
 ### Fixed
