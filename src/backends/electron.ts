@@ -50,8 +50,13 @@ interface SpectermAPI {
   windowBoot: unknown;
   takeWindowInit(): Promise<WindowInit>;
   newWindow(): Promise<void>;
+  closeWindow(): Promise<void>;
+  beginTransfer(): Promise<{ toWindow: boolean }>;
   dropTransfer(tab: TransferTab): Promise<void>;
   onAdoptTab(cb: (tab: TransferTab) => void): () => void;
+  dragHover(): void;
+  dragEnd(): void;
+  onDragOver(cb: (over: boolean) => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
@@ -212,12 +217,32 @@ export class ElectronBackend implements Backend {
     return this.api.newWindow();
   }
 
+  async closeWindow(): Promise<void> {
+    return this.api.closeWindow();
+  }
+
+  async beginTransfer(): Promise<{ toWindow: boolean }> {
+    return this.api.beginTransfer();
+  }
+
   async dropTransfer(tab: TransferTab): Promise<void> {
     return this.api.dropTransfer(tab);
   }
 
   async onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
     return this.api.onAdoptTab(cb);
+  }
+
+  dragHover(): void {
+    this.api.dragHover();
+  }
+
+  dragEnd(): void {
+    this.api.dragEnd();
+  }
+
+  async onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn> {
+    return this.api.onDragOver(cb);
   }
 
   broadcast(channel: string, payload?: unknown): void {

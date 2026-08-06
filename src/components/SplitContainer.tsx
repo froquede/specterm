@@ -18,6 +18,7 @@ interface SplitContainerProps {
     atRoot?: boolean
   ) => void;
   onDropPaneToTab?: (sourceId: PaneId, tabId: string) => void;
+  onDropPaneToNewTab?: (sourceId: PaneId) => void;
   onTearOffPane?: (sourceId: PaneId) => void;
   onTitle?: (title: string) => void;
   onClosePane?: (id: PaneId) => void;
@@ -64,6 +65,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                     onOpenMarkdown={props.onOpenMarkdown}
                     onDrop={props.onDropPane}
                     onDropToTab={props.onDropPaneToTab}
+                    onDropToNewTab={props.onDropPaneToNewTab}
                     onTearOff={props.onTearOffPane}
                   />
                 )}
@@ -101,6 +103,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onToggleDirection={props.onToggleDirection}
                 onDropPane={props.onDropPane}
                 onDropPaneToTab={props.onDropPaneToTab}
+                onDropPaneToNewTab={props.onDropPaneToNewTab}
                 onTearOffPane={props.onTearOffPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
@@ -129,6 +132,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onToggleDirection={props.onToggleDirection}
                 onDropPane={props.onDropPane}
                 onDropPaneToTab={props.onDropPaneToTab}
+                onDropPaneToNewTab={props.onDropPaneToNewTab}
                 onTearOffPane={props.onTearOffPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}

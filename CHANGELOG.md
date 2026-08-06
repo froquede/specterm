@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Specterm has an app icon.** The builds shipped with Electron's default one:
+  the dock, the taskbar, the installer and the .app bundle all showed the
+  Electron atom. macOS gets a proper `.icns` drawn to Apple's icon grid (the
+  artwork at 824 of a 1024 canvas, so it sits at the same visual size as
+  everything beside it in the dock), Linux gets the full set of sizes, and
+  Windows converts from the same png. `scripts/make-icons.sh` regenerates all of
+  it from `build/icon.png`.
+- **Drop a pane on the tab bar to give it a tab of its own.** Anywhere on the bar
+  that isn't a tab chip — past the last tab, on the `+`, on the stretch the
+  window drags by — is now a drop target: the bar lights up, a ghost chip shows
+  where the tab will appear, and the live terminal moves across as it does for
+  every other pane drag. Getting a pane into a new tab used to mean opening an
+  empty tab first and then dragging onto its chip.
+- **The window you're dragging onto lights up.** Take a tab or a pane over
+  another Specterm window and it shows, across its whole surface, that releasing
+  will drop the tab in there. It has no way of noticing on its own — every
+  pointer event during a drag belongs to the window the gesture started in — so
+  the source reports where the cursor is and the app passes it on to whatever is
+  underneath.
+- **Merge a torn-off window back.** Dropping a window's *only* tab onto another
+  Specterm window now moves it there and closes the window it left. Previously
+  that was refused along with every other last-tab move, so a window could be
+  created by a drag but never undone by one. Dropping the only tab on empty
+  desktop is still a no-op — that move would rebuild the same window a few
+  pixels over and leave an empty one behind.
+
+### Fixed
+- The taskbar flash and dock badge for waiting panes reached a window that no
+  longer existed after the multi-window change, so the call failed and nothing
+  flashed. The flash now goes to the window whose panes are waiting, and the
+  badge shows the total across every open window rather than whichever window
+  reported last.
+- A tab adopted from another window went to the front without recording where
+  focus came from, so the previous-tab shortcut skipped past the tab you were
+  just on.
+
 ## 0.16.0 — 2026-07-29
 
 ### Added

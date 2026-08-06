@@ -139,9 +139,14 @@ body,
   transform: translateY(calc(100% - var(--tab-bar-peek)));
 }
 
-/* Revealed on hover, and whenever focus lands inside it (keyboard users). */
+/* Revealed on hover, and whenever focus lands inside it (keyboard users).
+   Also for the whole of a pane drag: the bar is a drop target then, and one you
+   can't aim at is one you can't use. Hover alone wouldn't do it — a drag holds
+   pointer capture on the pane's title-bar, so :hover stays with the captured
+   element and never reaches the bar. */
 .app[data-tab-autohide="true"] .tab-bar:hover,
-.app[data-tab-autohide="true"] .tab-bar:focus-within {
+.app[data-tab-autohide="true"] .tab-bar:focus-within,
+.app[data-tab-autohide="true"] .tab-bar.pane-dragging {
   transform: none;
 }
 
@@ -187,6 +192,53 @@ body,
   color: var(--fg);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
   box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+/* A dragged pane is over the bar but not over any chip — releasing gives it a
+   tab of its own. The bar itself is the drop target here, so it's the bar that
+   lights up, with a ghost chip standing in for the tab about to appear. */
+.tab-bar.drop-new-tab {
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg-chrome));
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.tab-ghost {
+  color: var(--fg);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-right: none;
+  outline: 1px dashed var(--accent);
+  outline-offset: -3px;
+  pointer-events: none;
+}
+
+/* The receiving end of a cross-window drag: a tab is being dragged over this
+   window from another one, and releasing drops it in here. Nothing in this
+   window is under the cursor as far as it knows — the host is what tells it the
+   drag is there — so the whole window is the target, and says so.
+
+   pointer-events:none throughout: the drag belongs to another window, and this
+   must not interfere with anything happening in this one. z-index sits above
+   the panes and the tab bar (40) so it reads as a state of the window itself. */
+.window-drop-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  outline: 2px dashed var(--accent);
+  outline-offset: -6px;
+}
+
+.window-drop-label {
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-size: 13px;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  box-shadow: 0 2px 12px rgb(0 0 0 / 35%);
 }
 
 /* Dragged past the window's own edge: releasing moves this tab (or pane) into

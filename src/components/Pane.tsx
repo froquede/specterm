@@ -14,10 +14,12 @@ import {
   setDropTarget,
   dropTabId,
   setDropTabId,
+  dropNewTab,
+  setDropNewTab,
   computeDropEdge,
   isRootEdgeDrop,
 } from "../stores/pane-drag";
-import { tearingOff, setTearingOff, isOutsideWindow } from "../stores/tear-off";
+import { tearingOff, trackTearOff, endTearOff } from "../stores/tear-off";
 
 interface PaneProps {
   id: PaneId;
@@ -34,6 +36,9 @@ interface PaneProps {
     atRoot?: boolean
   ) => void;
   onDropToTab?: (sourceId: PaneId, tabId: string) => void;
+  // Released on the tab bar itself rather than on one of its chips: the pane
+  // becomes a tab of its own, at the end of the bar.
+  onDropToNewTab?: (sourceId: PaneId) => void;
   // Released outside the window: hand this pane off to another window (or a new
   // one), where it lands as a tab of its own.
   onTearOff?: (sourceId: PaneId) => void;
@@ -70,11 +75,12 @@ export default function Pane(props: PaneProps) {
 
     function onMove(ev: PointerEvent) {
       // Dragged clear of the window: nothing in here can be a drop target any
-      // more, and releasing means "move this pane out".
-      setTearingOff(isOutsideWindow(ev));
-      if (tearingOff()) {
+      // more, and releasing means "move this pane out". The host is told as we
+      // go, so the window under the cursor can show what is heading its way.
+      if (trackTearOff(ev)) {
         setDropTarget(null);
         setDropTabId(null);
+        setDropNewTab(false);
         return;
       }
       // Overlays are pointer-events:none, so this resolves to the pane under
@@ -86,10 +92,20 @@ export default function Pane(props: PaneProps) {
       const overTabId = tabEl?.getAttribute("data-tab-id");
       if (overTabId) {
         setDropTarget(null);
+        setDropNewTab(false);
         setDropTabId(overTabId);
         return;
       }
       setDropTabId(null);
+      // Over the tab bar but not over a chip — the empty stretch past the last
+      // tab, the "+" button, the window-drag region. Releasing there means "make
+      // this a tab of its own".
+      if (el?.closest(".tab-bar")) {
+        setDropTarget(null);
+        setDropNewTab(true);
+        return;
+      }
+      setDropNewTab(false);
       const paneEl = el?.closest<HTMLElement>("[data-pane-id]");
       const targetId = paneEl?.getAttribute("data-pane-id");
       if (!paneEl || !targetId || targetId === paneId) {
@@ -114,13 +130,16 @@ export default function Pane(props: PaneProps) {
       bar.removeEventListener("pointercancel", onUp);
       const dt = dropTarget();
       const tabId = dropTabId();
+      const newTab = dropNewTab();
       const tearOff = tearingOff();
       setDraggingPaneId(null);
       setDropTarget(null);
       setDropTabId(null);
-      setTearingOff(false);
+      setDropNewTab(false);
+      endTearOff();
       if (tearOff) props.onTearOff?.(paneId);
       else if (tabId) props.onDropToTab?.(paneId, tabId);
+      else if (newTab) props.onDropToNewTab?.(paneId);
       else if (dt) props.onDrop?.(paneId, dt.paneId, dt.edge, dt.root);
     }
 
@@ -138,7 +157,8 @@ export default function Pane(props: PaneProps) {
       setDraggingPaneId(null);
       setDropTarget(null);
       setDropTabId(null);
-      setTearingOff(false);
+      setDropNewTab(false);
+      endTearOff();
     }
   });
 

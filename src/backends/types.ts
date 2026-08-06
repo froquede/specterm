@@ -209,12 +209,32 @@ export interface Backend {
   takeWindowInit(): Promise<WindowInit>;
   // Open another window on the same app.
   newWindow(): Promise<void>;
+  // Close this window. Used when a tear-off empties it out — the window's whole
+  // content moved into another one, so there is nothing left for it to show.
+  closeWindow(): Promise<void>;
+  // Announce a released tear-off and learn where it lands, before this window
+  // gives anything up. `toWindow` is true when the cursor is over another
+  // Specterm window; only then is handing over the window's last tab sensible
+  // (otherwise the move would just rebuild this window somewhere else). The
+  // host remembers the answer for the dropTransfer that follows, so a cursor
+  // that keeps moving during the handover can't change the destination
+  // underneath a decision already made on it.
+  beginTransfer(): Promise<{ toWindow: boolean }>;
   // Land a torn-off tab wherever the cursor released it: into another Specterm
   // window if one is under it, otherwise into a new window of its own. The host
   // decides, since only it can see the real cursor and every window's bounds.
   dropTransfer(tab: TransferTab): Promise<void>;
   // A tab another window tore off and dropped onto this one.
   onAdoptTab(cb: (tab: TransferTab) => void): Promise<UnlistenFn>;
+  // Called as a drag that has left this window moves, so the host can light up
+  // whichever window is under the cursor. Fire-and-forget, on pointermove.
+  dragHover(): void;
+  // That drag ended (dropped, cancelled): put any highlight out.
+  dragEnd(): void;
+  // A drag from another window is over this one, or has just left it. The
+  // gesture belongs to the window it started in, so this is the only way this
+  // window hears about a drop heading its way.
+  onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn>;
 
   // Cross-window sync for state each window keeps its own copy of (settings,
   // theme, favorites): the writer persists, then tells everyone else to re-read.

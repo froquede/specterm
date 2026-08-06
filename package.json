@@ -66,14 +66,16 @@
       "dist/**/*",
       "electron/**/*",
       "node_modules/**/*",
-      "package.json"
+      "package.json",
+      "build/icon.png"
     ],
     "linux": {
       "target": [
         "AppImage",
         "deb"
       ],
-      "category": "TerminalEmulator"
+      "category": "TerminalEmulator",
+      "icon": "build/icons"
     },
     "deb": {
       "afterInstall": "build/linux/after-install.tpl"
@@ -90,12 +92,14 @@
         }
       ],
       "category": "public.app-category.developer-tools",
-      "identity": null
+      "identity": null,
+      "icon": "build/icon.icns"
     },
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.png"
     },
     "nsis": {
       "oneClick": false,

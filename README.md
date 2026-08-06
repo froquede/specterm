@@ -5,7 +5,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 ## Features
 
 - **Split panes** -- horizontal and vertical splits with draggable resize handles, drag-and-drop reordering via each pane's title-bar, and one-click/keyboard direction flipping. Aligned dividers move together; hold **Alt** to resize just one split
-- **Tabs** -- create, close, and cycle through terminal tabs; drag a pane's title-bar onto another tab to move it there (the live terminal rides along)
+- **Tabs** -- create, close, and cycle through terminal tabs; drag a pane's title-bar onto another tab to move it there, or onto the empty stretch of the tab bar to give it a tab of its own (the live terminal rides along either way)
 - **Multiple windows** -- `⌘N` opens another independent window; drag a tab (or a pane, by its title-bar) past the window's edge to tear it off into a window of its own, or drop it on another Specterm window to move it there. The shell is handed over still running, scrollback and all (see [Moving tabs between windows](#moving-tabs-between-windows))
 - **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
 - **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
@@ -74,11 +74,22 @@ Specterm tells the two intents apart instead:
 Panes with no mouse tracking behave exactly as before. See
 `src/lib/mouse-selection.ts`.
 
+## Moving a pane out of its split
+
+Drag a pane by its title-bar and drop it on the **tab bar** — anywhere that isn't
+a tab chip: past the last tab, on the `+`, on the empty stretch the window drags
+by. The bar lights up and a ghost chip shows where it will land, and releasing
+gives the pane a tab of its own. Drop it *on* a chip instead and it joins that
+tab; drop it back over the panes and it splits or swaps as usual.
+
 ## Moving tabs between windows
 
 Drag a tab — or any pane, by its title-bar — **past the edge of the window** and
 release. The tab outlines itself in the accent colour once the cursor is outside,
-so you can tell the drop will move it out rather than reorder it.
+so you can tell the drop will move it out rather than reorder it. Take it over
+another Specterm window and *that* window says so too, across its whole surface —
+it can't feel the drag itself (the pointer belongs to the window the gesture
+started in), so the app tells it where the cursor is.
 
 | where you release | what happens |
 |---|---|
@@ -93,9 +104,13 @@ order — so a build or a long `tail -f` doesn't drop a line. A full-screen
 program (vim, htop, Claude Code) repaints itself in the new window exactly as it
 does on any terminal resize.
 
-Two guards, both no-ops rather than errors: a window's **only** tab can't be torn
-off, and neither can the **last pane of that only tab** — the move would just
-rebuild the same window somewhere else and leave an empty one behind.
+It goes both ways: dropping a window's **only** tab onto another Specterm window
+merges it back, and the window it left — now empty — closes itself. That is how
+a torn-off window is put away again.
+
+One guard, a no-op rather than an error: that same only tab can't be dropped on
+empty desktop, and neither can the last pane of it. The move would just rebuild
+the same window a few pixels over and leave an empty one behind.
 
 Windows are otherwise independent: each has its own tabs, sidebar and terminals,
 and closing one kills only the shells that belong to it. Theme, terminal font
@@ -220,6 +235,29 @@ npm install
 npx electron-builder install-app-deps
 npm run dev:electron
 ```
+
+### The app icon
+
+`build/icon.png` is the source of truth: the artwork alone, square, transparent,
+edge to edge. Everything else is generated from it by `scripts/make-icons.sh`
+(macOS only — `sips` and `iconutil` do the work), which writes:
+
+- `build/icon.icns` — macOS. The artwork is scaled to 824 on a 1024 canvas,
+  which is the margin macOS app icons are drawn with; letting electron-builder
+  convert the full-bleed png instead makes Specterm sit visibly larger than
+  everything else in the dock.
+- `build/icon-dock.png` — the same shape at 512, for the dock icon of an
+  unpackaged run. It exists because `nativeImage` can't read an `.icns` at all,
+  so `app.dock.setIcon` needs a png that already carries the margin.
+- `build/icons/*.png` — Linux, at the sizes desktops ask for.
+
+Windows needs nothing generated: electron-builder converts `build/icon.png` to
+an `.ico` at build time.
+
+Replacing the icon means replacing that one png and re-running the script. The
+same png is also packaged (it's in `build.files`) and used as the window icon on
+Linux and Windows, and as the dock icon when running unpackaged on macOS — where
+the app would otherwise appear as Electron itself.
 
 ### Windows: PowerShell shell fix
 

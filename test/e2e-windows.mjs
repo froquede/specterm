@@ -152,6 +152,99 @@ const dragOutOfWindow = (win, selector) =>
     window.dispatchEvent(new PointerEvent("pointerup", at(-140, 320)));
   }, selector);
 
+// Drag `selector`'s grab handle onto `targetSelector` and release there — an
+// in-window drop, unlike dragOutOfWindow above. Same synthetic sequence: the
+// renderer's handlers live on the grabbed element, so every event goes to it.
+const dragOnto = (win, selector, targetSelector) =>
+  win.evaluate(([sel, tsel]) => {
+    const el = document.querySelector(sel);
+    const target = document.querySelector(tsel);
+    if (!el) throw new Error(`no element for ${sel}`);
+    if (!target) throw new Error(`no element for ${tsel}`);
+    const box = el.getBoundingClientRect();
+    const t = target.getBoundingClientRect();
+    const at = (x, y) => ({
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      clientX: x,
+      clientY: y,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+    });
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
+    // The far end of the target, where the bar is empty rather than covered by
+    // a tab chip: dropping on a chip is the other gesture entirely.
+    const endX = t.x + t.width - 12;
+    const endY = t.y + t.height / 2;
+    el.dispatchEvent(new PointerEvent("pointerdown", at(startX, startY)));
+    for (const [x, y] of [
+      [startX + 20, startY + 20],
+      [endX, endY],
+      [endX, endY],
+    ]) {
+      el.dispatchEvent(new PointerEvent("pointermove", at(x, y)));
+      window.dispatchEvent(new PointerEvent("pointermove", at(x, y)));
+    }
+    el.dispatchEvent(new PointerEvent("pointerup", at(endX, endY)));
+    window.dispatchEvent(new PointerEvent("pointerup", at(endX, endY)));
+  }, [selector, targetSelector]);
+
+// Start a drag and leave it hanging outside the window: no release, so the
+// gesture is still in flight when this resolves. Used to observe what the *other*
+// window shows while a drag hovers it.
+const hoverOutOfWindow = (win, selector) =>
+  win.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    if (!el) throw new Error(`no element for ${sel}`);
+    const box = el.getBoundingClientRect();
+    const at = (x, y) => ({
+      bubbles: true,
+      cancelable: true,
+      button: 0,
+      buttons: 1,
+      clientX: x,
+      clientY: y,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+    });
+    const startX = box.x + box.width / 2;
+    const startY = box.y + box.height / 2;
+    el.dispatchEvent(new PointerEvent("pointerdown", at(startX, startY)));
+    for (const [x, y] of [
+      [startX + 20, startY + 20],
+      [-140, 320],
+      [-150, 330],
+    ]) {
+      el.dispatchEvent(new PointerEvent("pointermove", at(x, y)));
+      window.dispatchEvent(new PointerEvent("pointermove", at(x, y)));
+    }
+  }, selector);
+
+const cancelDrag = (win, selector) =>
+  win.evaluate((sel) => {
+    const el = document.querySelector(sel);
+    const ev = () =>
+      new PointerEvent("pointercancel", {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: "mouse",
+        isPrimary: true,
+        clientX: -150,
+        clientY: 330,
+      });
+    el?.dispatchEvent(ev());
+    window.dispatchEvent(ev());
+  }, selector);
+
+const dropOverlay = (win) =>
+  win.evaluate(() => !!document.querySelector(".window-drop-overlay"));
+
 let app;
 try {
   app = await electron.launch({
@@ -331,6 +424,129 @@ try {
         `pid=${panePid}`
       );
     }
+  }
+
+  // --- a pane dropped on the tab bar becomes a tab -------------------------
+  // The drop lands on the bar itself, past the last chip. Dropping *on* a chip
+  // is the pre-existing move-into-that-tab gesture; this is the one that had no
+  // target at all before, forcing "open an empty tab, then drag onto it".
+  await winA.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await winA.keyboard.press(SPLIT_SIDE);
+  await winA.waitForTimeout(2000);
+  const barPanes = await paneIds(winA);
+  const barTabsBefore = await tabIds(winA);
+  check("the pane splits before the tab-bar drop", barPanes.length === 2,
+    `panes=${barPanes.length}`);
+
+  if (barPanes.length === 2) {
+    const barPid = await shellPid(winA, "bar");
+    await dragOnto(winA, `[data-pane-id="${barPanes[1]}"] .pane-titlebar`, ".tab-bar");
+    await winA.waitForTimeout(1500);
+    const barTabsAfter = await tabIds(winA);
+    const barPanesAfter = await paneIds(winA);
+    check(
+      "a pane dropped on the tab bar opens as a new tab",
+      barTabsAfter.length === barTabsBefore.length + 1,
+      `tabs ${barTabsBefore.length} → ${barTabsAfter.length}`
+    );
+    // The new tab is shown and holds exactly the moved pane, still running the
+    // same shell — a tab built around a rebuilt terminal would report another.
+    check(
+      "the new tab holds just the moved pane",
+      barPanesAfter.length === 1 && barPanesAfter[0] === barPanes[1],
+      `panes=${barPanesAfter.join(",")}`
+    );
+    check(
+      "the pane kept its shell on the way into the new tab",
+      (await shellPid(winA, "bar2")) === barPid,
+      `pid=${barPid}`
+    );
+  }
+
+  // --- merge a window back into another one --------------------------------
+  // A torn-off window holds exactly one tab, and that used to be refused as
+  // "the window's only tab" — so a window could be created by a drag but never
+  // undone by one. Dropping it onto another window is a merge: allowed, and the
+  // emptied window closes behind it.
+  //
+  // The host reads the *real* cursor to decide where a drop landed, and no
+  // automation API moves that. So make the answer inevitable: spread window A
+  // across the whole work area of whatever display the cursor is on, and any
+  // release from another window resolves to A.
+  const cursorArea = await app.evaluate(({ screen }) =>
+    screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
+  );
+  const bwA = await app.browserWindow(winA);
+  await bwA.evaluate((w, bounds) => w.setBounds(bounds), cursorArea);
+  await winA.waitForTimeout(600);
+
+  const tabsInABefore = (await tabIds(winA)).length;
+  const winsBefore = new Set(app.windows());
+  await winA.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await winA.keyboard.press(NEW_WINDOW);
+  await winA.waitForTimeout(2500);
+  const solo = app.windows().find((w) => !winsBefore.has(w));
+  check("a window opens to be merged back", !!solo);
+
+  if (solo) {
+    await solo.waitForSelector(".xterm-helper-textarea", { timeout: 20000 });
+    await solo.waitForTimeout(1500);
+    const soloTabs = await tabIds(solo);
+    const soloPid = await shellPid(solo, "solo");
+    check("the window to merge holds a single tab", soloTabs.length === 1,
+      `tabs=${soloTabs.length}`);
+
+    // --- the destination window says a drag is over it ---------------------
+    // Window A can't feel this drag: every pointer event belongs to the window
+    // it started in. The host watches the real cursor and tells A instead — so
+    // this asserts the one thing that couldn't be done from the renderer.
+    check("no drop overlay before the drag", !(await dropOverlay(winA)));
+
+    await hoverOutOfWindow(solo, `[data-tab-id="${soloTabs[0]}"]`);
+    await winA.waitForTimeout(600);
+    check(
+      "the window under the drag shows it is about to receive the tab",
+      await dropOverlay(winA)
+    );
+    check(
+      "the window the drag came from shows no such thing",
+      !(await dropOverlay(solo))
+    );
+
+    // No pointer has moved since. The host puts the highlight out when the
+    // pings stop — that's what saves it from a source window that dies
+    // mid-drag — so a drag parked over a window has to keep saying it's there.
+    // This waits past that timeout to prove the heartbeat does.
+    await winA.waitForTimeout(1500);
+    check(
+      "a drag held still over the window keeps it lit",
+      await dropOverlay(winA)
+    );
+
+    await cancelDrag(solo, `[data-tab-id="${soloTabs[0]}"]`);
+    // Well inside the idle timeout, so this can only be the drag ending.
+    await winA.waitForTimeout(400);
+    check("cancelling the drag puts the overlay out", !(await dropOverlay(winA)));
+
+    await dragOutOfWindow(solo, `[data-tab-id="${soloTabs[0]}"]`);
+    await winA.waitForTimeout(3000);
+
+    check(
+      "a window emptied by the merge closes itself",
+      !app.windows().includes(solo),
+      `windows=${app.windows().length}`
+    );
+    check(
+      "the merged tab arrives in the window under the cursor",
+      (await tabIds(winA)).length === tabsInABefore + 1,
+      `tabs ${tabsInABefore} → ${(await tabIds(winA)).length}`
+    );
+    const mergedPid = await shellPid(winA, "merged");
+    check(
+      "the merged tab kept its shell process",
+      !!mergedPid && mergedPid === soloPid,
+      `before=${soloPid} after=${mergedPid}`
+    );
   }
 
   // --- per-window teardown -------------------------------------------------

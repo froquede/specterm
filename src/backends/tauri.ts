@@ -210,9 +210,26 @@ export class TauriBackend implements Backend {
 
   async newWindow(): Promise<void> {}
 
+  async closeWindow(): Promise<void> {}
+
+  // No second window to drop onto, so a tear-off here can never be a merge —
+  // reporting false keeps the store's "don't give away your last tab" guard on.
+  async beginTransfer(): Promise<{ toWindow: boolean }> {
+    return { toWindow: false };
+  }
+
   async dropTransfer(_tab: TransferTab): Promise<void> {}
 
   async onAdoptTab(_cb: (tab: TransferTab) => void): Promise<UnlistenFn> {
+    return () => {};
+  }
+
+  // No other window to light up, and none to be lit up by.
+  dragHover(): void {}
+
+  dragEnd(): void {}
+
+  async onDragOver(_cb: (over: boolean) => void): Promise<UnlistenFn> {
     return () => {};
   }
 
