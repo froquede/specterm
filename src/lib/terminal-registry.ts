@@ -25,6 +25,7 @@ import {
   registerNotificationHandler,
 } from "./osc";
 import { noteOutput, noteInput, forgetPane } from "./claude-attention";
+import { noteDiagramOutput, forgetDiagrams } from "./terminal-diagrams";
 import { markAttention, clearAttention } from "../stores/attention";
 import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
@@ -1080,16 +1081,21 @@ export async function attachTerminal(
   // Every chunk is also timed by the attention heuristic (lib/claude-attention),
   // which reads nothing from the data — only when it arrived — to spot a pane
   // that was working and has gone quiet.
+  // The diagram detector is timed off the same chunks, and for the same reason
+  // — it wants the moment the burst *ends*, when whatever was printed is whole.
+  // Both cost a timer reschedule per chunk and nothing else.
   const onShellReady = takePendingRestore(paneId, instance.ptyId);
   const writeChunk = onShellReady
     ? (data: Uint8Array) => {
         term.write(data);
         noteOutput(paneId);
+        noteDiagramOutput(paneId, instance!);
         onShellReady();
       }
     : (data: Uint8Array) => {
         term.write(data);
         noteOutput(paneId);
+        noteDiagramOutput(paneId, instance!);
       };
 
   instance.unlistenOutput = await onPtyOutput((id, data) => {
@@ -1315,6 +1321,7 @@ export function releaseTerminal(paneId: string) {
   cancelRevival(paneId);
   clearAttention(paneId);
   forgetPane(paneId);
+  forgetDiagrams(paneId);
 
   const instance = instances.get(paneId);
   if (!instance) return;
@@ -1340,6 +1347,7 @@ export function destroyTerminal(paneId: string) {
   // and the timer behind it go with it.
   clearAttention(paneId);
   forgetPane(paneId);
+  forgetDiagrams(paneId);
 
   const instance = instances.get(paneId);
   if (!instance) return;

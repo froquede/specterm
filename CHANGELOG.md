@@ -1,5 +1,39 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Mermaid diagrams in terminal output are drawn, not just printed.** The
+  markdown preview has rendered them since the beginning; a coding agent
+  answering with a flowchart in the pane next to it left you thirty lines of
+  arrows and brackets to assemble in your head. A chip now appears beside the
+  block, and clicking it draws the diagram over the pane — pan, zoom and
+  double-click-to-reset, the same viewport the preview uses. Esc closes it, `←`
+  and `→` step between several in one pane, and *Copy source* puts the mermaid
+  back on the clipboard.
+
+  It reads the screen, so it has nothing to do with which program produced the
+  output: a fenced ```` ```mermaid ```` block from `cat`, `git show` or a
+  heredoc is recognized exactly as readily as one Claude Code rendered. That
+  second shape is the harder one, and is why this is more than a regex. Claude
+  prints a fenced block *without* its fences — the info string on one line, the
+  body under it, and prose resuming at the same indentation — so nothing marks
+  where the diagram ends. The extent is guessed by grammar and settled by the
+  parser, which drops trailing lines until the block parses.
+
+  It also hard-wraps its output to the terminal width, so the long lines that
+  make a diagram worth drawing arrive on screen split in two. Where the pane is
+  running Claude Code, the block's *location* is read off the screen and its
+  *text* out of the session transcript, which holds what was actually written.
+  The screen copy stays as the fallback, which is what everything else gets.
+
+  Nothing is loaded until you click: mermaid is the largest dependency in the
+  app and stays a lazy chunk, and detection is deliberately done with a regex
+  rather than by asking the parser, so a pane that merely prints a diagram never
+  pays for one. Full-screen programs (vim, less, htop) are left alone — the
+  alternate screen is a picture that gets repainted, not a stream of output, and
+  a chip pinned to a line of it would point at whatever scrolled under it next.
+
 ## 0.18.2 — 2026-08-01
 
 ### Fixed

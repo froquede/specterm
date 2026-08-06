@@ -29,6 +29,7 @@ interface SpectermAPI {
   onPtyOutput(cb: (id: number, data: Uint8Array) => void): () => void;
   onPtyExit(cb: (id: number) => void): () => void;
   readTextFile(path: string): Promise<string>;
+  readFileTail(path: string, maxBytes: number): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   readDirStats(path: string): Promise<FileEntryStats[]>;
@@ -158,6 +159,10 @@ export class ElectronBackend implements Backend {
 
   async readTextFile(path: string): Promise<string> {
     return this.api.readTextFile(path);
+  }
+
+  async readFileTail(path: string, maxBytes: number): Promise<string> {
+    return this.api.readFileTail(path, maxBytes);
   }
 
   async writeTextFile(path: string, content: string): Promise<void> {

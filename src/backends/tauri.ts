@@ -95,6 +95,14 @@ export class TauriBackend implements Backend {
     return readTextFile(path);
   }
 
+  // No bounded read in the fs plugin, and the one caller (the diagram detector
+  // reading a Claude transcript) treats an empty answer as "nothing extra to
+  // learn" and falls back to what it read off the screen. Reading a 30MB
+  // transcript whole to serve that would cost more than the feature is worth.
+  async readFileTail(_path: string, _maxBytes: number): Promise<string> {
+    return "";
+  }
+
   async writeTextFile(path: string, content: string): Promise<void> {
     return tauriWriteTextFile(path, content);
   }

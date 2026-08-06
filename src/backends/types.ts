@@ -191,6 +191,17 @@ export interface Backend {
 
   // Filesystem
   readTextFile(path: string): Promise<string>;
+  // The last `maxBytes` of a file, as text, with the leading partial line
+  // dropped so every line that comes back is whole.
+  //
+  // Exists because of one caller: the diagram detector reads Claude Code
+  // transcripts to recover the exact source of a mermaid block, and those files
+  // routinely pass 30MB. readTextFile would hand the render thread the whole
+  // thing to allocate and decode for the sake of the few kilobytes at the end
+  // that were just written. Returns "" for a missing or unreadable file —
+  // every caller treats the transcript as an optional improvement on what it
+  // could already read off the screen.
+  readFileTail(path: string, maxBytes: number): Promise<string>;
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   // Same listing with modification times. Returns [] for a missing directory

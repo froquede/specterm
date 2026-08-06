@@ -23,6 +23,7 @@ const SUITES = [
   { name: "e2e", file: "e2e.mjs" },
   { name: "session", file: "e2e-session.mjs" },
   { name: "windows", file: "e2e-windows.mjs" },
+  { name: "diagrams", file: "e2e-diagrams.mjs" },
 ];
 
 const started = Date.now();

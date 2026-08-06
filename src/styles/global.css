@@ -1344,3 +1344,151 @@ body.resizing-sidebar {
 body.resizing-sidebar .xterm {
   pointer-events: none;
 }
+
+/* --- diagrams found in terminal output ------------------------------------
+   The chip is an xterm *decoration*: an element anchored to a buffer line, so
+   it scrolls with the block it belongs to and disposes itself when that line
+   falls out of the scrollback. xterm positions and sizes it inline, which is
+   why nothing here sets left/top — only how it looks and the fact that it can
+   be clicked at all, since the layer it lives in is otherwise inert. */
+.terminal-diagram-chip {
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  padding: 0 5px;
+  border: 1px solid rgba(122, 162, 247, 0.35);
+  border-radius: 4px;
+  background: rgba(122, 162, 247, 0.12);
+  color: #7aa2f7;
+  font-size: 0.78em;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: visible;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.terminal-diagram-chip:hover {
+  background: rgba(122, 162, 247, 0.24);
+  border-color: rgba(122, 162, 247, 0.6);
+}
+
+/* The drawing itself, over the pane it was found in. Inset rather than filling
+   the pane so the terminal stays visible around it — the output is the context
+   the diagram is being read in, and covering it entirely would be the modal
+   this deliberately isn't. */
+.diagram-overlay {
+  position: absolute;
+  inset: 8px;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: rgba(22, 22, 30, 0.97);
+  border: 1px solid #292e42;
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+}
+
+.diagram-overlay-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 4px 6px;
+  background: #16161e;
+  border-bottom: 1px solid #292e42;
+}
+
+.diagram-overlay-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #a9b1d6;
+  font-size: 12px;
+}
+
+.diagram-overlay-nav {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.diagram-overlay-count {
+  min-width: 30px;
+  text-align: center;
+  color: #565f89;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.diagram-overlay-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 22px;
+  min-width: 22px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: #a9b1d6;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease;
+}
+.diagram-overlay-btn:hover {
+  background: #292e42;
+}
+
+.diagram-overlay-copy {
+  color: #565f89;
+}
+
+/* Drag to pan, wheel to zoom, double-click to reset — the same viewport the
+   markdown preview uses (lib/mermaid.ts owns the behaviour for both). */
+.diagram-overlay-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  cursor: grab;
+  padding: 10px;
+}
+
+.diagram-overlay-body .mermaid-viewport {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+/* Mermaid refused the block. Showing the source is the whole point of the
+   fallback: the guess about where the block ended is visible in it, which is
+   the only way to tell a bad guess from a genuinely broken diagram. */
+.diagram-overlay-error {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 10px 12px;
+  color: #a9b1d6;
+  font-size: 12px;
+}
+.diagram-overlay-error p {
+  margin: 0 0 8px;
+  color: #e0af68;
+}
+.diagram-overlay-error pre {
+  margin: 0;
+  padding: 8px 10px;
+  background: #1a1b26;
+  border: 1px solid #292e42;
+  border-radius: 6px;
+  color: #c0caf5;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}

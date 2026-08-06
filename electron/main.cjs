@@ -1320,6 +1320,37 @@ ipcMain.handle("read-text-file", async (_event, filePath) => {
   return fs.promises.readFile(filePath, "utf-8");
 });
 
+// The tail of a file, without reading the rest of it. Claude Code transcripts
+// are tens of megabytes and the diagram detector only ever wants the last turn,
+// so this reads a bounded window off the end and drops the partial first line
+// so the caller always gets whole lines. A file that can't be read is "" — the
+// caller has a screen-scraped fallback and doesn't need the distinction.
+ipcMain.handle("read-file-tail", async (_event, filePath, maxBytes) => {
+  const limit = Math.max(1, Math.min(Number(maxBytes) || 0, 64 * 1024 * 1024));
+  let handle;
+  try {
+    handle = await fs.promises.open(filePath, "r");
+    const { size } = await handle.stat();
+    const start = Math.max(0, size - limit);
+    const length = size - start;
+    if (length <= 0) return "";
+    const buf = Buffer.allocUnsafe(length);
+    await handle.read(buf, 0, length, start);
+    const text = buf.toString("utf-8");
+    if (start === 0) return text;
+    // Started mid-file, so the first line is a fragment — and, having been cut
+    // at a byte offset, possibly mid-character too. Both go with the newline.
+    // No newline in the whole window means the window is one long partial line
+    // and there is nothing complete in it to return.
+    const nl = text.indexOf("\n");
+    return nl === -1 ? "" : text.slice(nl + 1);
+  } catch (_) {
+    return "";
+  } finally {
+    await handle?.close().catch(() => {});
+  }
+});
+
 ipcMain.handle("write-text-file", async (_event, filePath, content) => {
   return fs.promises.writeFile(filePath, content, "utf-8");
 });

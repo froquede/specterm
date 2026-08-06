@@ -27,6 +27,7 @@
     "test:e2e": "vite build && node test/e2e.mjs",
     "test:e2e:all": "vite build && node test/run-all.mjs",
     "test:e2e:session": "vite build && node test/e2e-session.mjs",
+    "test:e2e:diagrams": "vite build && node test/e2e-diagrams.mjs",
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "hero:gif": "vite build && node scripts/hero-gif.mjs",

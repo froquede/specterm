@@ -5,6 +5,7 @@ import TerminalPane from "./TerminalPane";
 import MarkdownPane from "./MarkdownPane";
 import TextPane from "./TextPane";
 import TerminalSearch from "./TerminalSearch";
+import DiagramOverlay from "./DiagramOverlay";
 import { searchPaneId } from "../stores/terminal-search";
 import {
   paneAttention,
@@ -222,6 +223,13 @@ export default function Pane(props: PaneProps) {
         </Show>
         <Show when={props.pane.kind === "terminal" && searchPaneId() === paneId}>
           <TerminalSearch paneId={paneId} />
+        </Show>
+        {/* A mermaid block that went past in this pane's output, drawn over it.
+            Mounted for every terminal pane and empty until one is opened — the
+            component is a few hundred bytes and mermaid itself is behind a lazy
+            import, so an idle pane pays nothing for it. */}
+        <Show when={props.pane.kind === "terminal"}>
+          <DiagramOverlay paneId={paneId} />
         </Show>
       </div>
       <Show when={isDropHere()}>
