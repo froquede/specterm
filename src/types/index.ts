@@ -6,7 +6,10 @@ export type PaneType =
   | { kind: "markdown"; filePath: string }
   // A read-only viewer for any non-markdown text file (source, config,
   // extensionless files like Dockerfile). Syntax-highlighted; see TextPane.
-  | { kind: "text"; filePath: string };
+  | { kind: "text"; filePath: string }
+  // A read-only viewer for an image file, opened directly (not embedded in a
+  // markdown note). See ImagePane.
+  | { kind: "image"; filePath: string };
 
 export type SplitNode =
   | { type: "leaf"; id: PaneId; pane: PaneType }
@@ -73,7 +76,8 @@ export type SnapshotPane =
       screenKey?: string;
     }
   | { kind: "markdown"; filePath: string }
-  | { kind: "text"; filePath: string };
+  | { kind: "text"; filePath: string }
+  | { kind: "image"; filePath: string };
 
 export type SnapshotNode =
   | { type: "leaf"; pane: SnapshotPane }

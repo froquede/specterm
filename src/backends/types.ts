@@ -73,7 +73,8 @@ export interface UpdaterEvent {
 export type TransferPane =
   | { kind: "terminal"; ptyId: number; scrollback: string; title: string }
   | { kind: "markdown"; filePath: string }
-  | { kind: "text"; filePath: string };
+  | { kind: "text"; filePath: string }
+  | { kind: "image"; filePath: string };
 
 export type TransferNode =
   | { type: "leaf"; pane: TransferPane }

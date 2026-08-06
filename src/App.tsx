@@ -250,14 +250,25 @@ export default function App() {
     }
   }
 
-  // Markdown gets the rendered preview; every other text file opens in the
-  // read-only viewer. Extension-only routing keeps this cheap and predictable —
-  // TextPane itself decides whether the bytes are actually viewable.
+  // Markdown gets the rendered preview; an image opens in the image viewer;
+  // every other text file opens in the read-only text viewer. Extension-only
+  // routing keeps this cheap and predictable — TextPane itself decides whether
+  // the bytes are actually viewable.
   const isMarkdownPath = (p: string) => /\.(md|markdown)$/i.test(p);
+  const isImagePath = (p: string) =>
+    /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i.test(p);
 
   function handleOpenFile(path: string, mode: "split" | "tab") {
     if (isMarkdownPath(path)) {
       handleOpenMarkdown(path, mode);
+      return;
+    }
+    if (isImagePath(path)) {
+      if (mode === "tab") {
+        store.createImageTab(path);
+      } else {
+        store.splitActivePane("h", { kind: "image" as const, filePath: path });
+      }
       return;
     }
     if (mode === "tab") {

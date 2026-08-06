@@ -4,6 +4,7 @@ import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
 import MarkdownPane from "./MarkdownPane";
 import TextPane from "./TextPane";
+import ImagePane from "./ImagePane";
 import TerminalSearch from "./TerminalSearch";
 import { searchPaneId } from "../stores/terminal-search";
 import {
@@ -58,9 +59,16 @@ export default function Pane(props: PaneProps) {
   // Label shown in the title-bar: the shell-reported title for terminals, the
   // file name for markdown and text panes.
   const label = () => {
-    if (props.pane.kind === "markdown" || props.pane.kind === "text") {
-      const filePath = (props.pane as PaneType & { kind: "markdown" | "text" }).filePath;
-      return filePath.split(/[\\/]/).pop() || (props.pane.kind === "markdown" ? "Markdown" : "Text");
+    if (
+      props.pane.kind === "markdown" ||
+      props.pane.kind === "text" ||
+      props.pane.kind === "image"
+    ) {
+      const { kind, filePath } = props.pane as PaneType & {
+        kind: "markdown" | "text" | "image";
+      };
+      const fallback = kind === "markdown" ? "Markdown" : kind === "image" ? "Image" : "Text";
+      return filePath.split(/[\\/]/).pop() || fallback;
     }
     return termTitle();
   };
@@ -159,7 +167,7 @@ export default function Pane(props: PaneProps) {
       // same attribute, and this template is reactive, so a re-render for any
       // other reason would wipe a classList-applied token until its own effect
       // caught up.
-      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
+      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""} ${props.pane.kind === "image" ? "pane-image" : ""} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
       data-pane-id={paneId}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}
@@ -219,6 +227,9 @@ export default function Pane(props: PaneProps) {
         </Show>
         <Show when={props.pane.kind === "text" ? (props.pane as PaneType & { kind: "text" }).filePath : null} keyed>
           {(filePath) => <TextPane filePath={filePath} isActive={props.isActive} />}
+        </Show>
+        <Show when={props.pane.kind === "image" ? (props.pane as PaneType & { kind: "image" }).filePath : null} keyed>
+          {(filePath) => <ImagePane filePath={filePath} />}
         </Show>
         <Show when={props.pane.kind === "terminal" && searchPaneId() === paneId}>
           <TerminalSearch paneId={paneId} />

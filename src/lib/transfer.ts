@@ -31,6 +31,9 @@ async function serializeNode(node: SplitNode): Promise<TransferNode | null> {
     if (pane.kind === "text") {
       return { type: "leaf", pane: { kind: "text", filePath: pane.filePath } };
     }
+    if (pane.kind === "image") {
+      return { type: "leaf", pane: { kind: "image", filePath: pane.filePath } };
+    }
     const instance = getTerminalInstance(node.id);
     if (!instance || instance.disposed || instance.ptyId === null) return null;
     return {
@@ -91,6 +94,9 @@ function rebuildNode(node: TransferNode): SplitNode {
     }
     if (pane.kind === "text") {
       return createLeaf({ kind: "text", filePath: pane.filePath });
+    }
+    if (pane.kind === "image") {
+      return createLeaf({ kind: "image", filePath: pane.filePath });
     }
     const leaf = createLeaf({
       kind: "terminal",
