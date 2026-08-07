@@ -33,6 +33,16 @@ base16 gallery, and a tab bar that stands in for the title bar.
 macOS uses `⌘`. Linux and Windows use the Kitty-style `Ctrl+Shift+<key>` scheme,
 which keeps bare `Ctrl+<key>` free for terminal control codes.
 
+These are the defaults, and all of them are rebindable: **Settings →
+Keybindings** lists the whole table, and clicking a chord records whatever you
+press next. **Backspace** switches a shortcut off entirely, handing its keys
+back to the terminal; **Esc** backs out; pressing a row's original chord clears
+the override. Bare keys and lone `Ctrl+<key>` chords are refused — those are the
+control codes the shell needs — but function keys are fair game. Overrides are
+stored under `specterm.keybindings` as `{ "tab.new": { "key": "t", "ctrl": true,
+"shift": true } }`, keyed by the action's stable id, so a default that moves in a
+later version doesn't take your setting with it.
+
 | Action | macOS | Linux / Windows |
 |---|---|---|
 | New window | `⌘N` | `Ctrl+Shift+N` |

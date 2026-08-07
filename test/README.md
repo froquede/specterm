@@ -5,7 +5,9 @@ Four Playwright-driven end-to-end suites. Each builds the app, launches the
 asserting on observable behavior.
 
 - **`e2e.mjs`** — one long-lived launch. Covers the file sidebar, pane splits and
-  drag-and-drop, the clipboard, the settings sidebar, and the tab-bar layout.
+  drag-and-drop, the clipboard, the settings sidebar (including rebinding a
+  shortcut and then pressing the new chord to prove it took), and the tab-bar
+  layout.
 - **`e2e-windows.mjs`** — multi-window behaviour: tearing a tab out into a window
   of its own, dropping it onto another, and settings/theme changes propagating to
   every open window.

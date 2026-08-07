@@ -9,5 +9,6 @@
 export { default as IconAppearance } from "lucide-solid/icons/palette";
 export { default as IconLayout } from "lucide-solid/icons/layout-panel-left";
 export { default as IconTerminal } from "lucide-solid/icons/square-terminal";
+export { default as IconKeyboard } from "lucide-solid/icons/keyboard";
 export { default as IconSessions } from "lucide-solid/icons/history";
 export { default as IconUpdates } from "lucide-solid/icons/download";
