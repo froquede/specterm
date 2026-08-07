@@ -190,6 +190,17 @@ const MAC = process.platform === "darwin";
 const SIDEBAR_KEY = MAC ? "Meta+B" : "Control+Shift+B";
 const SETTINGS_KEY = MAC ? "Meta+Comma" : "Control+Shift+Comma";
 
+// The keybindings section rebinds "New tab" and puts it back. Its default
+// chord, the replacement it is given, and one that already belongs to another
+// action (⌘⇧U / Ctrl+Shift+U, "Go to a pane waiting on you") so the collision
+// notice can be asserted. None of these is an app-menu accelerator — see
+// buildAppMenu in electron/main.cjs, which deliberately claims almost none.
+const NEW_TAB_KEY = MAC ? "Meta+T" : "Control+Shift+T";
+const NEW_TAB_LABEL = MAC ? "⌘T" : "Ctrl+Shift+T";
+const REBIND_KEY = MAC ? "Meta+Alt+Y" : "Control+Alt+Y";
+const REBIND_LABEL = MAC ? "⌥⌘Y" : "Ctrl+Alt+Y";
+const CONFLICT_KEY = MAC ? "Meta+Shift+U" : "Control+Shift+U";
+
 // The Claude-session copy check is opt-in on the machine having the CLI: it's
 // the program the bug was reported against, but the behaviour it proves is
 // covered without it by the mouse-recorder checks, so its absence is a skip.
@@ -1222,6 +1233,181 @@ try {
     skip("reset restores full OS opacity", "OS opacity unreadable (xprop missing)");
   } else {
     check("reset restores full OS opacity", Math.abs(resetOs - 1) < 0.02, `osOpacity=${resetOs}`);
+  }
+
+  // 8d) Keybindings. The panel rebinds the live keymap, so every claim here is
+  // made twice: once about what the row says, and once about what the keyboard
+  // actually does afterwards. A UI that shows a new chord while the old one
+  // still opens tabs is the failure worth catching.
+  const kbStored = () =>
+    win.evaluate(() =>
+      JSON.parse(localStorage.getItem("specterm.keybindings") || "{}")
+    );
+  const newTabChord = () =>
+    win
+      .locator(".keybinding-entry", {
+        has: win.locator(".keybinding-name", { hasText: /^New tab$/ }),
+      })
+      .locator(".keybinding-chord");
+  const kbRecording = () =>
+    newTabChord().evaluate((el) => el.classList.contains("recording"));
+  const kbTabCount = () => win.locator(".tab").count();
+
+  // Settings is already open (8c); make sure the category is unfolded, and
+  // survive a run where an earlier section left it folded.
+  async function openKeybindings() {
+    if (!(await win.locator(".settings-sidebar").count())) {
+      await win.locator(".tab-settings").click();
+      await win.waitForSelector(".settings-sidebar", { timeout: 10000 });
+    }
+    if (!(await win.locator(".keybinding-list").count())) {
+      await win
+        .locator(".settings-category-head", { hasText: "Keybindings" })
+        .click();
+    }
+    await win.waitForSelector(".keybinding-list", { timeout: 10000 });
+    await win.waitForTimeout(200);
+  }
+
+  await openKeybindings();
+  const kbRows = await win.locator(".keybinding-entry").count();
+  check("the keymap is listed in settings", kbRows > 15, `${kbRows} rows`);
+  const kbGroups = await win.locator(".keybinding-group").allTextContents();
+  check("shortcuts are grouped", kbGroups.length >= 4, kbGroups.join(" / "));
+  check(
+    "a row shows the chord it answers to on this OS",
+    (await newTabChord().textContent()) === NEW_TAB_LABEL,
+    await newTabChord().textContent()
+  );
+
+  // A bare Ctrl+<key> is a control code the shell owns (Ctrl+C is SIGINT), so
+  // the recorder declines it and stays armed rather than binding it.
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  check("clicking a chord arms the recorder", await kbRecording());
+  await win.keyboard.press("Control+y");
+  await win.waitForTimeout(300);
+  const kbError = await win
+    .locator(".keybindings .settings-error")
+    .textContent()
+    .catch(() => null);
+  check("a chord the terminal owns is refused", !!kbError, kbError ?? "(none)");
+  check("the recorder stays armed after a refusal", await kbRecording());
+
+  await win.keyboard.press(REBIND_KEY);
+  await win.waitForTimeout(400);
+  check(
+    "the row shows the recorded chord",
+    (await newTabChord().textContent()) === REBIND_LABEL,
+    await newTabChord().textContent()
+  );
+  check(
+    "the override persists",
+    !!(await kbStored())["tab.new"],
+    JSON.stringify(await kbStored())
+  );
+
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  const tabsBeforeRebind = await kbTabCount();
+  await win.keyboard.press(NEW_TAB_KEY);
+  await win.waitForTimeout(700);
+  check(
+    "the replaced chord no longer opens a tab",
+    (await kbTabCount()) === tabsBeforeRebind,
+    `${tabsBeforeRebind} -> ${await kbTabCount()}`
+  );
+  await win.keyboard.press(REBIND_KEY);
+  await win.waitForTimeout(1200);
+  check(
+    "the recorded chord opens a tab",
+    (await kbTabCount()) === tabsBeforeRebind + 1,
+    `${tabsBeforeRebind} -> ${await kbTabCount()}`
+  );
+
+  // Backspace hands the keys back to the terminal: the action stays in the
+  // list, resettable, but nothing reaches it.
+  await openKeybindings();
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press("Backspace");
+  await win.waitForTimeout(400);
+  check("Backspace switches a shortcut off", (await newTabChord().textContent()) === "Off");
+  check(
+    "off is persisted as off, not as absent",
+    (await kbStored())["tab.new"] === null,
+    JSON.stringify(await kbStored())
+  );
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  const tabsWhileOff = await kbTabCount();
+  await win.keyboard.press(REBIND_KEY);
+  await win.waitForTimeout(700);
+  check("a shortcut that is off fires nothing", (await kbTabCount()) === tabsWhileOff);
+
+  // Esc belongs to the recorder while it is armed — the panel's own Esc-to-close
+  // must stand aside, or the capture would be left running with nothing on
+  // screen to release it.
+  await openKeybindings();
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press("Escape");
+  await win.waitForTimeout(400);
+  check("Esc cancels the recording", !(await kbRecording()));
+  check("…without closing the settings panel", (await slot()).settings);
+  check("…and without changing the binding", (await kbStored())["tab.new"] === null);
+
+  // Collisions are shown, not refused: moving a chord from one action to
+  // another has to pass through a state where both hold it.
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press(CONFLICT_KEY);
+  await win.waitForTimeout(400);
+  const kbConflicts = await win.locator(".keybinding-conflict").count();
+  check(
+    "a chord two actions share is flagged on both",
+    kbConflicts >= 2,
+    `${kbConflicts} notices`
+  );
+
+  await win
+    .locator(".keybindings .settings-reset", { hasText: "Reset all" })
+    .click();
+  await win.waitForTimeout(400);
+  check(
+    "reset all clears every override",
+    Object.keys(await kbStored()).length === 0,
+    JSON.stringify(await kbStored())
+  );
+  check(
+    "…and the built-in chord is back",
+    (await newTabChord().textContent()) === NEW_TAB_LABEL,
+    await newTabChord().textContent()
+  );
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  const tabsAfterReset = await kbTabCount();
+  await win.keyboard.press(NEW_TAB_KEY);
+  await win.waitForTimeout(1200);
+  check(
+    "…and it opens a tab again",
+    (await kbTabCount()) === tabsAfterReset + 1,
+    `${tabsAfterReset} -> ${await kbTabCount()}`
+  );
+
+  await openKeybindings();
+  await win.locator(".keybindings .settings-search").fill("paste");
+  await win.waitForTimeout(300);
+  const kbFiltered = await win.locator(".keybinding-entry").count();
+  check(
+    "the filter narrows the list",
+    kbFiltered > 0 && kbFiltered < kbRows,
+    `${kbFiltered}/${kbRows}`
+  );
+  await win.locator(".keybindings .settings-search").fill("");
+  await win.waitForTimeout(300);
+
+  // Leave the panel as section 8c did, with no tabs owed to later sections.
+  for (let i = (await kbTabCount()) - 1; i > 0; i--) {
+    await win.locator(".tab-close").last().click();
+    await win.waitForTimeout(200);
   }
 
   // 9) Chrome layout: the tab bar's corner, the two sizes, and auto-hide.
