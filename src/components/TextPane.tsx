@@ -1,8 +1,17 @@
-import { createSignal, onMount, onCleanup, Show } from "solid-js";
+import {
+  createSignal,
+  createEffect,
+  onMount,
+  onCleanup,
+  untrack,
+  Show,
+} from "solid-js";
+import type { EditorView } from "@codemirror/view";
 import { getBackend } from "../backends";
-import { matchesCmd, shortcutLabel } from "../lib/platform";
+import { matchesCmd, shortcutLabel, isMac } from "../lib/platform";
 import {
   highlightCode,
+  lineCommentToken,
   looksBinary,
   VIEW_BYTE_CAP,
 } from "../lib/textview";
@@ -15,13 +24,43 @@ interface TextPaneProps {
   isActive?: boolean;
 }
 
-// Read-only viewer for any non-markdown text file. Syntax-highlighted (lazily —
-// see lib/textview.ts), with a single-node line-number gutter, in-pane find, and
-// binary/size guards so a stray click on a huge log or a binary never janks the
-// terminal.
+// Unsaved edits are auto-persisted as a "draft" in localStorage, keyed by file
+// path — same deal as the markdown pane: a cross-tab pane move recreates the
+// component, and a reload or app close drops it entirely, so without this the
+// buffer would silently vanish. Written debounced while editing (and flushed on
+// unmount), consulted on load, cleared on save.
+const DRAFT_PREFIX = "specterm.textdraft:";
+const draftKey = (filePath: string) => DRAFT_PREFIX + filePath;
+function readDraft(filePath: string): string | null {
+  try {
+    return localStorage.getItem(draftKey(filePath));
+  } catch {
+    return null;
+  }
+}
+function writeDraft(filePath: string, content: string) {
+  try {
+    localStorage.setItem(draftKey(filePath), content);
+  } catch {
+    // localStorage full/unavailable — the edit just won't survive a hard close.
+  }
+}
+function clearDraft(filePath: string) {
+  try {
+    localStorage.removeItem(draftKey(filePath));
+  } catch {
+    /* ignore */
+  }
+}
+
+// Viewer/editor for any non-markdown text file. Reading is syntax-highlighted
+// (lazily — see lib/textview.ts) with a single-node line-number gutter and
+// in-pane find; editing swaps in CodeMirror (lazily too — see lib/text-editor.ts)
+// with a Mod-/ comment toggle. Binary and over-cap files stay read-only.
 export default function TextPane(props: TextPaneProps) {
   let codeRef!: HTMLElement;
   let searchInputRef!: HTMLInputElement;
+  let editorRef!: HTMLDivElement;
 
   const [error, setError] = createSignal<string | null>(null);
   const [language, setLanguage] = createSignal("plain");
@@ -32,6 +71,21 @@ export default function TextPane(props: TextPaneProps) {
   const [searchQuery, setSearchQuery] = createSignal("");
   const [matchCount, setMatchCount] = createSignal(0);
   const [currentMatch, setCurrentMatch] = createSignal(0);
+
+  // "read" = highlighted viewer (default); "edit" = CodeMirror.
+  const [mode, setMode] = createSignal<"read" | "edit">("read");
+  // The buffer. Runs ahead of savedText (what's on disk) while there are
+  // unsaved edits; the difference is `dirty`.
+  const [content, setContent] = createSignal("");
+  const [savedText, setSavedText] = createSignal("");
+  const [dirty, setDirty] = createSignal(false);
+
+  // A truncated view holds only the head of the file, so saving it would throw
+  // the rest away; a binary has nothing to edit. Both stay read-only.
+  const canEdit = () => !error() && !truncated();
+
+  // Live CodeMirror instance while in edit mode (null in read mode).
+  let editorView: EditorView | null = null;
 
   // The pristine highlighted HTML, kept so find can re-render before wrapping
   // matches (and restore on close) without re-reading or re-highlighting.
@@ -46,7 +100,9 @@ export default function TextPane(props: TextPaneProps) {
     return s;
   };
 
-  async function loadFile() {
+  // `force` re-reads from disk and discards any draft (the Refresh button); the
+  // default honors a persisted draft so unsaved edits survive a move/reload.
+  async function loadFile(force = false) {
     try {
       setError(null);
       const backend = await getBackend();
@@ -56,6 +112,9 @@ export default function TextPane(props: TextPaneProps) {
         setError("Can't preview a binary file.");
         codeHtml = "";
         if (codeRef) codeRef.innerHTML = "";
+        setContent("");
+        setSavedText("");
+        setDirty(false);
         setLineCount(0);
         return;
       }
@@ -63,23 +122,144 @@ export default function TextPane(props: TextPaneProps) {
       const isTrunc = text.length > VIEW_BYTE_CAP;
       setTruncated(isTrunc);
       if (isTrunc) text = text.slice(0, VIEW_BYTE_CAP);
+      setSavedText(text);
 
-      const { html, language: lang } = await highlightCode(text, props.filePath);
-      codeHtml = html;
-      setLanguage(lang);
-      // Trailing newline shouldn't add a phantom blank-numbered line.
-      const normalized = text.endsWith("\n") ? text.slice(0, -1) : text;
-      setLineCount(normalized === "" ? 1 : normalized.split("\n").length);
-      if (codeRef) codeRef.innerHTML = codeHtml;
+      // Never restore a draft over a truncated file — it isn't editable, and
+      // the draft would be a head-only copy of something bigger.
+      const draft = force || isTrunc ? null : readDraft(props.filePath);
+      // A draft that already matches disk is stale (saved elsewhere) — drop it.
+      if (draft !== null && draft === text) clearDraft(props.filePath);
+      const initial = draft !== null && draft !== text ? draft : text;
 
-      // Re-apply an active search against the freshly loaded content.
-      if (searchOpen() && searchQuery()) applyHighlights(searchQuery());
+      setContent(initial);
+      setDirty(initial !== text);
+      // If the editor is open, replace its buffer with the loaded content.
+      if (editorView) {
+        editorView.dispatch({
+          changes: {
+            from: 0,
+            to: editorView.state.doc.length,
+            insert: initial,
+          },
+        });
+      }
     } catch (e) {
       setError(`Failed to read file: ${props.filePath}\n${e}`);
     }
   }
 
-  onMount(loadFile);
+  async function save() {
+    if (!editorView || !canEdit()) return;
+    const text = editorView.state.doc.toString();
+    try {
+      const backend = await getBackend();
+      await backend.writeTextFile(props.filePath, text);
+      setSavedText(text);
+      setContent(text);
+      setDirty(false);
+      clearDraft(props.filePath);
+    } catch (e) {
+      setError(`Failed to save file: ${props.filePath}\n${e}`);
+    }
+  }
+
+  // Persist the current buffer as a draft, debounced so keystrokes don't hammer
+  // localStorage. A buffer that matches disk clears the draft instead.
+  let draftTimer: number | null = null;
+  function persistDraft(buffer: string) {
+    if (draftTimer) clearTimeout(draftTimer);
+    draftTimer = window.setTimeout(() => {
+      if (buffer === savedText()) clearDraft(props.filePath);
+      else writeDraft(props.filePath, buffer);
+    }, 400);
+  }
+
+  function toggleMode() {
+    if (!canEdit()) return;
+    // Find highlights live in the read view's DOM; leaving them wrapped would
+    // strand <mark> nodes in the HTML we restore on the way back.
+    if (searchOpen()) closeSearch();
+    setMode((m) => (m === "read" ? "edit" : "read"));
+  }
+
+  // Render the read view. Never touches disk — edit → read shows the live
+  // buffer, unsaved changes and all.
+  async function renderRead(text: string) {
+    const { html, language: lang } = await highlightCode(text, props.filePath);
+    codeHtml = html;
+    setLanguage(lang);
+    // Trailing newline shouldn't add a phantom blank-numbered line.
+    const normalized = text.endsWith("\n") ? text.slice(0, -1) : text;
+    setLineCount(normalized === "" ? 1 : normalized.split("\n").length);
+    if (codeRef) codeRef.innerHTML = codeHtml;
+
+    // Re-apply an active search against the freshly rendered content.
+    if (searchOpen() && searchQuery()) applyHighlights(searchQuery());
+  }
+
+  createEffect(() => {
+    const text = content();
+    if (mode() !== "read" || error() || !codeRef) return;
+    void renderRead(text);
+  });
+
+  // Mount/unmount CodeMirror as the mode toggles. content() is read untracked so
+  // a save() (which updates content) doesn't tear down and rebuild the editor.
+  //
+  // CodeMirror is ~500 KB, so it's loaded lazily on the FIRST switch to edit
+  // mode — a fast terminal must not pay for the editor at startup (mirrors the
+  // lazy mermaid/highlight.js chunks). The doc is captured synchronously; the
+  // view is created once the chunk resolves, unless the effect already cleaned
+  // up (mode flipped back before the import landed).
+  createEffect(() => {
+    if (mode() !== "edit" || !editorRef) return;
+    const initialDoc = untrack(content);
+    let view: EditorView | null = null;
+    let disposed = false;
+    import("../lib/text-editor").then(({ createTextEditor }) => {
+      if (disposed || !editorRef) return;
+      view = createTextEditor({
+        doc: initialDoc,
+        parent: editorRef,
+        commentToken: lineCommentToken(props.filePath),
+        onDocChanged: (v) => {
+          const buffer = v.state.doc.toString();
+          setDirty(buffer !== savedText());
+          persistDraft(buffer);
+        },
+        onSave: save,
+      });
+      editorView = view;
+      view.focus();
+    });
+    onCleanup(() => {
+      disposed = true;
+      if (view) {
+        // Carry the (possibly unsaved) buffer back so the reader shows it.
+        setContent(view.state.doc.toString());
+        view.destroy();
+        editorView = null;
+      }
+    });
+  });
+
+  onMount(() => {
+    // loadFile() restores a persisted draft when there is one, so a pane moved
+    // between tabs (or reopened after a reload/close) comes back with its
+    // unsaved edits rather than the on-disk copy.
+    loadFile();
+  });
+
+  // Flush the draft synchronously on unmount if still dirty, in case the debounce
+  // hadn't fired (e.g. a fast cross-tab move right after a keystroke). Read the
+  // live editor if it's up, else the buffer the editor effect's cleanup carried
+  // back into content().
+  onCleanup(() => {
+    if (draftTimer) clearTimeout(draftTimer);
+    if (!dirty()) return;
+    const buffer = editorView ? editorView.state.doc.toString() : content();
+    if (buffer !== savedText()) writeDraft(props.filePath, buffer);
+  });
 
   function restoreCode() {
     if (codeRef) codeRef.innerHTML = codeHtml;
@@ -187,7 +367,26 @@ export default function TextPane(props: TextPaneProps) {
 
   function handleKeyDown(e: KeyboardEvent) {
     if (!props.isActive) return;
-    if (matchesCmd(e) && e.key.toLowerCase() === "f") {
+    if (!matchesCmd(e)) return;
+    const key = e.key.toLowerCase();
+
+    // ⌘E toggles read/edit from either mode.
+    if (key === "e" && canEdit()) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleMode();
+      return;
+    }
+    // ⌘S saves — only meaningful while editing. (CodeMirror also binds the
+    // bare Mod-s inside the editor; this is the app-wide spelling of it.)
+    if (key === "s" && mode() === "edit") {
+      e.preventDefault();
+      e.stopPropagation();
+      save();
+      return;
+    }
+    // ⌘F toggles find — read mode only (the editor owns its own keys).
+    if (key === "f" && mode() === "read") {
       e.preventDefault();
       e.stopPropagation();
       searchOpen() ? closeSearch() : openSearch();
@@ -200,27 +399,63 @@ export default function TextPane(props: TextPaneProps) {
     if (searchTimer) clearTimeout(searchTimer);
   });
 
+  // Mod-/ is bound inside CodeMirror, which spells it the platform-native way
+  // (⌘ on macOS, plain Ctrl elsewhere) rather than through the app's
+  // ⌘→Ctrl+Shift translation.
+  const commentLabel = isMac ? "⌘/" : "Ctrl+/";
+
   return (
     <div class="text-pane">
       <div class="text-toolbar">
-        <span class="text-filepath">{props.filePath}</span>
+        <span class="text-filepath">
+          {dirty() ? "● " : ""}
+          {props.filePath}
+        </span>
         <div class="text-toolbar-actions">
-          <Show when={language() !== "plain"}>
+          <Show when={language() !== "plain" && mode() === "read"}>
             <span class="text-lang">{language()}</span>
           </Show>
-          <button
-            class="text-toolbar-btn"
-            onClick={() => (searchOpen() ? closeSearch() : openSearch())}
-            title={`Find (${shortcutLabel("F")})`}
-          >
-            Find
-          </button>
-          <button class="text-toolbar-btn" onClick={loadFile}>
-            Refresh
-          </button>
+          <Show when={mode() === "edit"}>
+            <Show when={lineCommentToken(props.filePath)}>
+              <span class="text-hint" title="Toggle comment on the selected lines">
+                {commentLabel}
+              </span>
+            </Show>
+            <button
+              class="text-toolbar-btn"
+              onClick={save}
+              disabled={!dirty()}
+              title={`Save (${shortcutLabel("S")})`}
+            >
+              Save
+            </button>
+          </Show>
+          <Show when={canEdit()}>
+            <button
+              class="text-toolbar-btn"
+              onClick={toggleMode}
+              title={`${mode() === "read" ? "Edit" : "View"} (${shortcutLabel("E")})`}
+            >
+              {mode() === "read" ? "Edit" : "View"}
+            </button>
+          </Show>
+          <Show when={mode() === "read"}>
+            <button
+              class="text-toolbar-btn"
+              onClick={() => (searchOpen() ? closeSearch() : openSearch())}
+              title={`Find (${shortcutLabel("F")})`}
+            >
+              Find
+            </button>
+            {/* Refresh re-reads from disk (discarding any draft), so it's
+                read-mode only — in edit mode it would drop unsaved changes. */}
+            <button class="text-toolbar-btn" onClick={() => loadFile(true)}>
+              Refresh
+            </button>
+          </Show>
         </div>
       </div>
-      <Show when={searchOpen()}>
+      <Show when={mode() === "read" && searchOpen()}>
         <div class="text-search">
           <input
             ref={searchInputRef}
@@ -257,17 +492,19 @@ export default function TextPane(props: TextPaneProps) {
       <Show when={truncated()}>
         <div class="text-truncated">
           File is larger than {Math.round(VIEW_BYTE_CAP / (1024 * 1024))} MB — showing
-          the first part only.
+          the first part only, and it can't be edited from here.
         </div>
       </Show>
-      <Show
-        when={!error()}
-        fallback={<div class="text-error">{error()}</div>}
-      >
-        <div class="text-body">
-          <pre class="text-gutter" aria-hidden="true">{gutter()}</pre>
-          <pre class="text-code"><code ref={codeRef} /></pre>
-        </div>
+      <Show when={!error()} fallback={<div class="text-error">{error()}</div>}>
+        <Show when={mode() === "edit"}>
+          <div ref={editorRef} class="text-editor" />
+        </Show>
+        <Show when={mode() === "read"}>
+          <div class="text-body">
+            <pre class="text-gutter" aria-hidden="true">{gutter()}</pre>
+            <pre class="text-code"><code ref={codeRef} /></pre>
+          </div>
+        </Show>
       </Show>
     </div>
   );

@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **The text viewer edits and saves.** Opening a `.env` from the file tree has
+  always shown it — the one thing you actually wanted to do with it was flip a
+  variable on or off, and that meant closing the pane and reaching for an
+  editor. The pane now has the same *Edit* / *View* toggle the markdown preview
+  has, on the same `⌘E` / `Ctrl+Shift+E`, with `⌘S` / `Ctrl+Shift+S` to save and
+  a dot on the path while there are unsaved changes. Unsaved work is kept as a
+  draft in the same way markdown's is, so moving the pane between tabs, or
+  reloading, or closing the app, brings the buffer back rather than the copy on
+  disk.
+
+  **`⌘/` / `Ctrl+/` toggles the comment on every line the selection touches**,
+  each line on its own: a commented line loses its marker, an uncommented one
+  gains it. The marker is whatever the file's language uses — `#` for `.env`,
+  `.sh`, `.yaml`, `.ini` and Dockerfiles, `//` for the C-family and JavaScript,
+  `--` for SQL and Lua — and it goes after the indentation, so toggling a nested
+  line twice returns it byte for byte. Files whose language has no line comment
+  (JSON, XML, CSS) leave the key unbound rather than inserting something their
+  parser would reject. Commented lines are dimmed while you edit, which for a
+  `.env` is the only distinction that matters: which settings are live.
+
+  Two files stay read-only, deliberately. A binary was never editable. A file
+  over the 5 MB view cap is shown truncated, and saving what's on screen would
+  silently throw the rest away — the *Edit* button isn't offered, and a draft is
+  never restored over one.
+
+  CodeMirror is a lazy chunk here exactly as it is for markdown: it loads on the
+  first switch to edit mode and never at startup, so a terminal that only ever
+  reads a file pays nothing for the editor. `.env.local`, `.env.production` and
+  the rest are also recognized as shell now — the old rule read the trailing
+  segment as the extension, so everything but a bare `.env` lost its
+  highlighting.
+
 ## 0.19.0 — 2026-08-06
 
 ### Added
