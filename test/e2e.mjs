@@ -1596,6 +1596,13 @@ try {
   // the file tree at test/fixtures, then drive real clicks on the fixtures.
   const fixturesDir = path.join(root, "test", "fixtures");
   const binFixture = path.join(fixturesDir, "binary.bin");
+  // A dotenv-style file — the case the text editor exists for. Written up front
+  // so it's in the listing the tree reads when it first opens the fixtures dir.
+  const envFixture = path.join(fixturesDir, "sample.env");
+  fs.writeFileSync(
+    envFixture,
+    "# managed by specterm\nAPI_URL=https://example.test\nDEBUG=false\n"
+  );
   // A file with NUL bytes — must be refused by the viewer, not shown as garbage.
   fs.writeFileSync(binFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x03]));
   try {
@@ -1645,6 +1652,73 @@ try {
     await win.keyboard.press("Escape");
     await win.waitForTimeout(200);
 
+    // 13b-2) The text pane edits and saves, and Mod-/ toggles the line comment.
+    // A .env is the case this exists for: the file is trivially editable text,
+    // and flipping a setting on and off means adding/removing a leading "#".
+    const COMMENT_KEY = MAC ? "Meta+Slash" : "Control+Slash";
+    const SAVE_KEY = MAC ? "Meta+S" : "Control+S";
+    await clickEntry(win, "sample.env");
+    // Every file opened so far still has a pane in the DOM, so scope to the one
+    // showing THIS file rather than taking the first .text-pane on the page.
+    const envPane = win
+      .locator(".text-pane")
+      .filter({ has: win.locator(".text-filepath", { hasText: "sample.env" }) })
+      .first();
+    await envPane.waitFor({ timeout: 8000 });
+    await envPane.locator(".text-toolbar-btn", { hasText: "Edit" }).click();
+    // First switch pulls the lazy CodeMirror chunk.
+    const envEditor = envPane.locator(".text-editor .cm-content");
+    await envEditor.waitFor({ timeout: 10000 });
+    await envEditor.click();
+    await win.waitForTimeout(200);
+    // Put the caret on the last line (DEBUG=false) and comment it out.
+    await win.keyboard.press("Control+End");
+    await win.keyboard.press("ArrowUp");
+    await win.keyboard.press(COMMENT_KEY);
+    await win.waitForTimeout(200);
+    const commented = (await envEditor.textContent()) || "";
+    check(
+      "text editor comments a line with Mod-/",
+      commented.includes("# DEBUG=false"),
+      commented.slice(-40)
+    );
+    // Same key on the same line puts it back exactly as it was.
+    await win.keyboard.press(COMMENT_KEY);
+    await win.waitForTimeout(200);
+    const uncommented = (await envEditor.textContent()) || "";
+    check(
+      "text editor uncomments the same line",
+      uncommented.includes("DEBUG=false") && !uncommented.includes("# DEBUG=false"),
+      uncommented.slice(-40)
+    );
+    // Comment it again and save — the bytes on disk are the real assertion.
+    await win.keyboard.press(COMMENT_KEY);
+    await win.waitForTimeout(200);
+    await win.keyboard.press(SAVE_KEY);
+    await win.waitForTimeout(600);
+    const onDisk = fs.readFileSync(envFixture, "utf8");
+    check(
+      "text editor writes the edit to disk",
+      onDisk.includes("# DEBUG=false") && onDisk.includes("API_URL=https://example.test"),
+      JSON.stringify(onDisk.slice(-32))
+    );
+    // Saving clears the dirty marker, so Save goes disabled again.
+    const saveDisabled = await envPane
+      .locator(".text-toolbar-btn", { hasText: "Save" })
+      .isDisabled();
+    check("text editor clears dirty state on save", saveDisabled, `disabled=${saveDisabled}`);
+    await envPane.locator(".text-toolbar-btn", { hasText: "View" }).click();
+    await envPane.locator(".text-code").waitFor({ timeout: 5000 });
+    // Opening a file from the tree SPLITS the current tab, so every fixture
+    // opened here takes a slice of the same width. Give this one back, or the
+    // markdown checks below run in a pane too narrow to lay anything out in.
+    await win
+      .locator(".pane", { has: win.locator(".text-filepath", { hasText: "sample.env" }) })
+      .first()
+      .locator(".pane-close-btn")
+      .click();
+    await win.waitForTimeout(400);
+
     // 13c) A binary file is refused, not rendered as mojibake.
     await clickEntry(win, "binary.bin");
     await win.waitForSelector(".text-error", { timeout: 8000 });
@@ -1692,6 +1766,7 @@ try {
     );
   } finally {
     try { fs.unlinkSync(binFixture); } catch {}
+    try { fs.unlinkSync(envFixture); } catch {}
   }
 
   // 14) Cross-tab pane detach: drag a pane's titlebar onto another tab's chip to
