@@ -91,10 +91,10 @@ jobs:
           install -m 0755 "/tmp/gh_${GH_CLI_VERSION}_linux_amd64/bin/gh" /usr/local/bin/gh
           gh --version
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
@@ -104,14 +104,14 @@ jobs:
       # still ships distutils); Windows uses the prebuild and never builds.
       - name: Install Python 3.11 for node-gyp (macOS)
         if: runner.os == 'macOS'
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
       # Cache the Electron binary + electron-builder tooling downloads so they
       # aren't re-fetched every release. Paths absent on a given OS are skipped.
       - name: Cache Electron & electron-builder downloads
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: |
             ~/.cache/electron
