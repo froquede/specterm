@@ -20,6 +20,7 @@ const fs = require("fs");
 const { watch } = require("chokidar");
 const { execFile, spawn } = require("child_process");
 const { autoUpdater } = require("electron-updater");
+const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -2307,6 +2308,18 @@ function reportUpdaterError(err) {
   return message;
 }
 
+// A local source checkout is a release behind the moment the app updates
+// itself, so pull it forward — silently, at most once per launch, and only when
+// it is provably safe. See electron/repo-sync.cjs for what "safe" rules out.
+//
+// Packaged builds only. Unpackaged, there is no real update to be behind, and
+// the checkout we'd be pulling is very likely the one this process is running
+// from — changing it under a live dev server is the opposite of helpful.
+function maybeSyncLocalRepo() {
+  if (!app.isPackaged) return;
+  syncLocalRepoAfterUpdate(app.getPath("userData"));
+}
+
 function wireAutoUpdater() {
   if (updaterWired) return;
   updaterWired = true;
@@ -2334,9 +2347,10 @@ function wireAutoUpdater() {
   autoUpdater.on("download-progress", (p) =>
     sendUpdaterEvent({ status: "progress", percent: p.percent })
   );
-  autoUpdater.on("update-downloaded", (info) =>
-    sendUpdaterEvent({ status: "downloaded", version: info.version })
-  );
+  autoUpdater.on("update-downloaded", (info) => {
+    sendUpdaterEvent({ status: "downloaded", version: info.version });
+    maybeSyncLocalRepo();
+  });
   autoUpdater.on("error", (err) => reportUpdaterError(err));
 }
 
@@ -2549,6 +2563,7 @@ async function macDownloadUpdate() {
   // install step copies.
   fs.rmSync(zipPath, { force: true });
   sendUpdaterEvent({ status: "downloaded", version: macLatestVersion });
+  maybeSyncLocalRepo();
 }
 
 // Swap the staged bundle in for the running one, then relaunch. The app can't

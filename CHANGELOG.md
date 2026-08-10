@@ -1,5 +1,43 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **An update also brings your local checkout forward.** Anyone who hits *Check
+  for updates* is fairly likely to have the source cloned somewhere too, and the
+  moment the app updates itself that clone is a release behind the binary
+  running above it. When a download finishes, Specterm now looks for the
+  checkout and fast-forwards it onto `main` — once per launch, in the
+  background, without a word on screen. It is an errand run on the side, not
+  something you asked for in that moment, so it doesn't get a dialog, a toast or
+  a progress bar; the main process log is the only place it says anything.
+
+  Finding it is a breadth-first walk of the home directory, four levels deep,
+  skipping hidden directories and the usual enormous ones (`node_modules`,
+  `Library`, `AppData`, …), stopping at the first directory named `specterm`
+  whose `origin` remote actually points at a repository of that name. A
+  directory that merely shares the name is not touched. The hit is cached in
+  `userData`, so the walk happens about once per install and is re-verified
+  before each use. Bounded on every axis — 4,000 directories, three seconds —
+  and measured at **14–60ms** over a 204GB home, both when it finds the clone
+  and when there is nothing to find.
+
+  What it refuses to do is the point:
+
+  - **A dirty tree is left alone.** Anything at all in `git status --porcelain`,
+    tracked or untracked, and nothing happens. Uncommitted work is never at
+    risk, which matters twice over when nothing on screen would have told you.
+  - **The pull is `--ff-only`.** It can advance `main`; it cannot write a merge
+    commit, hit a conflict, or leave a repo half-rebased. A `main` with an
+    unpushed commit is simply skipped.
+  - **A clean feature branch** is switched to `main` and pulled; the branch
+    itself stays exactly where it was.
+  - No `git` on `PATH`, no local `main`, no network — all skips. A side errand
+    must never be able to fail an update.
+
+  Packaged builds only: unpackaged there is no real update to be behind, and the
+  checkout would very likely be the one the dev server is running from.
+
 ## 0.19.0 — 2026-08-06
 
 ### Added

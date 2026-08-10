@@ -24,6 +24,9 @@ const SUITES = [
   { name: "session", file: "e2e-session.mjs" },
   { name: "windows", file: "e2e-windows.mjs" },
   { name: "diagrams", file: "e2e-diagrams.mjs" },
+  // Not an Electron suite — it drives electron/repo-sync.cjs against real git
+  // in a temp sandbox, so it costs seconds and runs alongside the rest for free.
+  { name: "repo-sync", file: "repo-sync.mjs" },
 ];
 
 const started = Date.now();
