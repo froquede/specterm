@@ -30,6 +30,7 @@
     "test:e2e:diagrams": "vite build && node test/e2e-diagrams.mjs",
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
+    "test:paste": "node --experimental-strip-types test/paste.mjs",
     "hero:gif": "vite build && node scripts/hero-gif.mjs",
     "tauri": "tauri"
   },
