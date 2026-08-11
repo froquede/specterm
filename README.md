@@ -100,6 +100,16 @@ notification sequences, the terminal bell, output-timing detection for Claude
 Code, and Claude's own hooks. Three of them need no setup. Optional desktop
 notifications are off by default. See [docs/waiting-panes.md](docs/waiting-panes.md).
 
+**Updating also updates your checkout.** When an update finishes downloading,
+Specterm looks for a local clone of itself — a directory named `specterm` within
+four levels of your home directory whose `origin` really points at this
+repository — and fast-forwards it onto `main`. Silently, once per launch, and
+only when it is safe: a dirty working tree is left completely alone, the pull is
+`--ff-only` so it can never merge or conflict, and a checkout parked on another
+branch has `main` advanced behind it without its working tree or its `HEAD`
+being touched. No clone, no `git`, no network — it skips. See
+`electron/repo-sync.cjs`.
+
 **Theming.** Themes drive the terminal palette and the app chrome at once.
 Settings → Theme → *Browse gallery* has 325 bundled
 [base16](https://github.com/tinted-theming/schemes) schemes; you can also paste,
@@ -160,7 +170,8 @@ troubleshooting.
 
 ```bash
 npm run test:e2e        # main suite
-npm run test:e2e:all    # + multi-window, session continuity
+npm run test:e2e:all    # + multi-window, session continuity, repo-sync
+npm run test:repo-sync  # post-update clone sync (real git, no Electron)
 npm run test:perf       # startup budget
 ```
 
