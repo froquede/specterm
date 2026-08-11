@@ -63,7 +63,8 @@ later version doesn't take your setting with it.
 | Find in terminal | `⌘F` | `Ctrl+Shift+F` |
 | Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
-| Markdown: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
+| Markdown / text file: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
+| Text file: toggle line comment | `⌘/` | `Ctrl+/` |
 | Font size up / down / reset | `⌘=` / `⌘-` / `⌘0` | `Ctrl+Shift+=` / `-` / `0` |
 | Quit (ends detached sessions) | `⌘Q` | `Alt+F4` |
 
