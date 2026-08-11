@@ -124,8 +124,12 @@ export default function TextPane(props: TextPaneProps) {
       if (isTrunc) text = text.slice(0, VIEW_BYTE_CAP);
       setSavedText(text);
 
-      // Never restore a draft over a truncated file — it isn't editable, and
-      // the draft would be a head-only copy of something bigger.
+      // Refresh means "give me what's on disk" — so the draft has to actually
+      // go, not just be ignored for this load. Left behind, it would come back
+      // the next time the pane mounted and resurrect the edits Refresh threw
+      // away. Same for a file that turned out to be over the cap: it can't be
+      // edited, so a draft for it is unreachable state.
+      if (force || isTrunc) clearDraft(props.filePath);
       const draft = force || isTrunc ? null : readDraft(props.filePath);
       // A draft that already matches disk is stale (saved elsewhere) — drop it.
       if (draft !== null && draft === text) clearDraft(props.filePath);
