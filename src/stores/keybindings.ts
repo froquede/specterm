@@ -8,6 +8,7 @@ import {
 import {
   initKeybindingOverrides,
   overrides,
+  type OverrideMap,
 } from "./keybinding-overrides";
 
 export type { Chord };
@@ -31,8 +32,9 @@ export interface BindingSpec extends Chord {
 // chords at registration time, because the chord a row answers to is no longer
 // fixed: an override written in the settings panel (or in another window) has
 // to take effect on the next keystroke, without the app re-running its onMount.
-// So the dispatcher resolves each row at press time and this list is what it
-// walks — in registration order, first match wins.
+// Resolution happens whenever this list or the override map changes (see
+// resolvedBindings) rather than on every keypress, and the dispatcher walks the
+// result in registration order, first match wins.
 const [keymapSpecs, setKeymapSpecs] = createSignal<readonly BindingSpec[]>([]);
 
 export { keymapSpecs };
@@ -65,6 +67,46 @@ export function activeChord(spec: BindingSpec): Chord | null {
   if (override === null) return null;
   if (override) return override;
   return defaultChord(spec);
+}
+
+// The resolved keymap the dispatcher actually walks: every row paired with the
+// chord it currently answers to, rows that are switched off (or whose override
+// names no real key) already dropped.
+//
+// This exists because the dispatcher runs on *every keystroke typed into a
+// terminal*, and resolving rows there meant a fresh Chord object per row per
+// key — two dozen short-lived allocations to decide that a keypress was just a
+// letter. Resolution depends on exactly two things, both of which are signals
+// that change only when a shortcut is rebound or the keymap is registered, so
+// the work is done once per change and reused for every keystroke in between.
+//
+// The cache is keyed on the *identity* of those two values rather than on a
+// reactive computation, so it needs no owner and can't outlive one: the
+// dispatcher is a bare window listener, not a component.
+interface ResolvedBinding {
+  spec: BindingSpec;
+  chord: Chord;
+}
+
+let cachedSpecs: readonly BindingSpec[] | null = null;
+let cachedOverrides: OverrideMap | null = null;
+let cachedBindings: ResolvedBinding[] = [];
+
+function resolvedBindings(): ResolvedBinding[] {
+  const specs = keymapSpecs();
+  const ov = overrides();
+  if (specs === cachedSpecs && ov === cachedOverrides) return cachedBindings;
+  const next: ResolvedBinding[] = [];
+  for (const spec of specs) {
+    const chord = activeChord(spec);
+    // Switched off by the user, or an override so malformed it names no key.
+    if (!chord || isBareModifierChord(chord)) continue;
+    next.push({ spec, chord });
+  }
+  cachedSpecs = specs;
+  cachedOverrides = ov;
+  cachedBindings = next;
+  return next;
 }
 
 // While the settings panel is recording a new chord, every keystroke belongs to
@@ -103,10 +145,7 @@ export function initKeybindings() {
 
       const inEditable = isEditableTarget(e.target);
 
-      for (const spec of keymapSpecs()) {
-        const chord = activeChord(spec);
-        // Switched off by the user, or an override so malformed it names no key.
-        if (!chord || isBareModifierChord(chord)) continue;
+      for (const { spec, chord } of resolvedBindings()) {
         if (!chordMatchesEvent(chord, e)) continue;
 
         // In a real text field we let native editing win, EXCEPT for bindings
