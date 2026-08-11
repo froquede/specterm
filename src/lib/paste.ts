@@ -43,6 +43,14 @@ const MIN_WRAP_WIDTH = 40;
 // that didn't fit.
 const COLS_SLACK = WRAP_SLACK + 4;
 
+// Ceilings on what is even worth examining. One command wrapped at a terminal
+// width is a handful of rows and a few hundred bytes; a paste far past either
+// figure is a file, a log or a key, and the rules below can only ever decline
+// it. Bailing early keeps a huge paste from paying for a linear sweep whose
+// answer is already known — and pasting a large file into a shell is ordinary.
+const MAX_JOINABLE_ROWS = 64;
+const MAX_JOINABLE_BYTES = 64 * 1024;
+
 // A row ending in one of these broke because the author wanted it to: an
 // explicit continuation, an operator waiting for its right-hand side, an open
 // group. Shells already join these correctly, so joining them here would at
@@ -82,6 +90,12 @@ const CONTROL_CHAR = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/;
  * visible, in the edit buffer, rather than half-executed.
  */
 export function joinWrappedLines(text: string, cols?: number): string {
+  // Nothing past this length can be one wrapped command, and pasting a whole
+  // file into a shell is a real thing people do. Bail before the copy, the
+  // split and the sweep below, all of which are linear in the clipboard and
+  // all of which would be spent to reach the same answer.
+  if (text.length > MAX_JOINABLE_BYTES) return text;
+
   const body = text.replace(/\r\n?/g, "\n");
   if (CONTROL_CHAR.test(body)) return text;
 
@@ -90,7 +104,7 @@ export function joinWrappedLines(text: string, cols?: number): string {
   // and put it back at the end so a paste that used to run still runs.
   const trailing = /\n+$/.exec(body)?.[0] ?? "";
   const lines = (trailing ? body.slice(0, -trailing.length) : body).split("\n");
-  if (lines.length < 2) return text;
+  if (lines.length < 2 || lines.length > MAX_JOINABLE_ROWS) return text;
 
   // A blank row is a paragraph break — nothing wraps into one.
   if (lines.some((line) => line.trim() === "")) return text;
@@ -112,7 +126,13 @@ export function joinWrappedLines(text: string, cols?: number): string {
 
   // Every row but the last must sit at the wrap column, and the last must be
   // the remainder — shorter than the column it was wrapped to.
-  const width = Math.max(...heads.map((line) => line.length));
+  //
+  // Counted in a loop rather than `Math.max(...heads.map(…))`: spreading an
+  // array into a call passes one argument per element, and a paste of a few
+  // hundred thousand rows overflows the stack — a RangeError thrown out of the
+  // paste handler, which is the one place that must never fail loudly.
+  let width = 0;
+  for (const line of heads) if (line.length > width) width = line.length;
   if (width < MIN_WRAP_WIDTH) return text;
   if (heads.some((line) => line.length < width - WRAP_SLACK)) return text;
   if (lines[lines.length - 1].length > width) return text;

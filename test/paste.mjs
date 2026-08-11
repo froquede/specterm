@@ -149,6 +149,30 @@ eq(
   "sudo apt-get install -y build-essential libssl-dev pkg-config"
 );
 
+// --- the paste that is a whole file --------------------------------------
+// Dumping a file into a shell is ordinary, and the rules above can only ever
+// decline one. They have to decline it by returning, not by throwing: this used
+// to reach `Math.max(...rows)`, which passes one argument per row and blows the
+// stack somewhere north of a hundred thousand of them — a RangeError out of the
+// paste handler, so the paste simply vanished.
+{
+  const row = "x".repeat(80);
+  const huge = Array.from({ length: 200_000 }, () => row).join("\n");
+  let threw = null;
+  let out = null;
+  try {
+    out = joinWrappedLines(huge, COLS);
+  } catch (e) {
+    threw = e;
+  }
+  check("a 200k-row paste does not throw", threw === null, threw && String(threw));
+  check("a 200k-row paste comes back byte for byte", out === huge);
+  // The ceiling is on rows as well as bytes, so a merely long paste is declined
+  // rather than joined into one implausible line.
+  const many = Array.from({ length: 200 }, () => row).join("\n");
+  eq("a 200-row paste is left alone", joinWrappedLines(many, COLS), many);
+}
+
 // --- preparePaste ---------------------------------------------------------
 eq(
   "newlines become CR, as Enter sends",
