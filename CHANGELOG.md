@@ -1,5 +1,140 @@
 # Changelog
 
+## 0.20.0 — 2026-08-10
+
+### Added
+- **Keybindings are yours now.** Settings grew a *Keybindings* category holding
+  the whole keymap — every action the app has, grouped, filterable, each one
+  showing the chord it answers to on this OS. Click a chord and the next
+  keystroke replaces it. Backspace switches a shortcut off entirely and hands
+  its keys back to the terminal, which until now was something you could only
+  get by not using the feature; Esc backs out; pressing a row's original chord
+  clears the override.
+
+  The keymap stays the source of truth for what the app can *do* — a row pairs
+  an action with the code that runs it, and no config file can hold that. What
+  is stored is the thin layer on top: `specterm.keybindings`, an id → chord map
+  written the moment you change one, synced to the other open windows like
+  every other setting, and keyed by the action's stable id so a default that
+  moves in a later version doesn't take your override with it.
+
+  Two decisions worth knowing. Collisions are **shown, not refused**: moving a
+  chord from one action to another has to pass through a state where both hold
+  it, so the panel says which action is taking the keystroke instead of blocking
+  the first half of the move. And chords the terminal owns are **refused** — a
+  bare key, or `Ctrl+<key>` on its own, is a control code every program in a
+  pane expects to receive (`Ctrl+C` is SIGINT, `Ctrl+D` is EOF), so binding one
+  doesn't shadow a feature, it takes the key away from the shell. Function keys
+  carry no control code and are allowed, which is why rename already lives on
+  `F2`.
+
+  The dispatcher runs on every character typed into a terminal, so the keymap is
+  resolved when a binding changes rather than on each keystroke: **418ns per key
+  against 1704ns**, and no allocation once it has settled.
+- **The text viewer edits and saves.** Opening a `.env` from the file tree has
+  always shown it — the one thing you actually wanted to do with it was flip a
+  variable on or off, and that meant closing the pane and reaching for an
+  editor. The pane now has the same *Edit* / *View* toggle the markdown preview
+  has, on the same `⌘E` / `Ctrl+Shift+E`, with `⌘S` / `Ctrl+Shift+S` to save and
+  a dot on the path while there are unsaved changes. Unsaved work is kept as a
+  draft in the same way markdown's is, so moving the pane between tabs, or
+  reloading, or closing the app, brings the buffer back rather than the copy on
+  disk.
+
+  **`⌘/` / `Ctrl+/` toggles the comment on every line the selection touches**,
+  each line on its own: a commented line loses its marker, an uncommented one
+  gains it. The marker is whatever the file's language uses — `#` for `.env`,
+  `.sh`, `.yaml`, `.ini` and Dockerfiles, `//` for the C-family and JavaScript,
+  `--` for SQL and Lua — and it goes after the indentation, so toggling a nested
+  line twice returns it byte for byte. Files whose language has no line comment
+  (JSON, XML, CSS) leave the key unbound rather than inserting something their
+  parser would reject. Commented lines are dimmed while you edit, which for a
+  `.env` is the only distinction that matters: which settings are live.
+
+  Two files stay read-only, deliberately. A binary was never editable. A file
+  over the 5 MB view cap is shown truncated, and saving what's on screen would
+  silently throw the rest away — the *Edit* button isn't offered, and a draft is
+  never restored over one.
+
+  CodeMirror is a lazy chunk here exactly as it is for markdown: it loads on the
+  first switch to edit mode and never at startup, so a terminal that only ever
+  reads a file pays nothing for the editor. `.env.local`, `.env.production` and
+  the rest are also recognized as shell now — the old rule read the trailing
+  segment as the extension, so everything but a bare `.env` lost its
+  highlighting.
+- **An update also brings your local checkout forward.** Anyone who hits *Check
+  for updates* is fairly likely to have the source cloned somewhere too, and the
+  moment the app updates itself that clone is a release behind the binary
+  running above it. When a download finishes, Specterm now looks for the
+  checkout and fast-forwards it onto `main` — once per launch, in the
+  background, without a word on screen. It is an errand run on the side, not
+  something you asked for in that moment, so it doesn't get a dialog, a toast or
+  a progress bar; the main process log is the only place it says anything.
+
+  Finding it is a breadth-first walk of the home directory, four levels deep,
+  skipping hidden directories and the usual enormous ones (`node_modules`,
+  `Library`, `AppData`, …), stopping at the first directory named `specterm`
+  whose `origin` remote actually points at a repository of that name. A
+  directory that merely shares the name is not touched. The hit is cached in
+  `userData`, so the walk happens about once per install and is re-verified
+  before each use. Bounded on every axis — 4,000 directories, three seconds —
+  and measured at **14–60ms** over a 204GB home, both when it finds the clone
+  and when there is nothing to find.
+
+  What it refuses to do is the point:
+
+  - **A dirty tree is left alone.** Anything at all in `git status --porcelain`,
+    tracked or untracked, and nothing happens. Uncommitted work is never at
+    risk, which matters twice over when nothing on screen would have told you.
+  - **The pull is `--ff-only`.** It can advance `main`; it cannot write a merge
+    commit, hit a conflict, or leave a repo half-rebased. A `main` with an
+    unpushed commit is simply skipped.
+  - **A checkout parked on another branch is not moved.** `main` is advanced
+    underneath it (`git fetch origin main:main`, which refuses anything that
+    isn't a fast-forward), and the working tree and `HEAD` are left exactly as
+    they were found. A silent errand does not get to change which branch you
+    are on.
+  - No `git` on `PATH`, no local `main`, no network — all skips. A side errand
+    must never be able to fail an update.
+
+  Packaged builds only: unpackaged there is no real update to be behind, and the
+  checkout would very likely be the one the dev server is running from.
+### Fixed
+- **A command that wrapped across two rows now pastes as one command.** Copy a
+  `sudo …` line an agent suggested, paste it, and the row break came through as
+  a newline — which is Enter. Half the command ran on its own and the remainder
+  ran as a command nobody wrote. The workaround was to paste into a text editor
+  first, join the lines by hand, and paste again.
+
+  Two things were wrong. The paste shortcut wrote the clipboard to the shell
+  verbatim, skipping *bracketed paste* — the mode a program sets to say "tell me
+  when bytes came from a clipboard" — so a multi-line paste executed on arrival
+  instead of landing in the edit buffer. And nothing tried to tell a wrap from a
+  line break the author meant. Every route into a pane (the paste chord, ⌘V,
+  Ctrl+V, middle-click) now goes through one place that fixes both.
+
+  Rejoining is deliberately reluctant, because the cost of getting it wrong is a
+  command nobody wrote. It fires only when the rows were plainly wrapped at this
+  pane's width: all but the last ending within a word's length of the same
+  column, that column being this pane's. Anything with a shape someone chose is
+  left exactly as it came — a blank line, an indented row, a trailing `\`, `&&`
+  or `|`, a row opening or closing a shell block, or a list of short commands.
+  Text wrapped somewhere narrower than the pane you paste into is left alone
+  too. And with bracketed paste now in place, whatever it declines to join waits
+  in the edit buffer where you can see it, instead of running.
+- **A markdown pane comes back where you were reading.** A preview is torn down
+  and rebuilt far more often than it looks — switching tabs recreates every pane
+  in the tab, moving a pane between splits, tabs or windows does the same,
+  toggling Edit/Preview swaps the whole view, and find rewrites the container —
+  and every one of those put a half-read document back at the top. The offset is
+  now remembered per file and re-applied after each rebuild, including across a
+  reload or a move into another window. Closing find leaves you on the passage
+  you had navigated to rather than at the beginning.
+- **Refresh discards the draft it says it discards**, in both the markdown
+  preview and the text viewer. It re-read the file but left the unsaved draft in
+  storage, so the next time the pane was mounted — a cross-tab move, a reload —
+  the edits Refresh had just thrown away came straight back.
+
 ## 0.19.0 — 2026-08-06
 
 ### Added

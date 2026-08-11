@@ -62,9 +62,23 @@
   font-family: inherit;
 }
 
-.text-toolbar-btn:hover {
+.text-toolbar-btn:hover:not(:disabled) {
   color: var(--fg);
   background: var(--bg-hover);
+}
+
+.text-toolbar-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Shortcut reminder for the editor's comment toggle. */
+.text-hint {
+  font-size: 11px;
+  color: var(--fg-faint);
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
 }
 
 /* Find bar — same shape as the markdown one. */
@@ -128,6 +142,19 @@
   font-size: 13px;
   color: var(--fg-muted);
   white-space: pre-wrap;
+}
+
+/* Edit mode: CodeMirror fills what the read body would have. Colors and
+   metrics come from the theme object in lib/text-editor.ts, which reads the
+   same CSS variables as everything else here. */
+.text-editor {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.text-editor .cm-editor {
+  height: 100%;
 }
 
 /* Body: gutter + code, sharing one scroll box so they scroll together. */

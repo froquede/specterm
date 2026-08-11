@@ -50,6 +50,22 @@ const NAME_LANG: Record<string, string> = {
   ".zshrc": "bash",
 };
 
+// Every flavour of dotenv file: ".env", ".env.local", ".env.production",
+// "env.example". Without this, the trailing segment is read as the extension
+// (".env.local" → "local") and the file loses its hint entirely.
+const ENV_FILE = /^\.?env(\..+)?$/;
+
+// Line-comment token per resolved language. Languages with no line comment
+// (json, xml, css, diff) are deliberately absent — see lineCommentToken.
+const LANG_COMMENT: Record<string, string> = {
+  bash: "#", python: "#", ruby: "#", perl: "#", r: "#",
+  yaml: "#", ini: "#", dockerfile: "#", makefile: "#",
+  javascript: "//", typescript: "//", c: "//", cpp: "//", csharp: "//",
+  java: "//", go: "//", rust: "//", kotlin: "//", swift: "//", php: "//",
+  dart: "//", scss: "//", less: "//",
+  sql: "--", lua: "--",
+};
+
 function baseName(filePath: string): string {
   return filePath.split(/[\\/]/).pop() || filePath;
 }
@@ -59,9 +75,20 @@ export function languageHint(filePath: string): string | null {
   const name = baseName(filePath);
   const lower = name.toLowerCase();
   if (NAME_LANG[lower]) return NAME_LANG[lower];
+  if (ENV_FILE.test(lower)) return "bash";
   const dot = name.lastIndexOf(".");
   const ext = dot > 0 ? lower.slice(dot + 1) : lower; // extensionless → match by name
   return EXT_LANG[ext] || null;
+}
+
+/**
+ * Line-comment token for a path, or null when the language has none (or we
+ * can't tell). Drives the editor's Mod-/ toggle; null leaves the shortcut
+ * unbound rather than inserting a token the file's parser would choke on.
+ */
+export function lineCommentToken(filePath: string): string | null {
+  const lang = languageHint(filePath);
+  return lang ? (LANG_COMMENT[lang] ?? null) : null;
 }
 
 // Cheap binary sniff on the *decoded* string the backend hands back. A real

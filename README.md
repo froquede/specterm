@@ -33,6 +33,16 @@ base16 gallery, and a tab bar that stands in for the title bar.
 macOS uses `⌘`. Linux and Windows use the Kitty-style `Ctrl+Shift+<key>` scheme,
 which keeps bare `Ctrl+<key>` free for terminal control codes.
 
+These are the defaults, and all of them are rebindable: **Settings →
+Keybindings** lists the whole table, and clicking a chord records whatever you
+press next. **Backspace** switches a shortcut off entirely, handing its keys
+back to the terminal; **Esc** backs out; pressing a row's original chord clears
+the override. Bare keys and lone `Ctrl+<key>` chords are refused — those are the
+control codes the shell needs — but function keys are fair game. Overrides are
+stored under `specterm.keybindings` as `{ "tab.new": { "key": "t", "ctrl": true,
+"shift": true } }`, keyed by the action's stable id, so a default that moves in a
+later version doesn't take your setting with it.
+
 | Action | macOS | Linux / Windows |
 |---|---|---|
 | New window | `⌘N` | `Ctrl+Shift+N` |
@@ -53,7 +63,8 @@ which keeps bare `Ctrl+<key>` free for terminal control codes.
 | Find in terminal | `⌘F` | `Ctrl+Shift+F` |
 | Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
-| Markdown: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
+| Markdown / text file: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
+| Text file: toggle line comment | `⌘/` | `Ctrl+/` |
 | Font size up / down / reset | `⌘=` / `⌘-` / `⌘0` | `Ctrl+Shift+=` / `-` / `0` |
 | Quit (ends detached sessions) | `⌘Q` | `Alt+F4` |
 
@@ -88,6 +99,16 @@ is. Read from the shell's own process, so it works without configuring anything;
 notification sequences, the terminal bell, output-timing detection for Claude
 Code, and Claude's own hooks. Three of them need no setup. Optional desktop
 notifications are off by default. See [docs/waiting-panes.md](docs/waiting-panes.md).
+
+**Updating also updates your checkout.** When an update finishes downloading,
+Specterm looks for a local clone of itself — a directory named `specterm` within
+four levels of your home directory whose `origin` really points at this
+repository — and fast-forwards it onto `main`. Silently, once per launch, and
+only when it is safe: a dirty working tree is left completely alone, the pull is
+`--ff-only` so it can never merge or conflict, and a checkout parked on another
+branch has `main` advanced behind it without its working tree or its `HEAD`
+being touched. No clone, no `git`, no network — it skips. See
+`electron/repo-sync.cjs`.
 
 **Theming.** Themes drive the terminal palette and the app chrome at once.
 Settings → Theme → *Browse gallery* has 325 bundled
@@ -149,7 +170,8 @@ troubleshooting.
 
 ```bash
 npm run test:e2e        # main suite
-npm run test:e2e:all    # + multi-window, session continuity
+npm run test:e2e:all    # + multi-window, session continuity, repo-sync
+npm run test:repo-sync  # post-update clone sync (real git, no Electron)
 npm run test:perf       # startup budget
 ```
 

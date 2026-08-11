@@ -24,15 +24,22 @@ const SUITES = [
   { name: "session", file: "e2e-session.mjs" },
   { name: "windows", file: "e2e-windows.mjs" },
   { name: "diagrams", file: "e2e-diagrams.mjs" },
+  // Not an Electron suite — it drives electron/repo-sync.cjs against real git
+  // in a temp sandbox, so it costs seconds and runs alongside the rest for free.
+  { name: "repo-sync", file: "repo-sync.mjs" },
+  // Not an Electron suite — pure functions from src/lib/paste.ts, imported as
+  // TypeScript. Node 22 strips types behind a flag (unflagged from 23), hence
+  // the `node` argument this one suite needs. It costs milliseconds.
+  { name: "paste", file: "paste.mjs", node: ["--experimental-strip-types"] },
 ];
 
 const started = Date.now();
 const secs = (ms) => (ms / 1000).toFixed(1);
 
-function run({ name, file }) {
+function run({ name, file, node = [] }) {
   return new Promise((resolve) => {
     const t0 = Date.now();
-    const child = spawn(process.execPath, [path.join(__dirname, file)], {
+    const child = spawn(process.execPath, [...node, path.join(__dirname, file)], {
       cwd: root,
       env: process.env,
     });

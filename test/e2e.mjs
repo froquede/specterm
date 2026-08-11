@@ -190,6 +190,17 @@ const MAC = process.platform === "darwin";
 const SIDEBAR_KEY = MAC ? "Meta+B" : "Control+Shift+B";
 const SETTINGS_KEY = MAC ? "Meta+Comma" : "Control+Shift+Comma";
 
+// The keybindings section rebinds "New tab" and puts it back. Its default
+// chord, the replacement it is given, and one that already belongs to another
+// action (⌘⇧U / Ctrl+Shift+U, "Go to a pane waiting on you") so the collision
+// notice can be asserted. None of these is an app-menu accelerator — see
+// buildAppMenu in electron/main.cjs, which deliberately claims almost none.
+const NEW_TAB_KEY = MAC ? "Meta+T" : "Control+Shift+T";
+const NEW_TAB_LABEL = MAC ? "⌘T" : "Ctrl+Shift+T";
+const REBIND_KEY = MAC ? "Meta+Alt+Y" : "Control+Alt+Y";
+const REBIND_LABEL = MAC ? "⌥⌘Y" : "Ctrl+Alt+Y";
+const CONFLICT_KEY = MAC ? "Meta+Shift+U" : "Control+Shift+U";
+
 // The Claude-session copy check is opt-in on the machine having the CLI: it's
 // the program the bug was reported against, but the behaviour it proves is
 // covered without it by the mouse-recorder checks, so its absence is a skip.
@@ -1224,6 +1235,181 @@ try {
     check("reset restores full OS opacity", Math.abs(resetOs - 1) < 0.02, `osOpacity=${resetOs}`);
   }
 
+  // 8d) Keybindings. The panel rebinds the live keymap, so every claim here is
+  // made twice: once about what the row says, and once about what the keyboard
+  // actually does afterwards. A UI that shows a new chord while the old one
+  // still opens tabs is the failure worth catching.
+  const kbStored = () =>
+    win.evaluate(() =>
+      JSON.parse(localStorage.getItem("specterm.keybindings") || "{}")
+    );
+  const newTabChord = () =>
+    win
+      .locator(".keybinding-entry", {
+        has: win.locator(".keybinding-name", { hasText: /^New tab$/ }),
+      })
+      .locator(".keybinding-chord");
+  const kbRecording = () =>
+    newTabChord().evaluate((el) => el.classList.contains("recording"));
+  const kbTabCount = () => win.locator(".tab").count();
+
+  // Settings is already open (8c); make sure the category is unfolded, and
+  // survive a run where an earlier section left it folded.
+  async function openKeybindings() {
+    if (!(await win.locator(".settings-sidebar").count())) {
+      await win.locator(".tab-settings").click();
+      await win.waitForSelector(".settings-sidebar", { timeout: 10000 });
+    }
+    if (!(await win.locator(".keybinding-list").count())) {
+      await win
+        .locator(".settings-category-head", { hasText: "Keybindings" })
+        .click();
+    }
+    await win.waitForSelector(".keybinding-list", { timeout: 10000 });
+    await win.waitForTimeout(200);
+  }
+
+  await openKeybindings();
+  const kbRows = await win.locator(".keybinding-entry").count();
+  check("the keymap is listed in settings", kbRows > 15, `${kbRows} rows`);
+  const kbGroups = await win.locator(".keybinding-group").allTextContents();
+  check("shortcuts are grouped", kbGroups.length >= 4, kbGroups.join(" / "));
+  check(
+    "a row shows the chord it answers to on this OS",
+    (await newTabChord().textContent()) === NEW_TAB_LABEL,
+    await newTabChord().textContent()
+  );
+
+  // A bare Ctrl+<key> is a control code the shell owns (Ctrl+C is SIGINT), so
+  // the recorder declines it and stays armed rather than binding it.
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  check("clicking a chord arms the recorder", await kbRecording());
+  await win.keyboard.press("Control+y");
+  await win.waitForTimeout(300);
+  const kbError = await win
+    .locator(".keybindings .settings-error")
+    .textContent()
+    .catch(() => null);
+  check("a chord the terminal owns is refused", !!kbError, kbError ?? "(none)");
+  check("the recorder stays armed after a refusal", await kbRecording());
+
+  await win.keyboard.press(REBIND_KEY);
+  await win.waitForTimeout(400);
+  check(
+    "the row shows the recorded chord",
+    (await newTabChord().textContent()) === REBIND_LABEL,
+    await newTabChord().textContent()
+  );
+  check(
+    "the override persists",
+    !!(await kbStored())["tab.new"],
+    JSON.stringify(await kbStored())
+  );
+
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  const tabsBeforeRebind = await kbTabCount();
+  await win.keyboard.press(NEW_TAB_KEY);
+  await win.waitForTimeout(700);
+  check(
+    "the replaced chord no longer opens a tab",
+    (await kbTabCount()) === tabsBeforeRebind,
+    `${tabsBeforeRebind} -> ${await kbTabCount()}`
+  );
+  await win.keyboard.press(REBIND_KEY);
+  await win.waitForTimeout(1200);
+  check(
+    "the recorded chord opens a tab",
+    (await kbTabCount()) === tabsBeforeRebind + 1,
+    `${tabsBeforeRebind} -> ${await kbTabCount()}`
+  );
+
+  // Backspace hands the keys back to the terminal: the action stays in the
+  // list, resettable, but nothing reaches it.
+  await openKeybindings();
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press("Backspace");
+  await win.waitForTimeout(400);
+  check("Backspace switches a shortcut off", (await newTabChord().textContent()) === "Off");
+  check(
+    "off is persisted as off, not as absent",
+    (await kbStored())["tab.new"] === null,
+    JSON.stringify(await kbStored())
+  );
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  const tabsWhileOff = await kbTabCount();
+  await win.keyboard.press(REBIND_KEY);
+  await win.waitForTimeout(700);
+  check("a shortcut that is off fires nothing", (await kbTabCount()) === tabsWhileOff);
+
+  // Esc belongs to the recorder while it is armed — the panel's own Esc-to-close
+  // must stand aside, or the capture would be left running with nothing on
+  // screen to release it.
+  await openKeybindings();
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press("Escape");
+  await win.waitForTimeout(400);
+  check("Esc cancels the recording", !(await kbRecording()));
+  check("…without closing the settings panel", (await slot()).settings);
+  check("…and without changing the binding", (await kbStored())["tab.new"] === null);
+
+  // Collisions are shown, not refused: moving a chord from one action to
+  // another has to pass through a state where both hold it.
+  await newTabChord().click();
+  await win.waitForTimeout(200);
+  await win.keyboard.press(CONFLICT_KEY);
+  await win.waitForTimeout(400);
+  const kbConflicts = await win.locator(".keybinding-conflict").count();
+  check(
+    "a chord two actions share is flagged on both",
+    kbConflicts >= 2,
+    `${kbConflicts} notices`
+  );
+
+  await win
+    .locator(".keybindings .settings-reset", { hasText: "Reset all" })
+    .click();
+  await win.waitForTimeout(400);
+  check(
+    "reset all clears every override",
+    Object.keys(await kbStored()).length === 0,
+    JSON.stringify(await kbStored())
+  );
+  check(
+    "…and the built-in chord is back",
+    (await newTabChord().textContent()) === NEW_TAB_LABEL,
+    await newTabChord().textContent()
+  );
+  await win.locator(".xterm-helper-textarea:visible").last().focus();
+  const tabsAfterReset = await kbTabCount();
+  await win.keyboard.press(NEW_TAB_KEY);
+  await win.waitForTimeout(1200);
+  check(
+    "…and it opens a tab again",
+    (await kbTabCount()) === tabsAfterReset + 1,
+    `${tabsAfterReset} -> ${await kbTabCount()}`
+  );
+
+  await openKeybindings();
+  await win.locator(".keybindings .settings-search").fill("paste");
+  await win.waitForTimeout(300);
+  const kbFiltered = await win.locator(".keybinding-entry").count();
+  check(
+    "the filter narrows the list",
+    kbFiltered > 0 && kbFiltered < kbRows,
+    `${kbFiltered}/${kbRows}`
+  );
+  await win.locator(".keybindings .settings-search").fill("");
+  await win.waitForTimeout(300);
+
+  // Leave the panel as section 8c did, with no tabs owed to later sections.
+  for (let i = (await kbTabCount()) - 1; i > 0; i--) {
+    await win.locator(".tab-close").last().click();
+    await win.waitForTimeout(200);
+  }
+
   // 9) Chrome layout: the tab bar's corner, the two sizes, and auto-hide.
   const layout = () =>
     win.evaluate(() => {
@@ -1592,10 +1778,120 @@ try {
     skip("claude session: a drag copies its output", "claude CLI not on PATH");
   }
 
+  // 12b) Pasting a command a program wrapped across two rows.
+  //
+  // The rows arrive with a real newline between them, and a newline is Enter —
+  // so the first half used to run on its own and the second half ran as a
+  // command nobody wrote. lib/paste rejoins rows that were wrapped at this
+  // pane's width; the rules themselves are pinned down in test/paste.mjs, and
+  // what this proves is the wiring: that the paste routes reach them at all.
+  //
+  // Ground truth is the shell's own redirect, not the canvas — the joined
+  // command writes a file, and the un-joined one can only write it empty
+  // (`TAIL > file` with no `echo` in front of it).
+  await newTab(win);
+  const pasteTab = await win.evaluate(
+    () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+  );
+  {
+    const cols = Number(await shellValue(win, "paste_cols", "tput cols"));
+    const pasteFile = (n) => path.join(os.tmpdir(), `specterm_paste_${n}.txt`);
+    // Rows have to sit within a word's length of the pane's own width to read
+    // as wrapped by it — that pane-width test is what keeps two unrelated long
+    // commands from being welded together (see COLS_SLACK in lib/paste.ts).
+    const wrapped = (n) => {
+      const head = "echo E2E_JOIN_" + "x".repeat(cols - 20);
+      return { text: `${head}\nTAIL > "${pasteFile(n)}"`, want: `${head.slice(5)} TAIL` };
+    };
+    // The shell may be holding the paste in its edit buffer rather than running
+    // it (that is what bracketed paste is for), so Enter is always needed.
+    const runPaste = async (n, deliver) => {
+      try { fs.unlinkSync(pasteFile(n)); } catch {}
+      await (await activePaneTextarea(win)).click({ force: true });
+      await deliver();
+      await win.waitForTimeout(300);
+      await win.keyboard.press("Enter");
+      const deadline = Date.now() + 6000;
+      while (Date.now() < deadline) {
+        if (fs.existsSync(pasteFile(n))) {
+          const v = fs.readFileSync(pasteFile(n), "utf8").trim();
+          if (v) return v;
+        }
+        await win.waitForTimeout(100);
+      }
+      return fs.existsSync(pasteFile(n)) ? "<<EMPTY>>" : "<<MISSING>>";
+    };
+
+    if (WIN || !Number.isFinite(cols) || cols < 60) {
+      skip("a wrapped command pastes as one command", `cols=${cols}`);
+      skip("the same via the browser's own paste event", `cols=${cols}`);
+    } else {
+      // Route 1: the paste chord, off the real OS clipboard.
+      const one = wrapped("chord");
+      await app.evaluate(({ clipboard }, t) => clipboard.writeText(t), one.text);
+      const chordGot = await runPaste("chord", () =>
+        win.keyboard.press(MAC ? "Meta+Shift+V" : "Control+Shift+V")
+      );
+      check(
+        "a wrapped command pastes as one command",
+        chordGot === one.want,
+        `got ${JSON.stringify(chordGot.slice(0, 48))}`
+      );
+
+      // Route 2: the `paste` event, which is what a bare Ctrl+V and a
+      // middle-click produce. xterm handles that event itself and writes the
+      // clipboard straight through, so the bridge in terminal-registry has to
+      // take it first — dispatched here rather than pressed, so the check is
+      // about our handler and not about how the OS delivers a paste.
+      const two = wrapped("event");
+      const eventGot = await runPaste("event", () =>
+        win.evaluate((t) => {
+          const data = new DataTransfer();
+          data.setData("text/plain", t);
+          const area =
+            document.querySelector(".pane-active .xterm-helper-textarea") ??
+            document.querySelector(".xterm-helper-textarea");
+          area?.dispatchEvent(
+            new ClipboardEvent("paste", {
+              clipboardData: data,
+              bubbles: true,
+              cancelable: true,
+            })
+          );
+        }, two.text)
+      );
+      check(
+        "the same via the browser's own paste event",
+        eventGot === two.want,
+        `got ${JSON.stringify(eventGot.slice(0, 48))}`
+      );
+    }
+    for (const n of ["chord", "event"]) {
+      try { fs.unlinkSync(pasteFile(n)); } catch {}
+    }
+  }
+  // Hand the tab back. The bar stops fitting its tabs somewhere around five
+  // (measured: scrollWidth 995 against a 900px list, last chip clipped 95px
+  // out), and a section further down drags the *last* tab by coordinates read
+  // off its bounding box — which by then are outside the visible list. One
+  // suite, one long-lived window, so a tab left open here is a failure
+  // somewhere else entirely.
+  if (pasteTab) {
+    await win.locator(`.tab[data-tab-id="${pasteTab}"] .tab-close`).click();
+    await win.waitForTimeout(400);
+  }
+
   // 13) Text viewer (open ANY file) + markdown/mermaid regression guard. Point
   // the file tree at test/fixtures, then drive real clicks on the fixtures.
   const fixturesDir = path.join(root, "test", "fixtures");
   const binFixture = path.join(fixturesDir, "binary.bin");
+  // A dotenv-style file — the case the text editor exists for. Written up front
+  // so it's in the listing the tree reads when it first opens the fixtures dir.
+  const envFixture = path.join(fixturesDir, "sample.env");
+  fs.writeFileSync(
+    envFixture,
+    "# managed by specterm\nAPI_URL=https://example.test\nDEBUG=false\n"
+  );
   // A file with NUL bytes — must be refused by the viewer, not shown as garbage.
   fs.writeFileSync(binFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x03]));
   try {
@@ -1645,6 +1941,73 @@ try {
     await win.keyboard.press("Escape");
     await win.waitForTimeout(200);
 
+    // 13b-2) The text pane edits and saves, and Mod-/ toggles the line comment.
+    // A .env is the case this exists for: the file is trivially editable text,
+    // and flipping a setting on and off means adding/removing a leading "#".
+    const COMMENT_KEY = MAC ? "Meta+Slash" : "Control+Slash";
+    const SAVE_KEY = MAC ? "Meta+S" : "Control+S";
+    await clickEntry(win, "sample.env");
+    // Every file opened so far still has a pane in the DOM, so scope to the one
+    // showing THIS file rather than taking the first .text-pane on the page.
+    const envPane = win
+      .locator(".text-pane")
+      .filter({ has: win.locator(".text-filepath", { hasText: "sample.env" }) })
+      .first();
+    await envPane.waitFor({ timeout: 8000 });
+    await envPane.locator(".text-toolbar-btn", { hasText: "Edit" }).click();
+    // First switch pulls the lazy CodeMirror chunk.
+    const envEditor = envPane.locator(".text-editor .cm-content");
+    await envEditor.waitFor({ timeout: 10000 });
+    await envEditor.click();
+    await win.waitForTimeout(200);
+    // Put the caret on the last line (DEBUG=false) and comment it out.
+    await win.keyboard.press("Control+End");
+    await win.keyboard.press("ArrowUp");
+    await win.keyboard.press(COMMENT_KEY);
+    await win.waitForTimeout(200);
+    const commented = (await envEditor.textContent()) || "";
+    check(
+      "text editor comments a line with Mod-/",
+      commented.includes("# DEBUG=false"),
+      commented.slice(-40)
+    );
+    // Same key on the same line puts it back exactly as it was.
+    await win.keyboard.press(COMMENT_KEY);
+    await win.waitForTimeout(200);
+    const uncommented = (await envEditor.textContent()) || "";
+    check(
+      "text editor uncomments the same line",
+      uncommented.includes("DEBUG=false") && !uncommented.includes("# DEBUG=false"),
+      uncommented.slice(-40)
+    );
+    // Comment it again and save — the bytes on disk are the real assertion.
+    await win.keyboard.press(COMMENT_KEY);
+    await win.waitForTimeout(200);
+    await win.keyboard.press(SAVE_KEY);
+    await win.waitForTimeout(600);
+    const onDisk = fs.readFileSync(envFixture, "utf8");
+    check(
+      "text editor writes the edit to disk",
+      onDisk.includes("# DEBUG=false") && onDisk.includes("API_URL=https://example.test"),
+      JSON.stringify(onDisk.slice(-32))
+    );
+    // Saving clears the dirty marker, so Save goes disabled again.
+    const saveDisabled = await envPane
+      .locator(".text-toolbar-btn", { hasText: "Save" })
+      .isDisabled();
+    check("text editor clears dirty state on save", saveDisabled, `disabled=${saveDisabled}`);
+    await envPane.locator(".text-toolbar-btn", { hasText: "View" }).click();
+    await envPane.locator(".text-code").waitFor({ timeout: 5000 });
+    // Opening a file from the tree SPLITS the current tab, so every fixture
+    // opened here takes a slice of the same width. Give this one back, or the
+    // markdown checks below run in a pane too narrow to lay anything out in.
+    await win
+      .locator(".pane", { has: win.locator(".text-filepath", { hasText: "sample.env" }) })
+      .first()
+      .locator(".pane-close-btn")
+      .click();
+    await win.waitForTimeout(400);
+
     // 13c) A binary file is refused, not rendered as mojibake.
     await clickEntry(win, "binary.bin");
     await win.waitForSelector(".text-error", { timeout: 8000 });
@@ -1692,6 +2055,7 @@ try {
     );
   } finally {
     try { fs.unlinkSync(binFixture); } catch {}
+    try { fs.unlinkSync(envFixture); } catch {}
   }
 
   // 14) Cross-tab pane detach: drag a pane's titlebar onto another tab's chip to
@@ -1753,6 +2117,8 @@ try {
   fs.mkdirSync(mdWorkDir, { recursive: true });
   const notePath = path.join(mdWorkDir, "note.md");
   fs.writeFileSync(notePath, "# Hello\n\nworld\n");
+  // The scratch tab this section parks on, closed in the finally below.
+  let scrollAwayTab = null;
   try {
     await win.evaluate((dir) => {
       const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
@@ -1918,7 +2284,125 @@ try {
     try { fs.rmSync(draftDir, { recursive: true, force: true }); } catch {}
   }
 
-  // 18) Tab rename, close, and drag-to-reorder — the tab bar's own pointer
+  // 18) A markdown pane keeps its place in a long document. Switching tabs
+  // recreates every pane in the tab, and toggling Edit/Preview swaps the whole
+  // view — both used to drop a half-read document back at the top, which is the
+  // reader's equivalent of losing your page.
+  const scrollDir = path.join(os.tmpdir(), `specterm-mdscroll-${process.pid}`);
+  fs.mkdirSync(scrollDir, { recursive: true });
+  const longNote = path.join(scrollDir, "long.md");
+  fs.writeFileSync(
+    longNote,
+    "# Long\n\n" +
+      Array.from({ length: 300 }, (_, i) => `Paragraph ${i} of a long document.`).join("\n\n") +
+      "\n"
+  );
+  try {
+    await win.evaluate((dir) => {
+      const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+      s.startupPath = dir;
+      s.lastBrowsedPath = dir;
+      localStorage.setItem("specterm.settings", JSON.stringify(s));
+    }, scrollDir);
+    await win.reload();
+    await win.waitForSelector(".file-tree", { timeout: 20000 });
+    await win.waitForTimeout(2000);
+    const scrollSrcTab = await activeTab();
+
+    await clickEntry(win, "long.md");
+    await win.waitForSelector(".markdown-content", { timeout: 8000 });
+    await win.waitForTimeout(400);
+
+    // Scroll into the middle of the document the way a reader would, then give
+    // the debounced persist a moment.
+    const scrolled = await win.evaluate(() => {
+      const el = document.querySelector(".markdown-content");
+      el.scrollTop = 900;
+      return el.scrollTop;
+    });
+    await win.waitForTimeout(600);
+
+    if (scrolled > 0) {
+      // Away to a new tab and back — the pane is torn down and rebuilt.
+      await win.locator(".tab-new").click();
+      await win.waitForTimeout(1200);
+      scrollAwayTab = await win.evaluate(
+        () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+      );
+      await win.locator(`.tab[data-tab-id="${scrollSrcTab}"]`).click();
+      await win.waitForSelector(".markdown-content", { timeout: 8000 });
+      await win.waitForTimeout(900);
+      const afterTabSwitch = await win.evaluate(
+        () => document.querySelector(".markdown-content")?.scrollTop ?? -1
+      );
+      check(
+        "markdown keeps its scroll position across a tab switch",
+        Math.abs(afterTabSwitch - scrolled) < 40,
+        `was ${scrolled}, came back at ${afterTabSwitch}`
+      );
+
+      // Edit → Preview rebuilds the rendered view from scratch.
+      await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
+      await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
+      await win.waitForTimeout(500);
+      await win.locator(".markdown-toolbar-btn", { hasText: "Preview" }).first().click();
+      await win.waitForSelector(".markdown-content", { timeout: 8000 });
+      await win.waitForTimeout(900);
+      const afterToggle = await win.evaluate(
+        () => document.querySelector(".markdown-content")?.scrollTop ?? -1
+      );
+      check(
+        "markdown keeps its scroll position across an Edit/Preview toggle",
+        Math.abs(afterToggle - scrolled) < 40,
+        `was ${scrolled}, came back at ${afterToggle}`
+      );
+
+      // Find rewrites the container's innerHTML; closing it must not send the
+      // reader back to the top.
+      await win.locator(".markdown-toolbar-btn", { hasText: "Search" }).first().click();
+      await win.waitForSelector(".markdown-search input", { timeout: 8000 });
+      await win.locator(".markdown-search input").fill("Paragraph 150");
+      // Jumping to a match is a *smooth* scroll, so poll until it settles rather
+      // than racing the animation.
+      const contentScrollTop = () =>
+        win.evaluate(() => document.querySelector(".markdown-content")?.scrollTop ?? -1);
+      let atMatch = -1;
+      for (let i = 0; i < 12; i++) {
+        await win.waitForTimeout(300);
+        const now = await contentScrollTop();
+        if (i > 1 && now === atMatch) break;
+        atMatch = now;
+      }
+      // The close button is an SVG icon, not a "×" character — target the title
+      // the app actually gives it.
+      await win.locator('.markdown-search-btn[title^="Close"]').first().click();
+      await win.waitForTimeout(500);
+      const afterClose = await contentScrollTop();
+      check(
+        "closing find stays on the match instead of jumping to the top",
+        atMatch > 0 && Math.abs(afterClose - atMatch) < 40,
+        `match at ${atMatch}, after close ${afterClose}`
+      );
+    } else {
+      skip("markdown keeps its scroll position across a tab switch", "document did not scroll");
+      skip("markdown keeps its scroll position across an Edit/Preview toggle", "document did not scroll");
+      skip("closing find stays on the match instead of jumping to the top", "document did not scroll");
+    }
+  } finally {
+    try { fs.rmSync(scrollDir, { recursive: true, force: true }); } catch {}
+    // Give the scratch tab back. One suite, one long-lived window: the bar
+    // stops fitting its tabs at five (measured: scrollWidth 995 against a 900px
+    // list, the last chip clipped 95px outside it), and section 19 drags the
+    // *last* tab by coordinates read off its bounding box — which by then are
+    // outside the visible list, so the drop never lands and a check about
+    // pointer handling fails for want of room.
+    if (scrollAwayTab) {
+      await win.locator(`.tab[data-tab-id="${scrollAwayTab}"] .tab-close`).click();
+      await win.waitForTimeout(400);
+    }
+  }
+
+  // 19) Tab rename, close, and drag-to-reorder — the tab bar's own pointer
   // handling. The reorder drag must NOT swallow the close button's click or the
   // title's double-click: a setPointerCapture on pointerdown once retargeted the
   // follow-up click/dblclick to the tab itself, so the × merely re-selected the
@@ -2036,7 +2520,7 @@ try {
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
   }
 
-  // 19) F2 stands aside for full-screen programs. It renames the tab at a shell
+  // 20) F2 stands aside for full-screen programs. It renames the tab at a shell
   // prompt, but the moment something takes the alternate screen buffer (htop,
   // vim, mc — all of which bind F2 themselves) the key stops being ours and
   // reaches the program instead. macOS uses ⌘R, which no terminal program can
@@ -2211,7 +2695,7 @@ try {
     await win.waitForTimeout(600);
   }
 
-  // 20) A pane running Claude Code remembers which session it was, so closing
+  // 21) A pane running Claude Code remembers which session it was, so closing
   // the tab records how to pick it back up.
   //
   // The session is identified from the transcript Claude Code keeps per project
@@ -2267,7 +2751,7 @@ try {
     }
   }
 
-  // 21) Session history: reopening what was closed, and restoring what was open.
+  // 22) Session history: reopening what was closed, and restoring what was open.
   //
   // The interesting assertion in all three checks is the *directory*, not the
   // tab count: a restored pane that comes back at the startup path has restored
@@ -2350,7 +2834,7 @@ try {
 
   await win.screenshot({ path: path.join(root, "test", "shot-final.png") });
 
-  // 22) Restore on boot. The only check that needs a second launch: quit the
+  // 23) Restore on boot. The only check that needs a second launch: quit the
   // app and start it again against the *same* profile, since the snapshot lives
   // in localStorage under the user-data dir. Enabled by default, so nothing is
   // toggled first — this is what a normal restart does.
