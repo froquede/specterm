@@ -2104,6 +2104,8 @@ try {
   fs.mkdirSync(mdWorkDir, { recursive: true });
   const notePath = path.join(mdWorkDir, "note.md");
   fs.writeFileSync(notePath, "# Hello\n\nworld\n");
+  // The scratch tab this section parks on, closed in the finally below.
+  let scrollAwayTab = null;
   try {
     await win.evaluate((dir) => {
       const s = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
@@ -2311,6 +2313,9 @@ try {
       // Away to a new tab and back — the pane is torn down and rebuilt.
       await win.locator(".tab-new").click();
       await win.waitForTimeout(1200);
+      scrollAwayTab = await win.evaluate(
+        () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+      );
       await win.locator(`.tab[data-tab-id="${scrollSrcTab}"]`).click();
       await win.waitForSelector(".markdown-content", { timeout: 8000 });
       await win.waitForTimeout(900);
@@ -2372,6 +2377,16 @@ try {
     }
   } finally {
     try { fs.rmSync(scrollDir, { recursive: true, force: true }); } catch {}
+    // Give the scratch tab back. One suite, one long-lived window: the bar
+    // stops fitting its tabs at five (measured: scrollWidth 995 against a 900px
+    // list, the last chip clipped 95px outside it), and section 19 drags the
+    // *last* tab by coordinates read off its bounding box — which by then are
+    // outside the visible list, so the drop never lands and a check about
+    // pointer handling fails for want of room.
+    if (scrollAwayTab) {
+      await win.locator(`.tab[data-tab-id="${scrollAwayTab}"] .tab-close`).click();
+      await win.waitForTimeout(400);
+    }
   }
 
   // 19) Tab rename, close, and drag-to-reorder — the tab bar's own pointer
