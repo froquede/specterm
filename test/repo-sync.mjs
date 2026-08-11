@@ -47,9 +47,26 @@ const initRepo = (dir, cwd, bare = false) => {
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-repo-sync-"));
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-udd-"));
+
+// An empty home directory, for the duration.
+//
+// Whenever the cached path doesn't resolve, syncLocalRepo falls back to walking
+// `os.homedir()` — and on the machine of anyone likely to run this, that walk
+// finds their actual Specterm checkout and fast-forwards it. A test suite does
+// not get to touch the developer's repository, and two of the checks below only
+// mean anything if the fallback finds nothing: "a foreign origin is rejected"
+// silently passed on a CI box with no clone and failed on a laptop with one.
+//
+// Node's os.homedir() reads $HOME (%USERPROFILE% on Windows), so pointing those
+// at an empty directory puts the walk somewhere it can do no harm and gives the
+// fallback one answer everywhere.
+const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-home-"));
+const realHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+process.env.HOME = fakeHome;
+process.env.USERPROFILE = fakeHome;
+
 // The cache file is the supported way to aim the sync at a directory; writing
-// it keeps these checks off the home-directory scan, which depends on whatever
-// the machine happens to have lying around.
+// it keeps the rest of these checks off the scan entirely.
 const aim = (dir) =>
   fs.writeFileSync(path.join(userData, "local-repo.json"), JSON.stringify({ path: dir }));
 
@@ -137,15 +154,18 @@ try {
   commit(decoy, "decoy");
   aim(decoy);
   r = await syncLocalRepo(userData);
-  check("a foreign origin is rejected", !r.startsWith("updated"), r);
+  check("a foreign origin is rejected", r === "no local clone found", r);
   check("the foreign repo is left alone", git(["log", "-1", "--pretty=%s"], decoy) === "decoy");
 
   // 6) A cached path that no longer exists must not throw — it falls back to
-  // the scan, whose result depends on the machine, so only the shape is checked.
+  // the scan, which finds nothing in the empty home this suite runs under.
   aim(path.join(sandbox, "deleted"));
   r = await syncLocalRepo(userData);
-  check("a stale cached path degrades to a scan", typeof r === "string" && r.length > 0, r);
+  check("a stale cached path degrades to a scan", r === "no local clone found", r);
 } finally {
+  process.env.HOME = realHome.HOME;
+  process.env.USERPROFILE = realHome.USERPROFILE;
+  fs.rmSync(fakeHome, { recursive: true, force: true });
   fs.rmSync(sandbox, { recursive: true, force: true });
   fs.rmSync(userData, { recursive: true, force: true });
 }
