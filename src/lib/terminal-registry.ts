@@ -31,6 +31,7 @@ import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
+import { preparePaste } from "./paste";
 import { publishStoreChange, registerStoreSync } from "./store-sync";
 import { cancelPendingRestore, takePendingRestore } from "./session-restore";
 import type { UnlistenFn } from "../backends/types";
@@ -173,6 +174,9 @@ export interface TerminalInstance {
   // Tears down the click-vs-drag selection bridge (see lib/mouse-selection).
   // Re-installed on every attach, since it's bound to the current container.
   detachSelection: (() => void) | null;
+  // Tears down the paste bridge (see installPasteBridge). Bound to the current
+  // container for the same reason, and re-installed alongside the selection one.
+  detachPaste: (() => void) | null;
   disposed: boolean;
   // Last OSC title reported by the shell (e.g. Claude Code's `/rename`). Stored
   // on the instance so it survives pane remounts (split/drag) and so a fresh
@@ -369,6 +373,53 @@ registerStoreSync("terminal-font", () => {
 
 export function getTerminalInstance(paneId: string): TerminalInstance | undefined {
   return instances.get(paneId);
+}
+
+/**
+ * Write a paste into a pane's pty — the single door every paste goes through.
+ *
+ * There are several ways to paste into a pane (the Ctrl+Shift+V / ⌘⇧V chord,
+ * bare ⌘V on macOS, and the browser's own paste event, which is what a bare
+ * Ctrl+V and a middle-click produce). They used to diverge: the chords wrote
+ * the clipboard to the pty verbatim, so a two-row command ran as two commands,
+ * while the browser path went through xterm and got bracketed. Routing all of
+ * them here means the unwrap and the bracketing (see lib/paste) apply to a
+ * paste however it was asked for.
+ */
+export function pasteIntoTerminal(paneId: string, text: string) {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed || instance.ptyId === null) return;
+  if (!text) return;
+  writePty(
+    instance.ptyId,
+    preparePaste(text, instance.term.modes.bracketedPasteMode, instance.term.cols)
+  );
+}
+
+// Take the browser's paste event away from xterm.
+//
+// xterm handles `paste` on its own hidden textarea and writes the clipboard
+// straight through, which skips everything pasteIntoTerminal does. Listening on
+// the container in the capture phase puts us ahead of that handler — the event
+// travels down through the container before it reaches the textarea it was
+// aimed at — so the default paste never runs and the two routes stay identical.
+//
+// Bound to the container rather than to `term.element` because the container is
+// what a remount replaces, and this is torn down and re-installed on every
+// attach for exactly that reason.
+function installPasteBridge(
+  container: HTMLDivElement,
+  instance: TerminalInstance,
+  paneId: string
+): () => void {
+  const onPaste = (event: ClipboardEvent) => {
+    event.preventDefault();
+    event.stopPropagation();
+    if (instance.disposed) return;
+    pasteIntoTerminal(paneId, event.clipboardData?.getData("text/plain") ?? "");
+  };
+  container.addEventListener("paste", onPaste, true);
+  return () => container.removeEventListener("paste", onPaste, true);
 }
 
 // --- moving a terminal between windows ------------------------------------
@@ -819,6 +870,7 @@ export async function createTerminalInstance(
     unlistenExit: null,
     resizeObserver: null,
     detachSelection: null,
+    detachPaste: null,
     disposed: false,
     title: "Terminal",
     onTitle: opts?.onTitle ?? null,
@@ -934,6 +986,7 @@ export async function attachTerminal(
   // torn the selection bridge down in between, so put it back.
   if (instance.container === container) {
     instance.detachSelection ??= installClickVsDragSelection(term, container);
+    instance.detachPaste ??= installPasteBridge(container, instance, paneId);
     safeFit(term, fitAddon);
     syncViewportScroll(instance);
     term.focus();
@@ -953,6 +1006,8 @@ export async function attachTerminal(
     // the terminal on a split/drag remount.
     instance.detachSelection?.();
     instance.detachSelection = installClickVsDragSelection(term, container);
+    instance.detachPaste?.();
+    instance.detachPaste = installPasteBridge(container, instance, paneId);
 
     // Reconnect resize observer
     instance.resizeObserver?.disconnect();
@@ -972,6 +1027,7 @@ export async function attachTerminal(
   // A plain drag selects text even when the program running in the pane has
   // grabbed the mouse (Claude Code, vim, htop); a plain click still reaches it.
   instance.detachSelection = installClickVsDragSelection(term, container);
+  instance.detachPaste = installPasteBridge(container, instance, paneId);
 
   // Chromium caps the number of simultaneous WebGL contexts (~16). With many
   // open panes/tabs the oldest context gets force-killed (so it's typically the
@@ -1322,6 +1378,8 @@ export function detachTerminal(paneId: string) {
   instance.resizeObserver = null;
   instance.detachSelection?.();
   instance.detachSelection = null;
+  instance.detachPaste?.();
+  instance.detachPaste = null;
 }
 
 // Tear down this window's side of a terminal while leaving its PTY running —
@@ -1346,6 +1404,8 @@ export function releaseTerminal(paneId: string) {
   instance.resizeObserver?.disconnect();
   instance.detachSelection?.();
   instance.detachSelection = null;
+  instance.detachPaste?.();
+  instance.detachPaste = null;
   instance.unlistenOutput?.();
   instance.unlistenExit?.();
   instance.term.dispose();
@@ -1372,6 +1432,8 @@ export function destroyTerminal(paneId: string) {
   instance.resizeObserver?.disconnect();
   instance.detachSelection?.();
   instance.detachSelection = null;
+  instance.detachPaste?.();
+  instance.detachPaste = null;
   instance.unlistenOutput?.();
   instance.unlistenExit?.();
   if (instance.ptyId !== null) {

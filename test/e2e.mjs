@@ -1778,6 +1778,96 @@ try {
     skip("claude session: a drag copies its output", "claude CLI not on PATH");
   }
 
+  // 12b) Pasting a command a program wrapped across two rows.
+  //
+  // The rows arrive with a real newline between them, and a newline is Enter —
+  // so the first half used to run on its own and the second half ran as a
+  // command nobody wrote. lib/paste rejoins rows that were wrapped at this
+  // pane's width; the rules themselves are pinned down in test/paste.mjs, and
+  // what this proves is the wiring: that the paste routes reach them at all.
+  //
+  // Ground truth is the shell's own redirect, not the canvas — the joined
+  // command writes a file, and the un-joined one can only write it empty
+  // (`TAIL > file` with no `echo` in front of it).
+  await newTab(win);
+  {
+    const cols = Number(await shellValue(win, "paste_cols", "tput cols"));
+    const pasteFile = (n) => path.join(os.tmpdir(), `specterm_paste_${n}.txt`);
+    // Rows have to sit within a word's length of the pane's own width to read
+    // as wrapped by it — that pane-width test is what keeps two unrelated long
+    // commands from being welded together (see COLS_SLACK in lib/paste.ts).
+    const wrapped = (n) => {
+      const head = "echo E2E_JOIN_" + "x".repeat(cols - 20);
+      return { text: `${head}\nTAIL > "${pasteFile(n)}"`, want: `${head.slice(5)} TAIL` };
+    };
+    // The shell may be holding the paste in its edit buffer rather than running
+    // it (that is what bracketed paste is for), so Enter is always needed.
+    const runPaste = async (n, deliver) => {
+      try { fs.unlinkSync(pasteFile(n)); } catch {}
+      await (await activePaneTextarea(win)).click({ force: true });
+      await deliver();
+      await win.waitForTimeout(300);
+      await win.keyboard.press("Enter");
+      const deadline = Date.now() + 6000;
+      while (Date.now() < deadline) {
+        if (fs.existsSync(pasteFile(n))) {
+          const v = fs.readFileSync(pasteFile(n), "utf8").trim();
+          if (v) return v;
+        }
+        await win.waitForTimeout(100);
+      }
+      return fs.existsSync(pasteFile(n)) ? "<<EMPTY>>" : "<<MISSING>>";
+    };
+
+    if (WIN || !Number.isFinite(cols) || cols < 60) {
+      skip("a wrapped command pastes as one command", `cols=${cols}`);
+      skip("the same via the browser's own paste event", `cols=${cols}`);
+    } else {
+      // Route 1: the paste chord, off the real OS clipboard.
+      const one = wrapped("chord");
+      await app.evaluate(({ clipboard }, t) => clipboard.writeText(t), one.text);
+      const chordGot = await runPaste("chord", () =>
+        win.keyboard.press(MAC ? "Meta+Shift+V" : "Control+Shift+V")
+      );
+      check(
+        "a wrapped command pastes as one command",
+        chordGot === one.want,
+        `got ${JSON.stringify(chordGot.slice(0, 48))}`
+      );
+
+      // Route 2: the `paste` event, which is what a bare Ctrl+V and a
+      // middle-click produce. xterm handles that event itself and writes the
+      // clipboard straight through, so the bridge in terminal-registry has to
+      // take it first — dispatched here rather than pressed, so the check is
+      // about our handler and not about how the OS delivers a paste.
+      const two = wrapped("event");
+      const eventGot = await runPaste("event", () =>
+        win.evaluate((t) => {
+          const data = new DataTransfer();
+          data.setData("text/plain", t);
+          const area =
+            document.querySelector(".pane-active .xterm-helper-textarea") ??
+            document.querySelector(".xterm-helper-textarea");
+          area?.dispatchEvent(
+            new ClipboardEvent("paste", {
+              clipboardData: data,
+              bubbles: true,
+              cancelable: true,
+            })
+          );
+        }, two.text)
+      );
+      check(
+        "the same via the browser's own paste event",
+        eventGot === two.want,
+        `got ${JSON.stringify(eventGot.slice(0, 48))}`
+      );
+    }
+    for (const n of ["chord", "event"]) {
+      try { fs.unlinkSync(pasteFile(n)); } catch {}
+    }
+  }
+
   // 13) Text viewer (open ANY file) + markdown/mermaid regression guard. Point
   // the file tree at test/fixtures, then drive real clicks on the fixtures.
   const fixturesDir = path.join(root, "test", "fixtures");

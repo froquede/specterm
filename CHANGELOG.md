@@ -95,6 +95,29 @@
 
   Packaged builds only: unpackaged there is no real update to be behind, and the
   checkout would very likely be the one the dev server is running from.
+### Fixed
+- **A command that wrapped across two rows now pastes as one command.** Copy a
+  `sudo …` line an agent suggested, paste it, and the row break came through as
+  a newline — which is Enter. Half the command ran on its own and the remainder
+  ran as a command nobody wrote. The workaround was to paste into a text editor
+  first, join the lines by hand, and paste again.
+
+  Two things were wrong. The paste shortcut wrote the clipboard to the shell
+  verbatim, skipping *bracketed paste* — the mode a program sets to say "tell me
+  when bytes came from a clipboard" — so a multi-line paste executed on arrival
+  instead of landing in the edit buffer. And nothing tried to tell a wrap from a
+  line break the author meant. Every route into a pane (the paste chord, ⌘V,
+  Ctrl+V, middle-click) now goes through one place that fixes both.
+
+  Rejoining is deliberately reluctant, because the cost of getting it wrong is a
+  command nobody wrote. It fires only when the rows were plainly wrapped at this
+  pane's width: all but the last ending within a word's length of the same
+  column, that column being this pane's. Anything with a shape someone chose is
+  left exactly as it came — a blank line, an indented row, a trailing `\`, `&&`
+  or `|`, a row opening or closing a shell block, or a list of short commands.
+  Text wrapped somewhere narrower than the pane you paste into is left alone
+  too. And with bracketed paste now in place, whatever it declines to join waits
+  in the edit buffer where you can see it, instead of running.
 
 ## 0.19.0 — 2026-08-06
 

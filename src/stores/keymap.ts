@@ -14,6 +14,7 @@ import {
   getTerminalInstance,
   paneRunsFullscreenApp,
   selectComposerText,
+  pasteIntoTerminal,
   increaseFontSize,
   decreaseFontSize,
   resetFontSize,
@@ -41,11 +42,15 @@ const IMAGE_PASTE_SEQ = isMac ? "\x16" : "\x1bv";
 // through to Claude Code's inline image paste; explicit image-inline paste also
 // has its own dedicated shortcut (Alt+V, or Ctrl+V on macOS). We only ever ask
 // whether an image exists (a boolean) — the image bytes never enter the renderer.
-async function pasteClipboard(ptyId: number) {
+//
+// The text goes through pasteIntoTerminal rather than straight to the pty, so
+// this chord unwraps and brackets the clipboard exactly like every other paste
+// route (see lib/paste).
+async function pasteClipboard(paneId: string, ptyId: number) {
   try {
     const text = await clipboardReadText();
     if (text) {
-      writePty(ptyId, text);
+      pasteIntoTerminal(paneId, text);
       return;
     }
   } catch (err) {
@@ -412,7 +417,7 @@ export function createKeymap({
         if (!tab) return;
         const inst = getTerminalInstance(tab.activePaneId);
         if (inst && inst.ptyId !== null) {
-          await pasteClipboard(inst.ptyId);
+          await pasteClipboard(tab.activePaneId, inst.ptyId);
         }
       },
     },
@@ -434,7 +439,7 @@ export function createKeymap({
               if (!inst || inst.ptyId === null) return;
               try {
                 const text = await clipboardReadText();
-                if (text) writePty(inst.ptyId, text);
+                if (text) pasteIntoTerminal(tab.activePaneId, text);
               } catch (err) {
                 console.warn("[paste] clipboard text read failed:", err);
               }
