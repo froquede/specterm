@@ -1790,6 +1790,9 @@ try {
   // command writes a file, and the un-joined one can only write it empty
   // (`TAIL > file` with no `echo` in front of it).
   await newTab(win);
+  const pasteTab = await win.evaluate(
+    () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+  );
   {
     const cols = Number(await shellValue(win, "paste_cols", "tput cols"));
     const pasteFile = (n) => path.join(os.tmpdir(), `specterm_paste_${n}.txt`);
@@ -1866,6 +1869,16 @@ try {
     for (const n of ["chord", "event"]) {
       try { fs.unlinkSync(pasteFile(n)); } catch {}
     }
+  }
+  // Hand the tab back. The bar stops fitting its tabs somewhere around five
+  // (measured: scrollWidth 995 against a 900px list, last chip clipped 95px
+  // out), and a section further down drags the *last* tab by coordinates read
+  // off its bounding box — which by then are outside the visible list. One
+  // suite, one long-lived window, so a tab left open here is a failure
+  // somewhere else entirely.
+  if (pasteTab) {
+    await win.locator(`.tab[data-tab-id="${pasteTab}"] .tab-close`).click();
+    await win.waitForTimeout(400);
   }
 
   // 13) Text viewer (open ANY file) + markdown/mermaid regression guard. Point
