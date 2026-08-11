@@ -55,24 +55,56 @@ function clearDraft(filePath: string) {
 // pane in the tab (SplitContainer keys panes by leaf id), moving a pane between
 // splits/tabs/windows does the same, toggling Edit/Preview swaps the whole view,
 // and find rewrites the container's innerHTML. Each of those left the reader
-// back at the top of a long document. Persisted alongside the draft, and for the
-// same reason: it costs nothing and it survives a reload or a move to another
-// window.
-const SCROLL_PREFIX = "specterm.mdscroll:";
-const scrollKey = (filePath: string) => SCROLL_PREFIX + filePath;
-function readScrollTop(filePath: string): number {
+// back at the top of a long document. Persisted like the draft is, so it
+// survives a reload or a move to another window.
+//
+// One bounded key rather than a key per file, and that is the whole design
+// here. A draft is written only when you *edit* something and deleted when you
+// save it; a scroll offset is written for every markdown file you so much as
+// look at, and there is no event that ever means "this one is finished". Keyed
+// per path, read-only browsing would leave a permanent entry behind per file
+// for the life of the install — and this origin's localStorage is also where
+// the session layout lives, the thing read synchronously before the first shell
+// can spawn. Filling the quota with the offsets of files nobody will open again
+// would eventually cost the app the ability to remember what its windows were.
+//
+// So: one JSON map, most-recent-first, capped. The cap is generous next to how
+// many documents anyone has open opinions about, and the eviction is the only
+// thing that has to be true — the offset of the 200th-oldest file being lost is
+// not a bug anyone can feel.
+const SCROLL_KEY = "specterm.mdscroll";
+const SCROLL_MAX = 200;
+
+type ScrollMap = Record<string, number>;
+
+function readScrollMap(): ScrollMap {
   try {
-    const raw = localStorage.getItem(scrollKey(filePath));
-    const top = raw === null ? NaN : Number(raw);
-    return Number.isFinite(top) && top > 0 ? top : 0;
+    const raw = localStorage.getItem(SCROLL_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? (parsed as ScrollMap) : {};
   } catch {
-    return 0;
+    return {};
   }
 }
+
+function readScrollTop(filePath: string): number {
+  const top = readScrollMap()[filePath];
+  return typeof top === "number" && Number.isFinite(top) && top > 0 ? top : 0;
+}
+
 function writeScrollTop(filePath: string, top: number) {
   try {
-    if (top > 0) localStorage.setItem(scrollKey(filePath), String(Math.round(top)));
-    else localStorage.removeItem(scrollKey(filePath));
+    const map = readScrollMap();
+    delete map[filePath]; // re-inserted at the end, so insertion order is LRU
+    if (top > 0) map[filePath] = Math.round(top);
+    const keys = Object.keys(map);
+    // Object key order is insertion order for string keys, so the oldest
+    // entries are simply the first ones.
+    for (const stale of keys.slice(0, Math.max(0, keys.length - SCROLL_MAX))) {
+      delete map[stale];
+    }
+    localStorage.setItem(SCROLL_KEY, JSON.stringify(map));
   } catch {
     // localStorage full/unavailable — the pane just reopens at the top.
   }
@@ -148,6 +180,10 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
       const text = await backend.readTextFile(props.filePath);
       setSavedText(text);
 
+      // Refresh means "give me what's on disk", so the draft has to actually
+      // go rather than be ignored for one load — left behind, it comes back the
+      // next time the pane mounts and resurrects the edits Refresh threw away.
+      if (force) clearDraft(props.filePath);
       const draft = force ? null : readDraft(props.filePath);
       // A draft that already matches disk is stale (saved elsewhere) — drop it.
       if (draft !== null && draft === text) clearDraft(props.filePath);
