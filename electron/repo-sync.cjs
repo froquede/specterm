@@ -18,6 +18,10 @@
 //     which matters doubly when nothing on screen would tell you it was.
 //   - The pull is `--ff-only`. It can fast-forward `main`; it can never write a
 //     merge commit, resolve a conflict, or leave the repo mid-rebase.
+//   - It never moves the checkout. On a repo parked somewhere other than
+//     `main`, the branch ref is advanced with `git fetch origin main:main` and
+//     the working tree is not touched at all — same fast-forward guarantee, no
+//     files rewritten and no HEAD moved under someone who never asked for this.
 //
 // Anything unexpected — no git on PATH, no `main` branch, a network failure, a
 // diverged branch — is a skip, logged to the main process and nowhere else. A
@@ -191,9 +195,24 @@ async function syncLocalRepo(userDataDir) {
   if (!hasMain.ok) return `skipped, no local main branch: ${dir}`;
 
   const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], dir);
+
+  // Not on main? Advance the ref without going near the working tree.
+  //
+  // `git fetch origin main:main` moves a local branch that isn't checked out,
+  // and refuses unless the move is a fast-forward — the same guarantee as
+  // `pull --ff-only`, with none of its side effects. Checking main out instead
+  // would rewrite every file in a directory the user did not point us at and
+  // leave them on a branch they did not choose: an editor's open buffers go
+  // stale, a watcher rebuilds, and the next `git status` they run answers about
+  // somewhere else. A silent errand does not get to move someone's HEAD.
   if (branch.out !== "main") {
-    const checkout = await git(["checkout", "main"], dir);
-    if (!checkout.ok) return `skipped, could not check out main: ${dir}`;
+    const fetch = await git(
+      ["fetch", "origin", "main:main"],
+      dir,
+      PULL_TIMEOUT_MS
+    );
+    if (!fetch.ok) return `skipped, main could not fast-forward: ${dir}`;
+    return `updated ${dir} (main advanced; ${branch.out} left checked out)`;
   }
 
   // --ff-only: advance main or do nothing. Never a merge commit, never a

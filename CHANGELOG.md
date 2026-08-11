@@ -30,8 +30,11 @@
   - **The pull is `--ff-only`.** It can advance `main`; it cannot write a merge
     commit, hit a conflict, or leave a repo half-rebased. A `main` with an
     unpushed commit is simply skipped.
-  - **A clean feature branch** is switched to `main` and pulled; the branch
-    itself stays exactly where it was.
+  - **A checkout parked on another branch is not moved.** `main` is advanced
+    underneath it (`git fetch origin main:main`, which refuses anything that
+    isn't a fast-forward), and the working tree and `HEAD` are left exactly as
+    they were found. A silent errand does not get to change which branch you
+    are on.
   - No `git` on `PATH`, no local `main`, no network — all skips. A side errand
     must never be able to fail an update.
 

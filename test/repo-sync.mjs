@@ -37,6 +37,13 @@ const commit = (cwd, msg) => {
   git(["add", "-A"], cwd);
   git(["-c", "user.email=e2e@specterm", "-c", "user.name=e2e", "commit", "-m", msg], cwd);
 };
+// `git init -b main` needs git 2.28; Ubuntu 20.04 — the distro the release
+// container is built on — ships 2.25. Set the initial branch the portable way
+// so this suite runs everywhere the app is built.
+const initRepo = (dir, cwd, bare = false) => {
+  git(bare ? ["init", "--bare", dir] : ["init", dir], cwd);
+  git(["symbolic-ref", "HEAD", "refs/heads/main"], dir);
+};
 
 const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-repo-sync-"));
 const userData = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-udd-"));
@@ -51,11 +58,15 @@ try {
   // origin check reads.
   const bare = path.join(sandbox, "froquede", "specterm.git");
   fs.mkdirSync(path.dirname(bare), { recursive: true });
-  git(["init", "--bare", "-b", "main", bare], sandbox);
+  initRepo(bare, sandbox, true);
 
   // A scratch clone used to publish upstream commits.
   const seed = path.join(sandbox, "seed");
   git(["clone", bare, seed], sandbox);
+  // Cloning an *empty* remote leaves HEAD on this machine's default branch
+  // name, whatever that is, rather than the remote's. Name it before the first
+  // commit or the push below has no `main` to send.
+  git(["symbolic-ref", "HEAD", "refs/heads/main"], seed);
   fs.writeFileSync(path.join(seed, "a.txt"), "one\n");
   commit(seed, "one");
   git(["push", "origin", "main"], seed);
@@ -86,13 +97,26 @@ try {
   check("dirty tree does not advance", !cloneText().includes("three"));
   fs.unlinkSync(path.join(clone, "wip.txt"));
 
-  // 3) Parked on a feature branch: switch to main, pull, leave the branch be.
+  // 3) Parked on a feature branch: advance main behind the scenes and leave
+  // the checkout exactly as it was found. The user did not ask for this errand,
+  // so it does not get to move their HEAD or rewrite their working tree.
   git(["checkout", "-b", "feature"], clone);
+  const featureHead = git(["rev-parse", "HEAD"], clone);
+  publish("three-b");
   aim(clone);
   r = await syncLocalRepo(userData);
-  check("a clean feature branch is moved to main", r.startsWith("updated"), r);
-  check("HEAD ends on main", git(["rev-parse", "--abbrev-ref", "HEAD"], clone) === "main");
-  check("the feature branch survives", git(["branch", "--list", "feature"], clone).includes("feature"));
+  check("a clean feature branch still advances main", r.startsWith("updated"), r);
+  check("HEAD stays on the feature branch", git(["rev-parse", "--abbrev-ref", "HEAD"], clone) === "feature");
+  check("the feature branch did not move", git(["rev-parse", "HEAD"], clone) === featureHead);
+  check(
+    "main fast-forwarded anyway",
+    git(["log", "-1", "--pretty=%s", "main"], clone) === "three-b"
+  );
+  check(
+    "the working tree was never rewritten",
+    !fs.readFileSync(path.join(clone, "a.txt"), "utf8").includes("three-b")
+  );
+  git(["checkout", "main"], clone);
 
   // 4) main with an unpushed commit: --ff-only must refuse rather than merge.
   publish("four");
@@ -107,7 +131,7 @@ try {
   // 5) A repo that is merely *called* specterm is not ours to pull.
   const decoy = path.join(sandbox, "decoy", "specterm");
   fs.mkdirSync(decoy, { recursive: true });
-  git(["init", "-b", "main", decoy], sandbox);
+  initRepo(decoy, sandbox);
   git(["remote", "add", "origin", "https://example.invalid/someone/notspecterm.git"], decoy);
   fs.writeFileSync(path.join(decoy, "b.txt"), "untouched\n");
   commit(decoy, "decoy");

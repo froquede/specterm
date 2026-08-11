@@ -94,9 +94,10 @@ Specterm looks for a local clone of itself — a directory named `specterm` with
 four levels of your home directory whose `origin` really points at this
 repository — and fast-forwards it onto `main`. Silently, once per launch, and
 only when it is safe: a dirty working tree is left completely alone, the pull is
-`--ff-only` so it can never merge or conflict, and a clean feature branch is
-switched to `main` without being deleted. No clone, no `git`, no network — it
-skips. See `electron/repo-sync.cjs`.
+`--ff-only` so it can never merge or conflict, and a checkout parked on another
+branch has `main` advanced behind it without its working tree or its `HEAD`
+being touched. No clone, no `git`, no network — it skips. See
+`electron/repo-sync.cjs`.
 
 **Theming.** Themes drive the terminal palette and the app chrome at once.
 Settings → Theme → *Browse gallery* has 325 bundled
