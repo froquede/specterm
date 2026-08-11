@@ -2004,7 +2004,9 @@ try {
         if (i > 1 && now === atMatch) break;
         atMatch = now;
       }
-      await win.locator(".markdown-search-btn", { hasText: "×" }).first().click();
+      // The close button is an SVG icon, not a "×" character — target the title
+      // the app actually gives it.
+      await win.locator('.markdown-search-btn[title^="Close"]').first().click();
       await win.waitForTimeout(500);
       const afterClose = await contentScrollTop();
       check(
