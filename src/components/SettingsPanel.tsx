@@ -109,7 +109,10 @@ import {
   IconTerminal,
   IconSessions,
   IconUpdates,
+  IconKeyboard,
 } from "../lib/icons-lazy";
+import KeybindingsSettings from "./KeybindingsSettings";
+import { capturing } from "../stores/keybindings";
 
 interface SettingsPanelProps {
   onClose: () => void;
@@ -128,6 +131,7 @@ const CATEGORY_IDS = [
   "appearance",
   "layout",
   "terminal",
+  "keybindings",
   "sessions",
   "updates",
 ] as const;
@@ -317,6 +321,10 @@ export default function SettingsPanel(props: SettingsPanelProps) {
   // — it's a key it forwards to the pty — so a bubble-phase listener never sees
   // it. Capturing on window runs before xterm's textarea handler.
   function onKeyDown(e: KeyboardEvent) {
+    // While a shortcut is being recorded, Esc means "stop recording" — the
+    // recorder is listening for it and closing the panel out from under it
+    // would leave the capture armed with nothing on screen to release it.
+    if (capturing()) return;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -1012,6 +1020,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               your home directory.
             </p>
           </div>
+        </Category>
+
+        {/* ---- Keybindings ------------------------------------------------ */}
+        <Category id="keybindings" title="Keybindings" icon={IconKeyboard}>
+          <KeybindingsSettings />
         </Category>
 
         {/* ---- Sessions --------------------------------------------------- */}

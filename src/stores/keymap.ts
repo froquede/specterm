@@ -514,7 +514,10 @@ export function createKeymap({
       id: "font.increase.shift",
       key: "=",
       ...cmd({ shift: true, code: "Equal" }),
-      label: "Increase font size",
+      // Same action, second chord: ⌘+ is ⌘= with shift held, and people reach
+      // for the one they think of as "plus". Labelled apart so the settings
+      // panel doesn't show two identical rows.
+      label: "Increase font size (with ⇧)",
       run: () => increaseFontSize(),
     },
     {

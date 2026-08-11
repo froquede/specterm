@@ -1046,6 +1046,148 @@ body,
   white-space: nowrap;
 }
 
+/* === Keybindings === */
+/* A two-column table in a narrow sidebar: the action's name takes whatever is
+   left, the chord keeps the width it needs. The list scrolls on its own so the
+   category below it stays reachable without a trip through thirty rows. */
+.keybinding-list {
+  max-height: 320px;
+  overflow-y: auto;
+  margin-top: 4px;
+  padding-right: 2px;
+}
+
+/* The heading over each run of related actions. Not a control — it exists so a
+   scroll through the list still says where you are. */
+.keybinding-group {
+  margin: 10px 0 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.keybinding-group:first-child {
+  margin-top: 2px;
+}
+
+.keybinding-entry {
+  padding: 3px 0;
+}
+
+/* Name and chord on one line, always. The name is the elastic half and
+   ellipsizes; wrapping it instead would drop the chord to a line of its own on
+   every row whose label runs long, which in a 250px sidebar is most of them. */
+.keybinding-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.keybinding-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A shortcut that can never fire — something registered earlier answers to the
+   same chord — reads as inert, and so does one switched off entirely. Dimming
+   the name rather than the chord: the chord is still the thing you click. */
+.keybinding-entry.shadowed .keybinding-name,
+.keybinding-entry.off .keybinding-name {
+  color: var(--fg-muted);
+}
+
+/* The chord itself is the button: click it and the next keystroke replaces it.
+   Inherits the app's monospace face, so a column of chords lines up. */
+.keybinding-chord {
+  flex: 0 0 auto;
+  min-width: 62px;
+  padding: 3px 7px;
+  font-family: inherit;
+  font-size: 11px;
+  color: var(--fg);
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: center;
+  white-space: nowrap;
+  transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+}
+
+.keybinding-chord:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.keybinding-chord:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Rebound from the default — worth seeing at a glance when scanning for what
+   you changed. */
+.keybinding-chord.custom {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Armed: the keyboard belongs to this button until it takes a key or is let go.
+   It pulses so an armed recorder is never mistaken for a chord whose name
+   happens to be "Press keys…". */
+.keybinding-chord.recording {
+  color: var(--bg);
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: keybinding-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes keybinding-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .keybinding-chord.recording {
+    animation: none;
+  }
+}
+
+/* Put one row back on its default. Only rendered when there is one to undo. */
+.keybinding-revert {
+  flex: 0 0 auto;
+  border: none;
+  background: none;
+  padding: 0 2px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.keybinding-revert:hover {
+  opacity: 0.75;
+}
+
+/* Sits under the pair rather than beside it, so a long action name doesn't
+   squeeze the notice to one word per line. */
+.keybinding-conflict {
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--danger);
+}
+
 /* Split handle */
 .split-handle {
   flex-shrink: 0;

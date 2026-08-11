@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Keybindings are yours now.** Settings grew a *Keybindings* category holding
+  the whole keymap — every action the app has, grouped, filterable, each one
+  showing the chord it answers to on this OS. Click a chord and the next
+  keystroke replaces it. Backspace switches a shortcut off entirely and hands
+  its keys back to the terminal, which until now was something you could only
+  get by not using the feature; Esc backs out; pressing a row's original chord
+  clears the override.
+
+  The keymap stays the source of truth for what the app can *do* — a row pairs
+  an action with the code that runs it, and no config file can hold that. What
+  is stored is the thin layer on top: `specterm.keybindings`, an id → chord map
+  written the moment you change one, synced to the other open windows like
+  every other setting, and keyed by the action's stable id so a default that
+  moves in a later version doesn't take your override with it.
+
+  Two decisions worth knowing. Collisions are **shown, not refused**: moving a
+  chord from one action to another has to pass through a state where both hold
+  it, so the panel says which action is taking the keystroke instead of blocking
+  the first half of the move. And chords the terminal owns are **refused** — a
+  bare key, or `Ctrl+<key>` on its own, is a control code every program in a
+  pane expects to receive (`Ctrl+C` is SIGINT, `Ctrl+D` is EOF), so binding one
+  doesn't shadow a feature, it takes the key away from the shell. Function keys
+  carry no control code and are allowed, which is why rename already lives on
+  `F2`.
+
 ## 0.19.0 — 2026-08-06
 
 ### Added
