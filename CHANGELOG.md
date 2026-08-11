@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.20.0 — 2026-08-10
 
 ### Added
 - **Keybindings are yours now.** Settings grew a *Keybindings* category holding
@@ -27,6 +27,10 @@
   doesn't shadow a feature, it takes the key away from the shell. Function keys
   carry no control code and are allowed, which is why rename already lives on
   `F2`.
+
+  The dispatcher runs on every character typed into a terminal, so the keymap is
+  resolved when a binding changes rather than on each keystroke: **418ns per key
+  against 1704ns**, and no allocation once it has settled.
 - **The text viewer edits and saves.** Opening a `.env` from the file tree has
   always shown it — the one thing you actually wanted to do with it was flip a
   variable on or off, and that meant closing the pane and reaching for an
@@ -118,6 +122,18 @@
   Text wrapped somewhere narrower than the pane you paste into is left alone
   too. And with bracketed paste now in place, whatever it declines to join waits
   in the edit buffer where you can see it, instead of running.
+- **A markdown pane comes back where you were reading.** A preview is torn down
+  and rebuilt far more often than it looks — switching tabs recreates every pane
+  in the tab, moving a pane between splits, tabs or windows does the same,
+  toggling Edit/Preview swaps the whole view, and find rewrites the container —
+  and every one of those put a half-read document back at the top. The offset is
+  now remembered per file and re-applied after each rebuild, including across a
+  reload or a move into another window. Closing find leaves you on the passage
+  you had navigated to rather than at the beginning.
+- **Refresh discards the draft it says it discards**, in both the markdown
+  preview and the text viewer. It re-read the file but left the unsaved draft in
+  storage, so the next time the pane was mounted — a cross-tab move, a reload —
+  the edits Refresh had just thrown away came straight back.
 
 ## 0.19.0 — 2026-08-06
 
