@@ -188,12 +188,6 @@ Releasing is documented in [docs/releasing.md](docs/releasing.md).
 > exists alongside the Electron one. It does not currently work — ship and test
 > on Electron.
 
-## Contributing
-
-Issues and pull requests are welcome. Contributions are accepted under the
-project's license (Apache-2.0, per its Section 5) — there's no CLA to sign.
-
 ## License
 
-[Apache-2.0](LICENSE) — Copyright 2026 Roque Francisco and the Specterm
-contributors.
+[Apache-2.0](LICENSE)
