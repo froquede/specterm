@@ -7,7 +7,10 @@ asserting on observable behavior.
 - **`e2e.mjs`** — one long-lived launch. Covers the file sidebar, pane splits and
   drag-and-drop, the clipboard, the settings sidebar (including rebinding a
   shortcut and then pressing the new chord to prove it took), and the tab-bar
-  layout.
+  layout. It ends with two short extra launches, because both things they check
+  happen exactly once per process: restoring a session on boot, and **a file
+  named on the command line** (an image and a markdown file, one absolute and
+  one relative), which is the whole of what the app does with `argv`.
 - **`e2e-windows.mjs`** — multi-window behaviour: tearing a tab out into a window
   of its own, dropping it onto another, and settings/theme changes propagating to
   every open window.
@@ -71,7 +74,14 @@ npm run test:e2e            # vite build + node test/e2e.mjs
 npm run test:e2e:session    # vite build + node test/e2e-session.mjs
 npm run test:e2e:windows    # vite build + node test/e2e-windows.mjs
 npm run test:perf           # vite build + node test/perf-boot.mjs
+npm run test:open-paths     # node test/open-paths.mjs  (milliseconds)
 ```
+
+`open-paths.mjs` is not an Electron suite: it is the argv classifier
+(`electron/open-paths.cjs`) on its own, which is where the *cases* live — a
+relative path, a path that doesn't exist, a directory, a flag, a glob's worth of
+arguments. Each of those would otherwise cost a whole app launch to assert, and
+the one thing they have in common is that the app must still start.
 
 ## They don't take your keyboard
 

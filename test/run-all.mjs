@@ -31,6 +31,9 @@ const SUITES = [
   // TypeScript. Node 22 strips types behind a flag (unflagged from 23), hence
   // the `node` argument this one suite needs. It costs milliseconds.
   { name: "paste", file: "paste.mjs", node: ["--experimental-strip-types"] },
+  // Not an Electron suite either — the argv classifier from
+  // electron/open-paths.cjs, required straight in. Milliseconds.
+  { name: "open-paths", file: "open-paths.mjs" },
 ];
 
 const started = Date.now();

@@ -11,6 +11,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
+import { PNG } from "pngjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -27,6 +28,25 @@ let lastCheckAt = Date.now();
 
 // A directory that reliably exists to point the startup path at.
 const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
+
+// The image fixtures this suite opens, generated at runtime — a binary in the
+// repo would be a binary in every diff that ever touched it.
+function makePng(width, height) {
+  const png = new PNG({ width, height });
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (width * y + x) << 2;
+      // A gradient with a grid over it: something whose scale is visible in a
+      // screenshot when one of these checks fails and gets eyeballed.
+      const grid = x % 100 === 0 || y % 100 === 0;
+      png.data[i] = grid ? 240 : (x * 255) / width;
+      png.data[i + 1] = grid ? 240 : (y * 255) / height;
+      png.data[i + 2] = grid ? 240 : 140;
+      png.data[i + 3] = 255;
+    }
+  }
+  return PNG.sync.write(png);
+}
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -2053,6 +2073,7 @@ try {
       transformAfter != null && transformAfter !== md.transformBefore && /scale\(/.test(transformAfter),
       `before="${md.transformBefore}" after="${transformAfter}"`
     );
+
   } finally {
     try { fs.unlinkSync(binFixture); } catch {}
     try { fs.unlinkSync(envFixture); } catch {}
@@ -2874,6 +2895,67 @@ try {
       // Nothing left to assert; the kill below is the backstop.
     }
     try { app2.process().kill("SIGKILL"); } catch {}
+  }
+
+  // 24) A path on the command line opens that file. The other half of the
+  // window Specterm gives the OS: a double-click on a registered type, an "Open
+  // With", or `specterm shot.png` typed into another terminal all arrive as an
+  // argv path (see electron/open-paths.cjs, and test/open-paths.mjs for the
+  // classification on its own). This needs a launch of its own — the argument
+  // is read once, before the first window — so it runs cold, on a profile of
+  // its own, with an image and a markdown file named on the command line.
+  //
+  // It is here because an image used to be dropped on the way past: the scan
+  // looked for `*.md` and nothing else, so the app opened as if you had asked
+  // for nothing.
+  const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-cli-"));
+  const cliImage = path.join(cliDir, "from-cli.png");
+  const cliMarkdown = path.join(cliDir, "from-cli.md");
+  fs.writeFileSync(cliImage, makePng(320, 240));
+  fs.writeFileSync(cliMarkdown, "# opened from the command line\n");
+  const cliUserData = `${userDataDir}-cli`;
+  // The markdown is named absolutely and the image relatively — a relative path
+  // has to resolve against the shell's directory, not the app's, or it lands on
+  // a file:// URL under dist/ and quietly 404s. Launching from cliDir is what
+  // makes that a real test. The image goes last so its tab is the active one:
+  // only the active tab's panes are mounted.
+  const app3Options = launchOptions(root, cliUserData, {
+    args: [cliMarkdown, "from-cli.png"],
+  });
+  app3Options.cwd = cliDir;
+  const app3 = await electron.launch(app3Options);
+  try {
+    const win3 = await app3.firstWindow();
+    win3.on("pageerror", (e) => log("PAGEERROR(cli):", e.message));
+    await win3.waitForSelector(".app", { timeout: 20000 });
+    await win3.waitForSelector(".image-pane img", { timeout: 20000 });
+    const opened = await win3.evaluate(() => ({
+      image: document.querySelector(".image-filepath")?.textContent ?? null,
+      dims: document.querySelector(".image-dimensions")?.textContent ?? null,
+      tabs: Array.from(document.querySelectorAll(".tab")).length,
+    }));
+    check(
+      "an image named on the command line opens in the image viewer",
+      eqPath(opened.image, cliImage) && opened.dims === "320 × 240",
+      JSON.stringify(opened)
+    );
+    // The markdown went in the same way — it is the case that always worked,
+    // and the point of naming both is that widening the door didn't close it.
+    // Its tab is behind the image's, so the check is the tab, not the pane.
+    check(
+      "a markdown file named alongside it still opens too",
+      opened.tabs === 3,
+      `tabs=${opened.tabs} (terminal + markdown + image)`
+    );
+  } finally {
+    try {
+      await Promise.race([app3.close(), new Promise((r) => setTimeout(r, 3000))]);
+    } catch (_) {
+      // Nothing left to assert.
+    }
+    try { app3.process().kill("SIGKILL"); } catch {}
+    try { fs.rmSync(cliDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(cliUserData, { recursive: true, force: true }); } catch {}
   }
 
   // --- summary ---

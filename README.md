@@ -23,7 +23,8 @@ Splits with draggable dividers, tabs, and multiple windows — with tabs that te
 off, move between windows and merge back, and panes that become tabs of their own
 by being dropped on the tab bar. A filterable file sidebar with pinned favourites.
 Markdown preview and editor with Mermaid, and a syntax-highlighted viewer for
-everything else. Mermaid blocks that go past in *terminal output* are drawn too:
+everything else — from the sidebar, or by naming the file on the command line.
+Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
 Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
 base16 gallery, and a tab bar that stands in for the title bar.
@@ -94,6 +95,16 @@ joins that tab; drop it back over the panes and it splits or swaps as usual.
 **Splits inherit the directory.** A new pane opens where the pane you split from
 is. Read from the shell's own process, so it works without configuring anything;
 `OSC 7` (which zsh and fish send by default) is used as a faster hint when present.
+
+**Opening a file from outside.** `specterm notes.md`, `specterm shot.png`, a
+double-click on a registered type, an "Open With" — they all land in a new tab,
+routed exactly the way clicking that file in the sidebar is: markdown to the
+preview, an image to the image viewer, anything else to the text viewer, which
+refuses binaries on its own. Relative paths resolve against the shell you typed
+them in, several files open as several tabs, and a directory or a typo'd
+filename is ignored rather than guessed at — you get the terminal you asked for.
+If Specterm is already running, the file opens in the window you are looking at
+instead of starting a second app. See `electron/open-paths.cjs`.
 
 **Waiting panes.** Four independent signals — the standard `OSC 9`/`777`/`99`
 notification sequences, the terminal bell, output-timing detection for Claude
