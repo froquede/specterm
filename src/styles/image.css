@@ -1,6 +1,13 @@
 /* Read-only image viewer (components/ImagePane.tsx). Chrome mirrors the text
-   pane; the body centers the image and lets it scroll when it's larger than
-   the pane instead of stretching or cropping it. */
+   pane; the body is a pan/zoom viewport (lib/pan-zoom.ts, shared with the
+   diagram one) holding a stage that fills it exactly. The image opens fitted
+   inside that stage and never stretches or crops.
+
+   The stage's border box has to start at the viewport's top-left corner, with
+   `transform-origin: 0 0` — that is what makes zooming land the point under the
+   pointer back under the pointer. So the breathing room around the image is the
+   stage's own padding, not the viewport's, and the centering happens inside the
+   stage rather than around it. */
 
 .image-pane {
   display: flex;
@@ -32,20 +39,78 @@
   text-align: left;
 }
 
-.image-dimensions {
-  font-size: 11px;
-  color: var(--fg-muted);
+.image-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex-shrink: 0;
   padding-left: 12px;
 }
 
-.image-body {
-  flex: 1;
+.image-dimensions {
+  font-size: 11px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
+.image-zoom {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.image-zoom-btn {
   display: flex;
   align-items: center;
   justify-content: center;
-  overflow: auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.image-zoom-btn:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.image-zoom-text {
+  font-size: 11px;
+}
+
+/* Fixed width so the row doesn't jitter as the digits change while zooming. */
+.image-zoom-level {
+  min-width: 44px;
+  text-align: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-muted);
+}
+
+.image-body {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  cursor: grab;
+}
+
+.image-stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 16px;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  will-change: transform;
 }
 
 .image-body img {
@@ -53,6 +118,10 @@
   max-height: 100%;
   object-fit: contain;
   border-radius: 6px;
+  /* The drag is the pan gesture; without this the browser starts its own
+     image drag the moment the pointer moves. */
+  user-select: none;
+  -webkit-user-drag: none;
 }
 
 .image-error {

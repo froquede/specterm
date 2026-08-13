@@ -6,8 +6,9 @@ asserting on observable behavior.
 
 - **`e2e.mjs`** — one long-lived launch. Covers the file sidebar, pane splits and
   drag-and-drop, the clipboard, the settings sidebar (including rebinding a
-  shortcut and then pressing the new chord to prove it took), and the tab-bar
-  layout. It ends with two short extra launches, because both things they check
+  shortcut and then pressing the new chord to prove it took), the tab-bar
+  layout, and the viewers — text, markdown, and the image pane's zoom and pan.
+  It ends with two short extra launches, because both things they check
   happen exactly once per process: restoring a session on boot, and **a file
   named on the command line** (an image and a markdown file, one absolute and
   one relative), which is the whole of what the app does with `argv`.

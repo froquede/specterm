@@ -22,8 +22,9 @@ xattr -dr com.apple.quarantine /Applications/Specterm.app
 Splits with draggable dividers, tabs, and multiple windows — with tabs that tear
 off, move between windows and merge back, and panes that become tabs of their own
 by being dropped on the tab bar. A filterable file sidebar with pinned favourites.
-Markdown preview and editor with Mermaid, and a syntax-highlighted viewer for
-everything else — from the sidebar, or by naming the file on the command line.
+Markdown preview and editor with Mermaid, an image viewer you can zoom and pan,
+and a syntax-highlighted viewer for everything else — from the sidebar, or by
+naming the file on the command line.
 Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
 Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
@@ -105,6 +106,15 @@ them in, several files open as several tabs, and a directory or a typo'd
 filename is ignored rather than guessed at — you get the terminal you asked for.
 If Specterm is already running, the file opens in the window you are looking at
 instead of starting a second app. See `electron/open-paths.cjs`.
+
+**Zooming a picture.** The image viewer and both places diagrams are drawn share
+one viewport: the **wheel** (or a trackpad pinch) zooms toward the pointer,
+**drag** pans, and **double-click** goes back to where you started. Images open
+fitted to the pane and their toolbar carries the same thing as buttons, plus
+*1:1* for one image pixel per screen pixel. Nothing is bound to a key — `⌘=` /
+`⌘-` / `⌘0` are the terminal font size, app-wide, and a viewer that quietly took
+them while it happened to be focused would be the worse surprise. See
+`src/lib/pan-zoom.ts`.
 
 **Waiting panes.** Four independent signals — the standard `OSC 9`/`777`/`99`
 notification sequences, the terminal bell, output-timing detection for Claude
