@@ -14,13 +14,12 @@ import {
   IconStar,
   IconRefresh,
   IconLevelUp,
-  IconFolder,
-  IconFile,
-  IconMarkdown,
   IconArrowLeft,
   IconCdHere,
   ICON_STROKE,
 } from "../lib/icons";
+import { entryIcon } from "../lib/file-icons";
+import { fileKind } from "../lib/file-kind";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
 import { isAccelClick, os } from "../lib/platform";
@@ -552,31 +551,31 @@ export default function FileTree(props: FileTreeProps) {
               >
                 <For each={filteredEntries()}>
                   {(entry, index) => {
-                    const isMd = !entry.isDirectory && entry.name.endsWith(".md");
-                    // Everything is openable now: directories navigate, files
-                    // open in a viewer. Markdown keeps its own icon/accent.
+                    // Both resolved once here: the entry a For callback
+                    // receives is a value, so nothing about it changes under
+                    // this row for as long as the row exists.
+                    const Icon = entryIcon(entry);
+                    // Two actions, and the row says which: a directory
+                    // navigates, a file opens. The only distinction left among
+                    // files is whether opening one shows anything — the viewer
+                    // refuses bytes it can't decode, and a row that leads to
+                    // that message reads dimmer than one that doesn't.
+                    const noPreview =
+                      !entry.isDirectory && fileKind(entry.name) === "binary";
                     return (
                       <div
                         class={`file-tree-entry ${
-                          entry.isDirectory
-                            ? "file-tree-dir"
-                            : isMd
-                              ? "file-tree-md"
-                              : "file-tree-other"
-                        }${index() === selectedIndex() ? " is-selected" : ""}`}
+                          entry.isDirectory ? "file-tree-dir" : "file-tree-file"
+                        }${noPreview ? " file-tree-no-preview" : ""}${
+                          index() === selectedIndex() ? " is-selected" : ""
+                        }`}
                         onClick={(e) => handleClick(entry, e)}
                         onContextMenu={(e) => openMenu(entry, index(), e)}
                         onMouseEnter={() => setSelectedIndex(index())}
                         title={entry.path}
                       >
                         <span class="file-tree-icon">
-                          {entry.isDirectory ? (
-                            <IconFolder size={13} stroke-width={ICON_STROKE} />
-                          ) : isMd ? (
-                            <IconMarkdown size={13} stroke-width={ICON_STROKE} />
-                          ) : (
-                            <IconFile size={13} stroke-width={ICON_STROKE} />
-                          )}
+                          <Icon size={13} stroke-width={ICON_STROKE} />
                         </span>
                         <span class="file-tree-name">{entry.name}</span>
                         <Show when={entry.isDirectory}>

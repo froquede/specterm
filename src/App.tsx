@@ -42,6 +42,7 @@ import { getTerminalInstance } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
+import { isMarkdownPath, isImagePath } from "./lib/file-kind";
 import { collectLeaves } from "./lib/split-tree";
 import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
@@ -281,12 +282,11 @@ export default function App() {
   }
 
   // Markdown gets the rendered preview; an image opens in the image viewer;
-  // every other text file opens in the read-only text viewer. Extension-only
-  // routing keeps this cheap and predictable — TextPane itself decides whether
-  // the bytes are actually viewable.
-  const isMarkdownPath = (p: string) => /\.(md|markdown)$/i.test(p);
-  const isImagePath = (p: string) =>
-    /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i.test(p);
+  // every other text file opens in the read-only text viewer. The predicates
+  // live in lib/file-kind because the sidebar paints a row by the same rules
+  // this function routes by, and two copies of "what counts as an image" is one
+  // copy too many. Extension-only routing keeps this cheap and predictable —
+  // TextPane itself decides whether the bytes are actually viewable.
 
   function handleOpenFile(path: string, mode: "split" | "tab") {
     if (isMarkdownPath(path)) {
