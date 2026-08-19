@@ -760,7 +760,10 @@ async function refreshCwd(instance: TerminalInstance) {
   // at a slightly different moment.
   if (instance.cwdReportedByShell) return;
   const cwd = await ptyCwd(instance.ptyId);
-  if (cwd && !instance.disposed) instance.cwd = cwd;
+  if (cwd && !instance.disposed && cwd !== instance.cwd) {
+    instance.cwd = cwd;
+    bumpCwdEpoch();
+  }
 }
 
 // A command just ran, so the directory may have moved. A bare `cd` lands
@@ -781,6 +784,35 @@ function scheduleCwdRefresh(instance: TerminalInstance) {
 
 /** The live working directory of a pane's shell, or "" if it has no terminal. */
 export function getTerminalCwd(paneId: string): string {
+  return instances.get(paneId)?.cwd ?? "";
+}
+
+// Bumped whenever a pane's cwd changes, or a pane joins/leaves the registry.
+//
+// `instance.cwd` is a plain field on a plain Map, so nothing about it is
+// reactive — which is exactly right for the callers above (session snapshots,
+// tab titles, restore checks), all of which read it imperatively at a moment of
+// their choosing and none of which should re-run because a shell cd'd.
+//
+// The file tree's "go to the terminal's folder" button is the one reader that
+// does need to know: it has to appear once the pane it is offering to follow
+// actually exists, and a terminal registers *after* the sidebar has painted. A
+// single epoch counter is enough — the events are a cd and a pane opening or
+// closing, not a hot path — and it keeps getTerminalCwd itself untracked so no
+// existing caller changes behaviour.
+const [cwdEpoch, setCwdEpoch] = createSignal(0);
+
+function bumpCwdEpoch(): void {
+  setCwdEpoch((n) => n + 1);
+}
+
+/**
+ * getTerminalCwd, as a reactive read: re-runs the calling computation when this
+ * or any other pane's cwd changes. Outside a reactive scope it behaves exactly
+ * like getTerminalCwd.
+ */
+export function useTerminalCwd(paneId: string): string {
+  cwdEpoch();
   return instances.get(paneId)?.cwd ?? "";
 }
 
@@ -884,6 +916,7 @@ export async function createTerminalInstance(
   };
 
   instances.set(paneId, instance);
+  bumpCwdEpoch();
 
   // The exact "I'm waiting on you" signal, written into this pane by the Claude
   // Code hooks (lib/claude-hooks.ts) when they're installed. Always registered:
@@ -917,8 +950,12 @@ export async function createTerminalInstance(
   // The shell's own report of its directory, when it sends one. Free and
   // instant where available; refreshCwd covers the shells that stay quiet.
   registerCwdHandler(term, (cwd) => {
+    // zsh and fish report on every prompt, so most of these say what we already
+    // knew. Only a real move is worth waking the epoch's subscribers for.
+    const moved = cwd !== instance.cwd;
     instance.cwd = cwd;
     instance.cwdReportedByShell = true;
+    if (moved) bumpCwdEpoch();
   });
 
   // Title is reported once here and cached on the instance, then forwarded to
@@ -1410,6 +1447,7 @@ export function releaseTerminal(paneId: string) {
   instance.unlistenExit?.();
   instance.term.dispose();
   instances.delete(paneId);
+  bumpCwdEpoch();
 }
 
 export function destroyTerminal(paneId: string) {
@@ -1441,4 +1479,5 @@ export function destroyTerminal(paneId: string) {
   }
   instance.term.dispose();
   instances.delete(paneId);
+  bumpCwdEpoch();
 }

@@ -402,9 +402,29 @@ try {
     await win.keyboard.press("Backspace");
     await win.waitForTimeout(500);
     check("Backspace (empty filter) goes up", eqPath((await state(win)).crumbTitle, base), `back to ${base}`);
+
+    // 5b) The inverse of the cd control: the tree follows the terminal. The pty
+    // is still in `browsed` from the cd above while the tree has just walked up
+    // to `base`, so the button has somewhere real to go and a no-op cannot pass.
+    await win.locator(".file-tree-sync-cwd").click();
+    await win.waitForTimeout(600);
+    const synced = (await state(win)).crumbTitle;
+    check(
+      "sync control moves the tree to the terminal's folder",
+      eqPath(synced, browsed),
+      `pty=${browsed} tree=${synced}`
+    );
+    // Leave the tree at `base`, which is where the checks below start from.
+    // Conditional because a *failed* sync never left it, and walking up anyway
+    // would strand them above `base` and fail them for the wrong reason.
+    if (eqPath(synced, browsed)) {
+      await clickDotDot(win);
+      await win.waitForTimeout(400);
+    }
   } else {
     skip("cd control moves the terminal", "no safe subdirectory to cd into");
     skip("Backspace (empty filter) goes up", "no safe subdirectory to cd into");
+    skip("sync control moves the tree to the terminal's folder", "no safe subdirectory to cd into");
   }
 
   // 6b) PR #17 — "cd fav-N" typed at the shell prompt expands to a real cd into
