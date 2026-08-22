@@ -38,7 +38,7 @@ import {
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
 import { initStoreSync } from "./lib/store-sync";
-import { getTerminalInstance } from "./lib/terminal-registry";
+import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
@@ -226,6 +226,23 @@ export default function App() {
     const searching = searchPaneId();
     if (searching && searching !== active) closeSearch();
   });
+
+  // Where the active pane's shell currently is — the file tree's "go to the
+  // terminal's folder" button, and the inverse of cdActivePane below.
+  //
+  // Both reads are tracked, so the button follows the pane you're actually in:
+  // activePaneId() re-runs it when you switch pane or tab, and useTerminalCwd
+  // re-runs it when that shell cds. The second half matters more than it looks —
+  // a terminal registers with the registry *after* the sidebar has painted, so
+  // reading the cwd untracked leaves the button permanently hidden on a fresh
+  // window, with nothing to ever re-render it.
+  //
+  // Empty for a pane that isn't a terminal (a markdown/text/image viewer), which
+  // is exactly when the button should not be offered.
+  function activePaneCwd(): string {
+    const id = activePaneId();
+    return id ? useTerminalCwd(id) : "";
+  }
 
   // Send `cd <path>` to the active pane's shell. Used by the file tree's
   // favorites (click or the "fav-N" search token).
@@ -701,6 +718,7 @@ export default function App() {
           open={store.state.sidebarView === "files"}
           onOpenFile={handleOpenFile}
           onCdPath={cdActivePane}
+          activePaneCwd={activePaneCwd}
           onDismiss={focusActivePane}
         />
         {/* Mounted only while open. The panel probes the installed font list and

@@ -19,6 +19,7 @@ import {
   IconMarkdown,
   IconArrowLeft,
   IconCdHere,
+  IconSyncCwd,
   ICON_STROKE,
 } from "../lib/icons";
 import { getBackend } from "../backends";
@@ -45,6 +46,10 @@ interface FileTreeProps {
   // Run `cd <path>` in the active terminal pane (favorite click / "fav-N" /
   // the "open terminal here" button).
   onCdPath: (path: string) => void;
+  // The active pane's live working directory, or "" when that pane isn't a
+  // terminal. Tracked, so the button appears once a shell is there to follow,
+  // hides for a viewer pane, and keeps naming the directory the shell is in now.
+  activePaneCwd: () => string;
   // Return focus to the grid/terminal (Esc on an already-empty filter).
   onDismiss?: () => void;
 }
@@ -495,6 +500,16 @@ export default function FileTree(props: FileTreeProps) {
               }}
             </For>
           </div>
+          <Show when={props.activePaneCwd()}>
+            <button
+              class="file-tree-sync-cwd"
+              title={`Go to the active terminal's folder (${props.activePaneCwd()})`}
+              onClick={() => navigateTo(props.activePaneCwd())}
+              aria-label="Go to the active terminal's folder"
+            >
+              <IconSyncCwd size={14} stroke-width={ICON_STROKE} />
+            </button>
+          </Show>
           <Show when={!drivesView() && currentPath()}>
             <button
               class="file-tree-cd-here"

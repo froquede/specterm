@@ -68,6 +68,26 @@
   flex-shrink: 0;
 }
 
+/* "Go to the active terminal's folder" button in the header — the inverse of
+   the cd-here button below, and styled to match it. */
+.file-tree-sync-cwd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.file-tree-sync-cwd:hover {
+  color: var(--ansi-blue);
+}
+
 /* "Open the active terminal here" (cd) button in the header */
 .file-tree-cd-here {
   display: flex;
