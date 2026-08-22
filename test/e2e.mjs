@@ -1889,6 +1889,36 @@ try {
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
   }
 
+  // 18f) Ctrl+Tab cycles tabs and Ctrl+Shift+Tab comes back — the browser chord,
+  // the same on every platform, alongside the ⌘⇧[ / ⌘⇧] pair. It has to reach
+  // the window from a focused terminal, which is where it will always be
+  // pressed: xterm's hidden textarea must not count as a text field here.
+  const cycleOrder = await tabOrder();
+  const cycleFrom = await activeTab();
+  if (cycleOrder.length > 1 && cycleFrom && cycleOrder.includes(cycleFrom)) {
+    const expectNext = cycleOrder[(cycleOrder.indexOf(cycleFrom) + 1) % cycleOrder.length];
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.press("Control+Tab");
+    await win.waitForTimeout(500);
+    const afterNext = await activeTab();
+    check(
+      "Ctrl+Tab moves to the next tab",
+      afterNext === expectNext,
+      `${cycleFrom} → ${afterNext} (expected ${expectNext})`
+    );
+    await win.keyboard.press("Control+Shift+Tab");
+    await win.waitForTimeout(500);
+    const afterPrev = await activeTab();
+    check(
+      "Ctrl+Shift+Tab moves back",
+      afterPrev === cycleFrom,
+      `${afterNext} → ${afterPrev} (expected ${cycleFrom})`
+    );
+  } else {
+    skip("Ctrl+Tab moves to the next tab", "not enough tabs to cycle");
+    skip("Ctrl+Shift+Tab moves back", "not enough tabs to cycle");
+  }
+
   // 19) F2 stands aside for full-screen programs. It renames the tab at a shell
   // prompt, but the moment something takes the alternate screen buffer (htop,
   // vim, mc — all of which bind F2 themselves) the key stops being ours and
