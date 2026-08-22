@@ -61,6 +61,18 @@ async function pasteClipboard(ptyId: number) {
   }
 }
 
+// Focus is inside a rich-text editing surface that owns its own clipboard keys.
+// The markdown editor is CodeMirror, which types into a contenteditable rather
+// than an <input>/<textarea> — so the dispatcher's is-editable check (see
+// stores/keybindings.ts) doesn't cover it, and without this the paste chords
+// below would fire while you edit a document, dropping the clipboard into the
+// terminal behind the pane instead of into the file. Declining here (rather than
+// swallowing the key) lets it reach the editor, which pastes it itself.
+function inRichTextEditor(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLElement && el.isContentEditable;
+}
+
 export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
   // Pull keyboard focus back into the active pane's terminal.
@@ -344,6 +356,7 @@ export function createKeymap({
       meta: true,
       shift: true,
       byOS: kitty("v"),
+      enabled: () => !inRichTextEditor(),
       label: "Paste (image inline, else text)",
       run: async () => {
         const tab = store.activeTab;
@@ -364,6 +377,7 @@ export function createKeymap({
             id: "clipboard.pasteText",
             key: "v",
             meta: true,
+            enabled: () => !inRichTextEditor(),
             label: "Paste text",
             run: async () => {
               const tab = store.activeTab;
@@ -393,6 +407,7 @@ export function createKeymap({
             id: "clipboard.pasteImageInline",
             key: "v",
             alt: true,
+            enabled: () => !inRichTextEditor(),
             label: "Paste image inline (Claude Code Alt+V)",
             run: () => {
               const tab = store.activeTab;

@@ -18,6 +18,78 @@ import {
   bracketMatching,
 } from "@codemirror/language";
 import { markdown, markdownLanguage } from "@codemirror/lang-markdown";
+import { clipboardReadText, clipboardWriteText } from "./pty";
+
+// --- Clipboard -------------------------------------------------------------
+//
+// The app ships no Edit menu on purpose: an Edit menu's ⌘C/⌘V accelerators are
+// claimed by the menu and never reach the renderer, which is where the terminal
+// paste lives (see buildAppMenu in electron/main.cjs and the clipboard rows in
+// stores/keymap.ts). On macOS, though, a native cut/copy/paste in the renderer
+// comes from exactly that menu — so inside CodeMirror, which types into a
+// contenteditable and not an <input>, ⌘V did nothing at all and there was no way
+// to paste into a markdown file.
+//
+// These commands go through the same host clipboard bridge the terminal uses, so
+// they work identically on every platform. They return true, which preventDefaults
+// the key: on Windows/Linux, where Blink does handle Ctrl+V itself, that stops
+// the native paste from inserting the same text a second time.
+
+/** The selected text, joined across multiple cursors. "" when nothing is selected. */
+function selectedText(view: EditorView): string {
+  return view.state.selection.ranges
+    .filter((r) => !r.empty)
+    .map((r) => view.state.sliceDoc(r.from, r.to))
+    .join("\n");
+}
+
+export function copyFromEditor(view: EditorView): boolean {
+  const text = selectedText(view);
+  if (text) void clipboardWriteText(text);
+  return true;
+}
+
+export function cutFromEditor(view: EditorView): boolean {
+  const text = selectedText(view);
+  if (!text) return true;
+  void clipboardWriteText(text);
+  view.dispatch({
+    ...view.state.replaceSelection(""),
+    scrollIntoView: true,
+    userEvent: "delete.cut",
+  });
+  view.focus();
+  return true;
+}
+
+export function pasteIntoEditor(view: EditorView): boolean {
+  void (async () => {
+    let text = "";
+    try {
+      text = await clipboardReadText();
+    } catch (err) {
+      console.warn("[markdown] clipboard text read failed:", err);
+      return;
+    }
+    if (!text) return;
+    view.dispatch({
+      ...view.state.replaceSelection(text),
+      scrollIntoView: true,
+      userEvent: "input.paste",
+    });
+    view.focus();
+  })();
+  return true;
+}
+
+export function selectAllInEditor(view: EditorView): boolean {
+  view.dispatch({
+    selection: { anchor: 0, head: view.state.doc.length },
+    userEvent: "select",
+  });
+  view.focus();
+  return true;
+}
 
 // Delimiter tokens ("#", "**", "`", "~~", "[", "]", ">") that the live-preview
 // hides when the cursor is elsewhere and reveals when the cursor enters the
@@ -191,6 +263,16 @@ export function createMarkdownEditor(opts: EditorOptions): EditorView {
     },
   ]);
 
+  // Ahead of the default keymap so these chords are ours, and ahead of the
+  // browser so a platform with a native paste doesn't also fire.
+  const clipboardKeymap = keymap.of([
+    { key: "Mod-v", run: pasteIntoEditor, preventDefault: true },
+    // The terminal's "paste" chord, so muscle memory works in the editor too.
+    { key: "Mod-Shift-v", run: pasteIntoEditor, preventDefault: true },
+    { key: "Mod-c", run: copyFromEditor, preventDefault: true },
+    { key: "Mod-x", run: cutFromEditor, preventDefault: true },
+  ]);
+
   const extensions: Extension[] = [
     history(),
     drawSelection(),
@@ -203,6 +285,7 @@ export function createMarkdownEditor(opts: EditorOptions): EditorView {
     appTheme,
     EditorView.lineWrapping,
     saveKeymap,
+    clipboardKeymap,
     keymap.of([...defaultKeymap, ...historyKeymap]),
     EditorView.updateListener.of((u) => {
       if (u.docChanged) opts.onDocChanged(u.view);

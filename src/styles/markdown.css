@@ -311,3 +311,55 @@ mark.search-highlight.search-active {
   max-width: none;
   display: block;
 }
+
+/* Right-click menu over the markdown editor (cut/copy/paste). Portalled to the
+   body, so it isn't clipped by the pane, over a full-viewport backdrop that
+   swallows the dismissing click. Same visual language as the file-tree menu. */
+.md-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+}
+
+.md-context-menu {
+  position: fixed;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+}
+
+.md-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.md-menu-item:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.md-menu-item:disabled {
+  color: var(--fg-muted);
+  opacity: 0.5;
+  cursor: default;
+}
+
+.md-menu-sep {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}

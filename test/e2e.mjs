@@ -1689,6 +1689,45 @@ try {
     await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
     await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
     await win.waitForTimeout(500);
+
+    // 17a) Pasting into the editor. There is no Edit menu (it would claim ⌘C/⌘V
+    // before the terminal ever saw them), so on macOS the chord is not native
+    // here: the editor's own clipboard command has to run, which means the
+    // global terminal paste must stand aside while the caret is in a document.
+    await writeOsClip("PASTED_INTO_EDITOR_42");
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.press(MAC ? "Meta+V" : "Control+V");
+    await win.waitForTimeout(600);
+    const pastedByKey = await win.evaluate(
+      () => document.querySelector(".markdown-editor .cm-content")?.textContent || ""
+    );
+    check(
+      "⌘V pastes into the markdown editor",
+      pastedByKey.includes("PASTED_INTO_EDITOR_42"),
+      pastedByKey.slice(-70)
+    );
+
+    // 17b) The same thing from the right-click menu — the discoverable half.
+    await writeOsClip("PASTED_FROM_MENU_7");
+    await win.locator(".markdown-editor .cm-content").click({ button: "right" });
+    await win.waitForSelector(".md-context-menu", { timeout: 3000 });
+    await win.locator(".md-menu-item", { hasText: "Paste" }).first().click();
+    await win.waitForTimeout(600);
+    const pastedByMenu = await win.evaluate(
+      () => document.querySelector(".markdown-editor .cm-content")?.textContent || ""
+    );
+    check(
+      "the editor's context menu pastes",
+      pastedByMenu.includes("PASTED_FROM_MENU_7"),
+      pastedByMenu.slice(-70)
+    );
+    check(
+      "the context menu closes after pasting",
+      !(await win.locator(".md-context-menu").isVisible()),
+      ""
+    );
+
     await win.locator(".markdown-editor .cm-content").click();
     await win.keyboard.press("Control+End");
     await win.keyboard.type("\nDRAFT_SURVIVES_RELOAD");
