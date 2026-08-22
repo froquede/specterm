@@ -681,16 +681,77 @@ export async function createTerminalInstance(
   return instance;
 }
 
-export async function attachTerminal(
+interface AttachOptions {
+  onTitle?: (title: string) => void;
+  onExit?: () => void;
+  onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+  initialCwd?: string;
+}
+
+// One attach at a time per pane.
+//
+// Attaching is asynchronous — the first one spawns a pty and subscribes to its
+// output over IPC — while mounting is not: a pane that unmounts and remounts
+// inside that window (a fast tab switch, a split landing, a restored session
+// settling at boot) calls attach again with a *new* container while the first
+// call is still in its await. The second call would see a terminal that has no
+// pty id yet, decide it was never opened, and run the whole first-time path a
+// second time: a second shell, and a second pty-output listener on the same
+// terminal. Both listeners then match the surviving pty id, so every chunk the
+// shell prints gets written to the screen twice — output arriving duplicated,
+// with nothing the user did to explain it.
+//
+// Serializing per pane makes the second call see the finished state of the
+// first, which is the re-attach path: move the element, refit, done.
+const attachChain = new Map<string, Promise<void>>();
+
+// Panes that stopped existing while an attach was still queued behind another.
+// Pane ids are never reused, so this only has to outlive the queue: the entry is
+// dropped as soon as it drains, and a queued attach that finds its pane here
+// returns instead of spawning a shell nobody would ever see.
+const closedPanes = new Set<string>();
+
+function markPaneClosed(paneId: string) {
+  closedPanes.add(paneId);
+  const queued = attachChain.get(paneId) ?? Promise.resolve();
+  attachChain.delete(paneId);
+  const forget = () => closedPanes.delete(paneId);
+  void queued.then(forget, forget);
+}
+
+export function attachTerminal(
   paneId: string,
   container: HTMLDivElement,
-  opts?: {
-    onTitle?: (title: string) => void;
-    onExit?: () => void;
-    onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
-    initialCwd?: string;
-  }
+  opts?: AttachOptions
+): Promise<void> {
+  const previous = attachChain.get(paneId) ?? Promise.resolve();
+  // Run next regardless of how the previous attach ended: a failed attach must
+  // not strand every later mount of that pane.
+  const run = previous.then(
+    () => attachTerminalInner(paneId, container, opts),
+    () => attachTerminalInner(paneId, container, opts)
+  );
+  const tracked: Promise<void> = run
+    .catch((err) => {
+      // Nothing awaits an attach, so a rejection here would only ever surface as
+      // an unhandled one. Say what happened and let the next mount try again.
+      console.warn("[terminal] attaching pane failed:", err);
+    })
+    .finally(() => {
+      if (attachChain.get(paneId) === tracked) attachChain.delete(paneId);
+    });
+  attachChain.set(paneId, tracked);
+  return tracked;
+}
+
+async function attachTerminalInner(
+  paneId: string,
+  container: HTMLDivElement,
+  opts?: AttachOptions
 ) {
+  // Closed while this attach waited its turn — see closedPanes.
+  if (closedPanes.has(paneId)) return;
+
   let instance = instances.get(paneId);
   if (!instance || instance.disposed) {
     instance = await createTerminalInstance(paneId, opts);
@@ -875,6 +936,22 @@ export async function attachTerminal(
   // Every chunk is also timed by the attention heuristic (lib/claude-attention),
   // which reads nothing from the data — only when it arrived — to spot a pane
   // that was working and has gone quiet.
+  //
+  // Never stack subscriptions on one terminal. The chain in attachTerminal is
+  // what stops a second first-time attach from happening at all; this is the
+  // backstop that keeps a leaked listener from doubling the output if one ever
+  // does — the same chunk written twice is exactly what duplicated output is.
+  if (instance.unlistenOutput || instance.unlistenExit) {
+    // Should be unreachable now. Say so rather than quietly papering over it:
+    // if duplicated output is ever reported again, this line in the console is
+    // the difference between knowing and guessing.
+    console.warn(`[terminal] pane ${paneId} was already subscribed — dropping the older listener`);
+  }
+  instance.unlistenOutput?.();
+  instance.unlistenExit?.();
+  instance.unlistenOutput = null;
+  instance.unlistenExit = null;
+
   const onShellReady = takePendingRestore(paneId, instance.ptyId);
   const writeChunk = onShellReady
     ? (data: Uint8Array) => {
@@ -1021,6 +1098,7 @@ export function detachTerminal(paneId: string) {
 // kill: the shell survives, and the window that adopts the PTY builds a fresh
 // terminal around it.
 export function releaseTerminal(paneId: string) {
+  markPaneClosed(paneId);
   // Everything destroyTerminal drops for a pane that stops existing applies
   // here too — this pane is leaving the window, and none of it means anything
   // once it has. Only the kill is different: the shell is being handed on, and
@@ -1043,6 +1121,8 @@ export function releaseTerminal(paneId: string) {
 }
 
 export function destroyTerminal(paneId: string) {
+  markPaneClosed(paneId);
+
   // A pane closed before it ever mounted still has its resume command queued —
   // drop it, or the map holds entries for panes that no longer exist.
   cancelPendingRestore(paneId);
