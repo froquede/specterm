@@ -514,12 +514,10 @@ function updateTray() {
       {
         // The one path that actually stops the shells, so it says so.
         label: "Quit Specterm (ends detached shells)",
-        click: () => {
-          quitting = true;
-          killDetachedPtys();
-          updateTray();
-          app.quit();
-        },
+        // Just quit: `before-quit` is what sets `quitting` and ends the parked
+        // shells, and going first would kill them before the confirmation this
+        // quit may still be refused by.
+        click: () => app.quit(),
       },
     ])
   );
@@ -610,9 +608,15 @@ function livePtysOwnedBy(wc) {
   const live = [];
   for (const [, instance] of ptyInstances) {
     if (instance.disposed || !instance.process.pid) continue;
-    // A PTY in transit between windows (wc === null) belongs to a tear-off in
-    // flight, not to whoever is closing now.
-    if (!instance.wc || instance.wc.isDestroyed()) continue;
+    if (!instance.wc || instance.wc.isDestroyed()) {
+      // Two different shells have no window. A *parked* one is waiting in the
+      // tray, and Quit is the one thing that ends it (killDetachedPtys) — so a
+      // build left running in a detached session is exactly what an app-scope
+      // question is about. A PTY merely in transit between windows belongs to a
+      // tear-off in flight, and is nobody's to ask about.
+      if (!wc && instance.detached) live.push(instance);
+      continue;
+    }
     if (wc && instance.wc !== wc) continue;
     live.push(instance);
   }
@@ -1130,6 +1134,9 @@ ipcMain.handle("adopt-pty", (event, id, cols, rows) => {
   if (!instance) return { buffered: EMPTY_BYTES, exited: true };
 
   instance.wc = event.sender;
+  // It has a window again, so it is no longer one of the parked shells Quit
+  // ends — and no longer one of the shells a quit has to ask about.
+  instance.detached = false;
   clearTransitTimer(instance);
   // Concatenated once and sent as bytes, not as an array of numbers — this can
   // be a megabyte of a build's output, and boxing every byte of it would stall
@@ -2967,6 +2974,12 @@ app.whenReady().then(() => {
 // the close handler intercepting the windows on their way out — a Quit that got
 // itself deferred into a detach would never finish.
 app.on("before-quit", () => {
+  // The confirmation handler above may be holding this quit for an answer.
+  // Preventing the default stops the *quit*, not the rest of the listeners — so
+  // without this, a quit the user is about to cancel would still have written
+  // the session file, killed every parked shell and taken the tray away, and
+  // left `quitting` set so no window ever parked again.
+  if (quitAsking) return;
   quitting = true;
   // Before anything is torn down: the windows are still open, so their bounds are
   // still readable, and the layouts they pushed are still current.

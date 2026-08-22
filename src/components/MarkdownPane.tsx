@@ -145,12 +145,18 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     hasSelection: boolean;
   } | null>(null);
 
+  // Clamped so it never spills past the bottom/right window edge — the same
+  // thing the file tree's menu does, and for the same reason: right-clicking
+  // near a corner is exactly when a menu you can't reach is worst.
+  const MENU_W = 180;
+  const MENU_H = 140;
+
   function openEditorMenu(e: MouseEvent) {
     if (!editorView) return;
     e.preventDefault();
     setMenu({
-      x: e.clientX,
-      y: e.clientY,
+      x: Math.max(4, Math.min(e.clientX, window.innerWidth - MENU_W)),
+      y: Math.max(4, Math.min(e.clientY, window.innerHeight - MENU_H)),
       hasSelection: editorView.state.selection.ranges.some((r) => !r.empty),
     });
   }

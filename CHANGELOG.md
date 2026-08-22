@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.21.0 — 2026-08-21
 
 ### Added
 - **Closing asks first when something is still running.** A window's terminals
@@ -29,6 +29,26 @@
   `Ctrl+Shift+→` / `Ctrl+Shift+←`). It is the one place a bare `Ctrl` chord is
   safe to take on Windows/Linux: a terminal can't encode `Ctrl+Tab` at all
   (`Tab` is already `Ctrl+I`), so nothing running in a pane is waiting for it.
+- **The sidebar says what every file is.** Rows carried three icons between them
+  — a folder, a sheet for markdown, a blank sheet for everything else — so a
+  `.png`, a `.zip` and a `.rs` all looked identical and the only way to read a
+  listing was to read every name in it. Each row now takes its glyph from the
+  kind of file it is (code, config, image, archive, key, lockfile…), on the same
+  grid and stroke as the rest of the chrome, and folders with a well-known job
+  (`.git`, `node_modules`, `src`) get theirs too. A row that leads to a viewer
+  which can't decode the bytes reads dimmer, so the listing tells you what will
+  happen before you click.
+- **Follow the terminal's folder from the sidebar.** A control beside the path
+  jumps the tree to wherever the active pane's shell currently is — the inverse
+  of the "open a terminal here" button that was already there. It appears only
+  when the active pane *is* a terminal, and keeps naming the directory that
+  shell is in now, not the one it started in.
+- **Zoom and pan an image.** The image viewer answers the same gestures the
+  diagram viewport already did — wheel zooms toward the pointer, drag pans,
+  double-click goes back to fit — with a toolbar readout, `Fit` and `1:1`. The
+  viewport itself moved out of `lib/mermaid.ts` into `lib/pan-zoom.ts` so both
+  share one implementation: two panes in the same window answering the same
+  wheel differently would be worse than either behaviour on its own.
 - **End-to-end coverage for all of it.** New checks drive a paste into the
   markdown editor (by key and from the right-click menu), cycle tabs with
   `Ctrl+Tab` from a focused terminal, measure the scroll area of a pane that
@@ -37,6 +57,24 @@
   is held for an answer.
 
 ### Fixed
+- **`specterm <file>` opens the file.** A path on the command line was scanned
+  for `*.md` and everything else was dropped at the door, so `specterm shot.png`
+  started a terminal and said nothing. Any path argument now opens exactly the
+  way clicking that file in the sidebar does — the classification lives in
+  `electron/open-paths.cjs`, where it is tested without booting an app.
+  Relative paths resolve against the shell you typed them in, including on a
+  second launch, and the scan is bounded (64 arguments, 8 files) so a glob in a
+  large directory can't put hundreds of stats in front of the first shell.
+- **Quitting no longer tears the session down before you have answered.** The
+  confirmation and the parked-session teardown were two separate `before-quit`
+  listeners, and preventing a quit does not stop the later ones from running:
+  cancelling the dialog left the session file written, every detached shell
+  killed and the tray gone, with the app stuck in a state where no window would
+  park again. The teardown now stands down while a quit is being held for an
+  answer, the tray's own Quit item goes through the same path instead of killing
+  first, and a quit that would end parked shells counts them — so a build left
+  running in a detached session is something you are asked about rather than
+  told about.
 - **Scrolling back through a pane that was in another tab.** xterm sizes its
   scroll area on an animation frame, and a pane in a background tab is
   unmounted — so those frames ran with the terminal detached from the page,
