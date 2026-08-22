@@ -2,6 +2,7 @@ const {
   app,
   BrowserWindow,
   ipcMain,
+  dialog,
   shell,
   Menu,
   clipboard,
@@ -296,6 +297,139 @@ function killPtysOwnedBy(wc) {
   }
 }
 
+// === Closing with something still running ===
+//
+// A window's terminals die with it (killPtysOwnedBy above), so closing one — or
+// quitting — while a build, a test run or a Claude session is in flight kills
+// it. Ask before that happens.
+//
+// Only when something is actually running: the answer is read from the shells
+// themselves (their live child processes), not from "are there tabs open", so
+// the everyday case of closing a window full of idle prompts stays a single
+// click with no dialog in the way.
+
+// Long-lived helpers a shell starts for itself rather than work the user began.
+// gitstatusd (powerlevel10k's git worker) lives as long as the shell does, and
+// on Windows ConPTY always has a console host child — counting either as "still
+// running" would put a dialog in front of every close.
+const IGNORED_DESCENDANTS = [
+  /^gitstatusd/i,
+  /^conhost\.exe$/i,
+  /^OpenConsole\.exe$/i,
+];
+
+// The scan shells out (`ps`, or PowerShell on Windows). It is fast, but a quit
+// must never hang on it: past this, close as if nothing were running.
+const BUSY_SCAN_TIMEOUT_MS = 2000;
+
+// An automated run quits the app programmatically and has no way to answer a
+// native dialog, so the e2e suite sets this to keep its own teardown scriptable.
+// The one place it doesn't is the check that covers this feature (see e2e.mjs).
+const CLOSE_CONFIRM_DISABLED = process.env.SPECTERM_NO_CLOSE_CONFIRM === "1";
+
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(fallback), ms);
+      // Never let the guard timer be the thing keeping the app alive.
+      timer.unref?.();
+    }),
+  ]);
+}
+
+/** Live PTYs, optionally narrowed to one window's. */
+function livePtysOwnedBy(wc) {
+  const live = [];
+  for (const [, instance] of ptyInstances) {
+    if (instance.disposed || !instance.process.pid) continue;
+    // A PTY in transit between windows (wc === null) belongs to a tear-off in
+    // flight, not to whoever is closing now.
+    if (!instance.wc || instance.wc.isDestroyed()) continue;
+    if (wc && instance.wc !== wc) continue;
+    live.push(instance);
+  }
+  return live;
+}
+
+// What is running inside those shells, by name, deduplicated. Empty means the
+// shells are sitting at their prompts — or that we couldn't tell, which is
+// treated the same way: never block a close on a guess.
+async function runningCommands(wc) {
+  const shells = livePtysOwnedBy(wc);
+  if (shells.length === 0) return [];
+
+  const index = await childProcessIndex();
+  const names = new Set();
+  for (const instance of shells) {
+    for (const proc of await descendantsOf(instance.process.pid, index)) {
+      if (IGNORED_DESCENDANTS.some((re) => re.test(proc.comm))) continue;
+      names.add(proc.comm);
+    }
+  }
+  return [...names];
+}
+
+// Ask, and answer true when it's fine to go ahead. `scope` is "app" for a quit
+// (every window's terminals) and "window" for one window's.
+async function confirmClose(win, scope) {
+  if (CLOSE_CONFIRM_DISABLED) return true;
+  const commands = await withTimeout(
+    runningCommands(scope === "app" ? null : win.webContents),
+    BUSY_SCAN_TIMEOUT_MS,
+    []
+  );
+  if (commands.length === 0) return true;
+
+  const shown = commands.slice(0, 6).join(", ");
+  const list = commands.length > 6 ? `${shown}, …` : shown;
+  const options = {
+    type: "question",
+    buttons: ["Cancel", scope === "app" ? "Quit anyway" : "Close anyway"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: scope === "app" ? "Quit Specterm?" : "Close this window?",
+    detail:
+      `Still running: ${list}.\n\n` +
+      `Closing ends ${commands.length === 1 ? "it" : "them"}.`,
+  };
+  // Attached to the window it is about (a sheet on macOS) when there is one —
+  // the two-argument form only accepts a real window, never undefined.
+  const parent = win && !win.isDestroyed() ? win : null;
+  const { response } = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options);
+  return response === 1;
+}
+
+// Set once the user has agreed to quit (or the updater is deliberately
+// restarting us): from then on the windows close without asking again.
+let quitConfirmed = false;
+
+// A dialog is already up: a second ⌘Q while it waits must not stack another.
+let quitAsking = false;
+
+app.on("before-quit", (event) => {
+  if (quitConfirmed || CLOSE_CONFIRM_DISABLED) return;
+  // Nothing running anywhere: decided synchronously, so the ordinary quit path
+  // never waits on a process scan.
+  if (livePtysOwnedBy(null).length === 0) {
+    quitConfirmed = true;
+    return;
+  }
+  event.preventDefault();
+  if (quitAsking) return;
+  quitAsking = true;
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  void confirmClose(win ?? null, "app").then((ok) => {
+    quitAsking = false;
+    if (!ok) return;
+    quitConfirmed = true;
+    app.quit();
+  });
+});
+
 function createWindow(opts = {}) {
   const isMac = process.platform === "darwin";
 
@@ -397,6 +531,27 @@ function createWindow(opts = {}) {
   // after the window is already in front.
   win.on("focus", () => {
     if (!win.isDestroyed()) win.flashFrame(false);
+  });
+
+  // This window's terminals die with it, so anything still running in them dies
+  // too — confirm first. The check is asynchronous (it inspects the shells'
+  // child processes), and a close can only be stopped synchronously, so the
+  // first close is always cancelled and re-issued once the answer is in.
+  let closeConfirmed = false;
+  let closeAsking = false;
+  win.on("close", (event) => {
+    // Already answered — for this window, or for the whole app on the way to a
+    // quit — so let it through.
+    if (closeConfirmed || quitConfirmed || CLOSE_CONFIRM_DISABLED) return;
+    event.preventDefault();
+    if (closeAsking) return; // a dialog is already up for this window
+    closeAsking = true;
+    void confirmClose(win, "window").then((ok) => {
+      closeAsking = false;
+      if (!ok || win.isDestroyed()) return;
+      closeConfirmed = true;
+      win.close();
+    });
   });
 
   // Tear down everything this window owned. `closed` fires after the webContents
@@ -769,9 +924,54 @@ async function scanProcessTable() {
     return table;
   }
 
-  // Linux walks the kernel's child lists instead (see linuxChildren); Windows
-  // has no cheap equivalent at all, so panes there restore as plain shells.
+  if (process.platform === "win32") {
+    // No /proc and no `ps`; one CIM query is the cheap equivalent. Only the
+    // close confirmation uses this — the session providers stay off Windows.
+    try {
+      const out = await new Promise((resolve, reject) => {
+        execFile(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process | ForEach-Object " +
+              '{ "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }',
+          ],
+          (err, stdout) => (err ? reject(err) : resolve(stdout))
+        );
+      });
+      for (const line of out.split("\n")) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+        if (!m) continue;
+        table.set(Number(m[1]), {
+          pid: Number(m[1]),
+          ppid: Number(m[2]),
+          comm: m[3].trim(),
+        });
+      }
+    } catch (_) {
+      // PowerShell missing or refused — no table, so nothing is reported as
+      // running and a close is never blocked on a guess.
+    }
+    return table;
+  }
+
+  // Linux walks the kernel's child lists instead (see linuxChildren), so it
+  // never needs an index.
   return table;
+}
+
+// pid -> [child, ...]. The shape descendantsOf walks on the platforms that need
+// an index; empty on Linux, which reads the kernel's per-pid child lists.
+async function childProcessIndex() {
+  const children = new Map();
+  for (const proc of (await scanProcessTable()).values()) {
+    const siblings = children.get(proc.ppid);
+    if (siblings) siblings.push(proc);
+    else children.set(proc.ppid, [proc]);
+  }
+  return children;
 }
 
 // Descendants of one shell, breadth-first. `table` is the macOS process table;
@@ -1626,6 +1826,10 @@ open "$TARGET"
     stdio: "ignore",
   });
   child.unref();
+  // The user pressed "install and restart" — that is the answer to "do you want
+  // to close?", so don't ask it again on the way out (and don't let a dialog
+  // stall a quit the swap script is already waiting on).
+  quitConfirmed = true;
   app.quit();
 }
 
@@ -1671,6 +1875,8 @@ ipcMain.handle("updater:install", () => {
     if (isMac) {
       macInstallUpdate();
     } else {
+      // Same as macInstallUpdate: the install *is* the confirmed quit.
+      quitConfirmed = true;
       autoUpdater.quitAndInstall(false, true);
     }
   } catch (err) {

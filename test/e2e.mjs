@@ -168,7 +168,15 @@ const readDrop = (win) =>
 // --- run -------------------------------------------------------------------
 let app;
 try {
-  app = await electron.launch({ args: [root, `--user-data-dir=${userDataDir}`], cwd: root });
+  // The suite quits this app programmatically (section 22 restarts it), and a
+  // native confirmation dialog is not something a script can answer — so this
+  // window opts out of it. The second app below deliberately does not: that is
+  // where the confirmation itself is checked.
+  app = await electron.launch({
+    args: [root, `--user-data-dir=${userDataDir}`],
+    cwd: root,
+    env: { ...process.env, SPECTERM_NO_CLOSE_CONFIRM: "1" },
+  });
   const win = await app.firstWindow();
   win.on("pageerror", (e) => log("PAGEERROR:", e.message));
   await win.waitForSelector(".file-tree", { timeout: 20000 });
@@ -2290,6 +2298,32 @@ try {
       );
     }
 
+    // 24) Quitting with something still running asks first. Start a command in a
+    // pane, then ask this app to quit exactly the way ⌘Q does: it must still be
+    // alive a moment later, parked on a confirmation dialog no script can
+    // answer. (Windows has no cheap process table here, so it is skipped there.)
+    if (WIN) {
+      skip("a running command holds the quit for confirmation", "no process scan on Windows");
+    } else {
+      await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+      await win2.keyboard.type("sleep 45");
+      await win2.keyboard.press("Enter");
+      await win2.waitForTimeout(1500);
+      try {
+        await Promise.race([
+          app2.evaluate(({ app }) => app.quit()),
+          new Promise((r) => setTimeout(r, 2000)),
+        ]);
+      } catch (_) {
+        // The app answering by exiting is itself the failure below.
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+      check(
+        "a running command holds the quit for confirmation",
+        app2.process().exitCode === null,
+        `exitCode=${app2.process().exitCode}`
+      );
+    }
   } finally {
     try {
       await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
