@@ -535,17 +535,18 @@ export default function App() {
       document.removeEventListener("visibilitychange", onHidden);
     });
 
-    // Open markdown files handed to us by the OS (Finder "Open With",
-    // double-click, or a path arg) in a new tab. The main process queues files
-    // that arrive before this listener attaches and replays them here.
+    // Files handed to us by the OS (Finder "Open With", double-click, or a path
+    // argument) open in a new tab. The main process queues files that arrive
+    // before this listener attaches and replays them here.
+    //
+    // They go through the same routing the file tree uses, deliberately: a file
+    // named on the command line opens the way clicking it in the sidebar does.
+    // This used to test for `.md` and drop everything else on the floor, which
+    // is why `specterm shot.png` did nothing at all.
     let unlistenOpenPath: (() => void) | undefined;
     getBackend().then((backend) =>
       backend
-        .onOpenPath((filePath) => {
-          if (filePath.toLowerCase().endsWith(".md")) {
-            handleOpenMarkdown(filePath, "tab");
-          }
-        })
+        .onOpenPath((filePath) => handleOpenFile(filePath, "tab"))
         .then((un) => {
           unlistenOpenPath = un;
         })

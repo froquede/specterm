@@ -11,6 +11,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
+import { PNG } from "pngjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -27,6 +28,28 @@ let lastCheckAt = Date.now();
 
 // A directory that reliably exists to point the startup path at.
 const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
+
+// The image fixture the viewer checks run against. Generated at runtime — a
+// binary in the repo would be a binary in every diff that ever touched it — and
+// deliberately wider than the panes here, so the viewer has something to fit.
+const IMG_W = 800;
+const IMG_H = 600;
+function makePng(width, height) {
+  const png = new PNG({ width, height });
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (width * y + x) << 2;
+      // A gradient with a grid over it: something whose scale is visible in a
+      // screenshot when one of these checks fails and gets eyeballed.
+      const grid = x % 100 === 0 || y % 100 === 0;
+      png.data[i] = grid ? 240 : (x * 255) / width;
+      png.data[i + 1] = grid ? 240 : (y * 255) / height;
+      png.data[i + 2] = grid ? 240 : 140;
+      png.data[i + 3] = 255;
+    }
+  }
+  return PNG.sync.write(png);
+}
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -1914,6 +1937,11 @@ try {
   );
   // A file with NUL bytes — must be refused by the viewer, not shown as garbage.
   fs.writeFileSync(binFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x03]));
+  // A real PNG, generated rather than committed — deliberately larger than any
+  // pane this suite opens, so it lands *fitted* (below 100%) and 1:1 is a
+  // genuine zoom rather than a no-op.
+  const imgFixture = path.join(fixturesDir, "sample-image.png");
+  fs.writeFileSync(imgFixture, makePng(IMG_W, IMG_H));
   try {
     // Point BOTH startupPath and lastBrowsedPath at the fixtures dir —
     // lastBrowsedPath takes precedence when the tree reopens, so setting the
@@ -2073,9 +2101,147 @@ try {
       transformAfter != null && transformAfter !== md.transformBefore && /scale\(/.test(transformAfter),
       `before="${md.transformBefore}" after="${transformAfter}"`
     );
+
+    // 13e) The image viewer: it opens fitted, and it pans and zooms with the
+    // same gestures the diagram viewport uses (lib/pan-zoom.ts, shared).
+    //
+    // In a tab of its own, because this section has been splitting the same tab
+    // for a dozen fixtures and the pane left over is a few pixels wide — an
+    // image fitted into 20px is at 3%, where a 10% zoom and a button press both
+    // round to the same number and the checks below say nothing.
+    await newTab(win);
+    const imgTab = await win.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+    await clickEntry(win, "sample-image.png");
+    await win.waitForSelector(".image-pane img", { timeout: 8000 });
+    // The fit — and so the percentage, which is measured against the image's
+    // own pixels — depends on the pane's final width. Read it after the split
+    // has settled, not while it is still animating into place.
+    await win.waitForTimeout(600);
+    const imgPane = win.locator(".pane", { has: win.locator(".image-pane") }).first();
+    // Read the viewer's own state: the transform the stage carries, and the
+    // percentage in the toolbar, which is scale measured against the image's
+    // real pixels rather than against the fit.
+    const viewer = () =>
+      win.evaluate(() => {
+        const img = document.querySelector(".image-pane img");
+        return {
+          transform: document.querySelector(".image-stage")?.style.transform ?? null,
+          percent: Number(
+            (document.querySelector(".image-zoom-level")?.textContent || "").replace("%", "")
+          ),
+          dims: document.querySelector(".image-dimensions")?.textContent ?? null,
+          fittedWidth: img?.clientWidth ?? 0,
+          naturalWidth: img?.naturalWidth ?? 0,
+        };
+      });
+
+    const fitted = await viewer();
+    check(
+      "image viewer renders the file the tree was clicked on",
+      fitted.naturalWidth === IMG_W && fitted.dims === `${IMG_W} × ${IMG_H}`,
+      JSON.stringify(fitted)
+    );
+    check(
+      "image opens fitted to the pane, not cropped or at 1:1",
+      fitted.fittedWidth > 0 &&
+        fitted.fittedWidth < IMG_W &&
+        fitted.percent > 0 &&
+        fitted.percent < 100,
+      `fitted=${fitted.fittedWidth}px of ${IMG_W} at ${fitted.percent}%`
+    );
+
+    // A wheel over the image zooms it, toward the pointer. Dispatched straight
+    // at the viewport for the same reason the mermaid one is: a synthesized
+    // gesture over a small split pane is unreliable, and this still runs the
+    // real handler.
+    const wheeled = await win.evaluate(() => {
+      const vp = document.querySelector(".image-body");
+      const r = vp.getBoundingClientRect();
+      vp.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -120,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      return {
+        transform: document.querySelector(".image-stage")?.style.transform ?? null,
+        percent: Number(
+          (document.querySelector(".image-zoom-level")?.textContent || "").replace("%", "")
+        ),
+      };
+    });
+    check(
+      "wheel zooms the image and the readout follows",
+      /scale\(1\.\d/.test(wheeled.transform || "") && wheeled.percent > fitted.percent,
+      `transform="${wheeled.transform}" ${fitted.percent}% → ${wheeled.percent}%`
+    );
+
+    // Drag to pan — a real mouse drag, since this is the gesture and not a
+    // wheel event that can be faked in one line.
+    const vpBox = await imgPane.locator(".image-body").boundingBox();
+    await win.mouse.move(vpBox.x + vpBox.width / 2, vpBox.y + vpBox.height / 2);
+    await win.mouse.down();
+    await win.mouse.move(vpBox.x + vpBox.width / 2 - 60, vpBox.y + vpBox.height / 2 - 40, { steps: 6 });
+    await win.mouse.up();
+    const panned = await viewer();
+    const translateOf = (t) => {
+      const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(t || "");
+      return m ? [Number(m[1]), Number(m[2])] : null;
+    };
+    const before = translateOf(wheeled.transform);
+    const after = translateOf(panned.transform);
+    check(
+      "dragging pans the image",
+      before && after && (after[0] !== before[0] || after[1] !== before[1]),
+      `${JSON.stringify(before)} → ${JSON.stringify(after)}`
+    );
+    check(
+      "panning doesn't change the zoom",
+      panned.percent === wheeled.percent,
+      `${wheeled.percent}% → ${panned.percent}%`
+    );
+
+    // 1:1 means one image pixel per screen pixel, whatever the fit was.
+    await imgPane.locator(".image-zoom-btn", { hasText: "1:1" }).click();
+    const oneToOne = await viewer();
+    check(
+      "1:1 shows the image at its own pixels",
+      oneToOne.percent === 100,
+      `${oneToOne.percent}%`
+    );
+
+    // And there are two ways back to the fit: the button, and the double-click
+    // the diagram viewport already answers to.
+    await imgPane.locator(".image-zoom-btn", { hasText: "Fit" }).click();
+    const refit = await viewer();
+    check(
+      "Fit goes back to the fitted view",
+      refit.percent === fitted.percent && refit.transform === "translate(0px, 0px) scale(1)",
+      `${oneToOne.percent}% → ${refit.percent}% transform="${refit.transform}"`
+    );
+
+    await imgPane.locator(".image-zoom-btn", { hasText: "+" }).click();
+    const zoomedIn = await viewer();
+    await imgPane.locator(".image-body").dblclick();
+    const reset = await viewer();
+    check(
+      "the + button zooms and a double-click resets",
+      zoomedIn.percent > refit.percent && reset.percent === fitted.percent,
+      `${refit.percent}% → ${zoomedIn.percent}% → ${reset.percent}%`
+    );
+
+    // Leave the tab bar as this section found it.
+    await win.locator(`.tab[data-tab-id="${imgTab}"] .tab-close`).click();
+    await win.waitForTimeout(400);
   } finally {
     try { fs.unlinkSync(binFixture); } catch {}
     try { fs.unlinkSync(envFixture); } catch {}
+    try { fs.unlinkSync(imgFixture); } catch {}
   }
 
   // 14) Cross-tab pane detach: drag a pane's titlebar onto another tab's chip to
@@ -2894,6 +3060,67 @@ try {
       // Nothing left to assert; the kill below is the backstop.
     }
     try { app2.process().kill("SIGKILL"); } catch {}
+  }
+
+  // 24) A path on the command line opens that file. The other half of the
+  // window Specterm gives the OS: a double-click on a registered type, an "Open
+  // With", or `specterm shot.png` typed into another terminal all arrive as an
+  // argv path (see electron/open-paths.cjs, and test/open-paths.mjs for the
+  // classification on its own). This needs a launch of its own — the argument
+  // is read once, before the first window — so it runs cold, on a profile of
+  // its own, with an image and a markdown file named on the command line.
+  //
+  // It is here because an image used to be dropped on the way past: the scan
+  // looked for `*.md` and nothing else, so the app opened as if you had asked
+  // for nothing.
+  const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-cli-"));
+  const cliImage = path.join(cliDir, "from-cli.png");
+  const cliMarkdown = path.join(cliDir, "from-cli.md");
+  fs.writeFileSync(cliImage, makePng(320, 240));
+  fs.writeFileSync(cliMarkdown, "# opened from the command line\n");
+  const cliUserData = `${userDataDir}-cli`;
+  // The markdown is named absolutely and the image relatively — a relative path
+  // has to resolve against the shell's directory, not the app's, or it lands on
+  // a file:// URL under dist/ and quietly 404s. Launching from cliDir is what
+  // makes that a real test. The image goes last so its tab is the active one:
+  // only the active tab's panes are mounted.
+  const app3Options = launchOptions(root, cliUserData, {
+    args: [cliMarkdown, "from-cli.png"],
+  });
+  app3Options.cwd = cliDir;
+  const app3 = await electron.launch(app3Options);
+  try {
+    const win3 = await app3.firstWindow();
+    win3.on("pageerror", (e) => log("PAGEERROR(cli):", e.message));
+    await win3.waitForSelector(".app", { timeout: 20000 });
+    await win3.waitForSelector(".image-pane img", { timeout: 20000 });
+    const opened = await win3.evaluate(() => ({
+      image: document.querySelector(".image-filepath")?.textContent ?? null,
+      dims: document.querySelector(".image-dimensions")?.textContent ?? null,
+      tabs: Array.from(document.querySelectorAll(".tab")).length,
+    }));
+    check(
+      "an image named on the command line opens in the image viewer",
+      eqPath(opened.image, cliImage) && opened.dims === "320 × 240",
+      JSON.stringify(opened)
+    );
+    // The markdown went in the same way — it is the case that always worked,
+    // and the point of naming both is that widening the door didn't close it.
+    // Its tab is behind the image's, so the check is the tab, not the pane.
+    check(
+      "a markdown file named alongside it still opens too",
+      opened.tabs === 3,
+      `tabs=${opened.tabs} (terminal + markdown + image)`
+    );
+  } finally {
+    try {
+      await Promise.race([app3.close(), new Promise((r) => setTimeout(r, 3000))]);
+    } catch (_) {
+      // Nothing left to assert.
+    }
+    try { app3.process().kill("SIGKILL"); } catch {}
+    try { fs.rmSync(cliDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(cliUserData, { recursive: true, force: true }); } catch {}
   }
 
   // --- summary ---

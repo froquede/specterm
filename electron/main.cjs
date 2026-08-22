@@ -21,6 +21,7 @@ const { watch } = require("chokidar");
 const { execFile, spawn } = require("child_process");
 const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
+const { filePathsFromArgv } = require("./open-paths.cjs");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -333,21 +334,11 @@ function flushOpenPaths(win) {
   }
 }
 
-// Pull a markdown file path out of a process argv array — the Windows/Linux way
-// the OS passes a double-clicked/"Open With" file (cold start via process.argv,
-// warm start via the second-instance event). Scan for the first existing *.md.
-// macOS uses the `open-file` event instead, so this never runs there.
-function markdownPathFromArgv(argv) {
-  for (const arg of argv.slice(1)) {
-    if (typeof arg === "string" && arg.toLowerCase().endsWith(".md")) {
-      try {
-        if (fs.existsSync(arg)) return arg;
-      } catch {
-        // ignore unreadable args
-      }
-    }
-  }
-  return null;
+// Queue every file an argv array asks for. The classification — which arguments
+// are paths at all, what they resolve against, what is silently ignored — lives
+// in open-paths.cjs, where it can be tested without booting an app.
+function openPathsFromArgv(argv, cwd) {
+  for (const filePath of filePathsFromArgv(argv, cwd)) openPath(filePath);
 }
 
 // macOS delivers "Open With"/double-click through this event, which can fire
@@ -359,7 +350,7 @@ app.on("open-file", (event, filePath) => {
   openPath(filePath);
 });
 
-// Windows/Linux: a second launch (e.g. double-clicking another .md) starts a
+// Windows/Linux: a second launch (e.g. double-clicking another file) starts a
 // fresh process. Take a single-instance lock so that process forwards its file
 // to the already-running window instead of opening a duplicate. macOS routes
 // through `open-file` above and doesn't need this.
@@ -369,9 +360,10 @@ const singleInstanceOk =
 if (!singleInstanceOk) {
   app.quit();
 } else if (process.platform !== "darwin") {
-  app.on("second-instance", (_event, argv) => {
-    const p = markdownPathFromArgv(argv);
-    if (p) openPath(p);
+  // `workingDirectory` is the *other* process's cwd, and it is the only thing
+  // that can make sense of a relative path typed into a shell somewhere else.
+  app.on("second-instance", (_event, argv, workingDirectory) => {
+    openPathsFromArgv(argv, workingDirectory);
     const win = targetWindow();
     if (win) {
       if (win.isMinimized()) win.restore();
@@ -2713,9 +2705,11 @@ app.whenReady().then(() => {
 
   // Windows/Linux cold start: the launched-with file arrives as an argv path.
   // (macOS already queued it via the open-file event before we got here.)
+  // Queued, never awaited — openPath() only puts it on a list the first window
+  // drains once its renderer says it is listening, so nothing here is in front
+  // of the first shell.
   if (process.platform !== "darwin") {
-    const p = markdownPathFromArgv(process.argv);
-    if (p) openPath(p);
+    openPathsFromArgv(process.argv, process.cwd());
   }
 
   loadSessionPrefs();

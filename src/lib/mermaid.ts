@@ -5,6 +5,8 @@
 // answers with mermaid constantly — and lib/terminal-diagrams.ts now renders
 // those into a pane overlay. Both want the same three things: the library
 // loaded once and lazily, one palette, and a viewport you can pan and zoom.
+// The viewport itself has since moved to lib/pan-zoom.ts, where the image
+// viewer shares it — the gestures are the app's, not mermaid's.
 //
 // Lazy matters more than it looks. Mermaid is by far the largest dependency in
 // the app (~1MB of parser and layout engine, more than everything else in the
@@ -13,6 +15,8 @@
 // about to be drawn: the terminal detector deliberately recognizes blocks with
 // a regex rather than by asking mermaid to parse them, precisely so that a pane
 // that merely *prints* a diagram never loads the chunk. The click does.
+
+import { attachPanZoom } from "./pan-zoom";
 
 // The line that opens a mermaid diagram — its diagram type. Used to tell a real
 // block from a fenced code sample that happens to say "mermaid", without
@@ -62,97 +66,6 @@ export function loadMermaid(): Promise<MermaidApi> {
 }
 
 /**
- * Make an SVG draggable and zoomable inside `wrapper`.
- *
- * `inner` is the element that carries the transform; `wrapper` is the box that
- * clips it and receives the events. Window-level move/up listeners exist only
- * for the duration of a drag, so an overlay that closes mid-drag leaves nothing
- * behind — and the returned disposer covers the case where it closes *during*
- * one, which is the only way a listener could otherwise outlive the element.
- */
-export function attachPanZoom(
-  wrapper: HTMLElement,
-  inner: HTMLElement
-): () => void {
-  let scale = 1;
-  let panX = 0;
-  let panY = 0;
-
-  function applyTransform() {
-    inner.style.transform = `translate(${panX}px, ${panY}px) scale(${scale})`;
-  }
-
-  function onWheel(e: WheelEvent) {
-    e.preventDefault();
-    const delta = e.deltaY > 0 ? 0.9 : 1.1;
-    const newScale = Math.max(0.2, Math.min(5, scale * delta));
-
-    // Zoom toward the cursor rather than the origin: the point under the
-    // pointer is the one the user is looking at, so it must not move.
-    const rect = wrapper.getBoundingClientRect();
-    const cx = e.clientX - rect.left;
-    const cy = e.clientY - rect.top;
-    panX = cx - (cx - panX) * (newScale / scale);
-    panY = cy - (cy - panY) * (newScale / scale);
-    scale = newScale;
-
-    applyTransform();
-  }
-
-  let dragging = false;
-  let startX = 0;
-  let startY = 0;
-  let startPanX = 0;
-  let startPanY = 0;
-
-  function onMouseMove(e: MouseEvent) {
-    if (!dragging) return;
-    panX = startPanX + (e.clientX - startX);
-    panY = startPanY + (e.clientY - startY);
-    applyTransform();
-  }
-
-  function endDrag() {
-    if (!dragging) return;
-    dragging = false;
-    wrapper.style.cursor = "";
-    window.removeEventListener("mousemove", onMouseMove);
-    window.removeEventListener("mouseup", endDrag);
-  }
-
-  function onMouseDown(e: MouseEvent) {
-    if (e.button !== 0) return;
-    dragging = true;
-    startX = e.clientX;
-    startY = e.clientY;
-    startPanX = panX;
-    startPanY = panY;
-    wrapper.style.cursor = "grabbing";
-    e.preventDefault();
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("mouseup", endDrag);
-  }
-
-  function onDoubleClick() {
-    scale = 1;
-    panX = 0;
-    panY = 0;
-    applyTransform();
-  }
-
-  wrapper.addEventListener("wheel", onWheel, { passive: false });
-  wrapper.addEventListener("mousedown", onMouseDown);
-  wrapper.addEventListener("dblclick", onDoubleClick);
-
-  return () => {
-    endDrag();
-    wrapper.removeEventListener("wheel", onWheel);
-    wrapper.removeEventListener("mousedown", onMouseDown);
-    wrapper.removeEventListener("dblclick", onDoubleClick);
-  };
-}
-
-/**
  * Put `svg` inside a pan/zoom viewport, in the place it currently occupies.
  *
  * Used by the markdown preview, where mermaid has already replaced each
@@ -171,7 +84,7 @@ export function wrapInViewport(svg: Element): () => void {
   inner.appendChild(svg);
   wrapper.appendChild(inner);
 
-  return attachPanZoom(wrapper, inner);
+  return attachPanZoom(wrapper, inner).dispose;
 }
 
 // Mermaid needs a DOM id for every render, and reuses it for the ids *inside*
