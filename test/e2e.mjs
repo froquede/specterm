@@ -2191,6 +2191,66 @@ try {
       restoredTabs === tabsAtQuit && eqPath(restoredCwd, liveCwdAtQuit),
       `tabs ${tabsAtQuit}→${restoredTabs} cwd=${restoredCwd} (was at ${liveCwdAtQuit})`
     );
+
+    // 23) Scrollback geometry survives a tab switch. xterm sizes its scroll area
+    // on an animation frame, and a hidden tab is unmounted — so output that
+    // landed while another tab was in front used to be measured with the
+    // terminal detached from the page (height 0), leaving the viewport exactly
+    // one screen short: scrolling stopped early, and only a resize put it right.
+    // Print a long run while another tab is in front, come back, and the scroll
+    // area must already be the size a resize would give it.
+    const geoTab = await win2.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+    await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win2.keyboard.type("sleep 2; seq 1 400");
+    await win2.keyboard.press("Enter");
+    // Straight to another tab, so the 400 lines arrive with this one unmounted.
+    await win2.locator(".tab-new").click();
+    await win2.waitForTimeout(6000);
+    if (geoTab) await win2.locator(`.tab[data-tab-id="${geoTab}"]`).click();
+    await win2.waitForTimeout(1200);
+
+    const viewportGeometry = () =>
+      win2.evaluate(() => {
+        const vp = document.querySelector(".pane-active .xterm-viewport");
+        return vp
+          ? { scroll: vp.scrollHeight, client: vp.clientHeight }
+          : null;
+      });
+    const setWindowHeight = (delta) =>
+      app2.evaluate(({ BrowserWindow }, d) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        const [width, height] = w.getSize();
+        w.setSize(width, height + d);
+      }, delta);
+
+    const afterSwitch = await viewportGeometry();
+    // The resize that used to be the workaround. Height only: the width — and
+    // so the wrapping, and the line count — stays exactly as it was, which is
+    // what makes the two measurements comparable.
+    await setWindowHeight(-80);
+    await win2.waitForTimeout(1200);
+    const afterResize = await viewportGeometry();
+    await setWindowHeight(80);
+    await win2.waitForTimeout(600);
+
+    if (!afterSwitch || !afterResize || afterSwitch.scroll < afterSwitch.client * 2) {
+      skip(
+        "scrollback geometry survives a tab switch",
+        "the pane did not accumulate measurable scrollback"
+      );
+    } else {
+      // A whole screen is ~600px; a row of rounding is ~17. Anything under a few
+      // rows means the two agree.
+      const delta = Math.abs(afterSwitch.scroll - afterResize.scroll);
+      check(
+        "scrollback geometry survives a tab switch",
+        delta < 80,
+        `after switch ${afterSwitch.scroll}px, after resize ${afterResize.scroll}px (viewport ${afterSwitch.client}px)`
+      );
+    }
+
   } finally {
     try {
       await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);

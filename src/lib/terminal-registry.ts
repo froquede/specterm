@@ -52,6 +52,17 @@ export function setTerminalTheme(theme: ITheme) {
 }
 
 function safeFit(term: Terminal, fitAddon: FitAddon) {
+  // A terminal in a background tab is unmounted, so its element is out of the
+  // document — and things that touch every terminal at once (a font size or
+  // family change) still reach it. Nothing there can be measured, and a grid
+  // sized from a guess would be pushed straight to the shell as a resize, which
+  // is how a program that redraws itself (Claude Code, vim) ends up repainting
+  // its whole UI at some nonsense width. FitAddon already declines the
+  // measurement (a detached element reports no size at all, and it refuses the
+  // NaN that produces) — this says so up front rather than relying on it. The
+  // pane refits when it is attached again.
+  if (term.element && !term.element.isConnected) return;
+
   const buffer = term.buffer.active;
   // Was the viewport pinned to the bottom before the fit?
   const atBottom = buffer.viewportY >= buffer.baseY;
@@ -64,6 +75,34 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
     term.scrollToBottom();
   } else {
     term.scrollToLine(viewportY);
+  }
+}
+
+// Make xterm re-measure the viewport geometry it caches.
+//
+// The height of the scrollable area is `rowHeight * bufferLength + (viewport
+// height - canvas height)`, recomputed on a requestAnimationFrame whenever the
+// buffer grows. A pane in a background tab is unmounted (App renders only the
+// active tab's split tree), so those frames run with the terminal element
+// detached from the document — where offsetHeight reads 0, and the scroll area
+// is left exactly one screen too short. The pane looks right when it comes back,
+// because xterm paints from its own viewportY, but the scrollbar can no longer
+// reach the last screen of output: scrolling stops early, as if the scrollback
+// ended there. It self-heals on the next chunk of output — so a pane that has
+// gone quiet (Claude finished its turn) stays stuck until something resizes the
+// terminal, which is exactly the workaround people find. Ask for the same
+// recomputation on every re-attach instead.
+function resyncViewportGeometry(term: Terminal) {
+  // Private API, in the same spirit as FitAddon's own dimension read. Guarded:
+  // if a version bump moves it, the cost is this fix, not the attach.
+  try {
+    (
+      term as unknown as {
+        _core?: { viewport?: { syncScrollArea?(immediate: boolean): void } };
+      }
+    )._core?.viewport?.syncScrollArea?.(true);
+  } catch {
+    // Renderer not up yet (or the internal moved) — a later resize still fixes it.
   }
 }
 
@@ -80,6 +119,7 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
 // move), so there is no captured state to keep in step. Runs after the fit so
 // the moved element has been measured and scrollHeight is valid.
 function syncViewportScroll(instance: TerminalInstance) {
+  resyncViewportGeometry(instance.term);
   const viewport =
     instance.container?.querySelector<HTMLElement>(".xterm-viewport");
   if (!viewport) return;
