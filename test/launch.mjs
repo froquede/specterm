@@ -29,8 +29,14 @@ export const launchArgs = (root, userDataDir, extra = []) => [
   ...extra,
 ];
 
+// Closing or quitting with something still running puts a native confirmation
+// dialog up (see `confirmClose` in electron/main.cjs). Every harness ends by
+// quitting its app programmatically, and a native dialog is not something a
+// script can answer — so the harnesses opt out by default. The one section that
+// checks the confirmation itself opts back in by passing an empty value here.
 export const launchEnv = (extra = {}) => ({
   ...process.env,
+  SPECTERM_NO_CLOSE_CONFIRM: "1",
   ...(process.env.SPECTERM_TEST_FOREGROUND === "1"
     ? {}
     : { SPECTERM_BACKGROUND_WINDOWS: "1" }),

@@ -22,11 +22,16 @@ xattr -dr com.apple.quarantine /Applications/Specterm.app
 Splits with draggable dividers, tabs, and multiple windows — with tabs that tear
 off, move between windows and merge back, and panes that become tabs of their own
 by being dropped on the tab bar. A filterable file sidebar with pinned favourites.
-Markdown preview and editor with Mermaid, and a syntax-highlighted viewer for
-everything else. Mermaid blocks that go past in *terminal output* are drawn too:
+Markdown preview and editor with Mermaid, an image viewer you can zoom and pan,
+and a syntax-highlighted viewer for everything else — from the sidebar, or by
+naming the file on the command line.
+Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
 Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
 base16 gallery, and a tab bar that stands in for the title bar.
+Closing a window (or quitting) while a build, a test run or a Claude session is
+still going asks first, naming what is running — read from the shells' own child
+processes, so a window of idle prompts still closes on one click.
 
 ## Keybindings
 
@@ -52,6 +57,7 @@ later version doesn't take your setting with it.
 | Close tab | `⌘⇧W` | `Ctrl+Shift+Q` |
 | Close pane | `⌘W` | `Ctrl+Shift+W` |
 | Next / previous tab | `⌘⇧]` / `⌘⇧[` | `Ctrl+Shift+→` / `Ctrl+Shift+←` |
+| Next / previous tab (also) | `Ctrl+Tab` / `Ctrl+⇧Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Split — stacked | `⌘D` | `Ctrl+Shift+S` |
 | Split — side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
 | Focus pane left/right/up/down | `⌥`+arrow | `⌥`+arrow |
@@ -95,6 +101,25 @@ joins that tab; drop it back over the panes and it splits or swaps as usual.
 is. Read from the shell's own process, so it works without configuring anything;
 `OSC 7` (which zsh and fish send by default) is used as a faster hint when present.
 
+**Opening a file from outside.** `specterm notes.md`, `specterm shot.png`, a
+double-click on a registered type, an "Open With" — they all land in a new tab,
+routed exactly the way clicking that file in the sidebar is: markdown to the
+preview, an image to the image viewer, anything else to the text viewer, which
+refuses binaries on its own. Relative paths resolve against the shell you typed
+them in, several files open as several tabs, and a directory or a typo'd
+filename is ignored rather than guessed at — you get the terminal you asked for.
+If Specterm is already running, the file opens in the window you are looking at
+instead of starting a second app. See `electron/open-paths.cjs`.
+
+**Zooming a picture.** The image viewer and both places diagrams are drawn share
+one viewport: the **wheel** (or a trackpad pinch) zooms toward the pointer,
+**drag** pans, and **double-click** goes back to where you started. Images open
+fitted to the pane and their toolbar carries the same thing as buttons, plus
+*1:1* for one image pixel per screen pixel. Nothing is bound to a key — `⌘=` /
+`⌘-` / `⌘0` are the terminal font size, app-wide, and a viewer that quietly took
+them while it happened to be focused would be the worse surprise. See
+`src/lib/pan-zoom.ts`.
+
 **Waiting panes.** Four independent signals — the standard `OSC 9`/`777`/`99`
 notification sequences, the terminal bell, output-timing detection for Claude
 Code, and Claude's own hooks. Three of them need no setup. Optional desktop
@@ -109,6 +134,17 @@ only when it is safe: a dirty working tree is left completely alone, the pull is
 branch has `main` advanced behind it without its working tree or its `HEAD`
 being touched. No clone, no `git`, no network — it skips. See
 `electron/repo-sync.cjs`.
+
+**Editing markdown.** Inside the markdown *editor*, `⌘V`/`⌘C`/`⌘X`
+(`Ctrl+V`/`Ctrl+C`/`Ctrl+X`) act on the document rather than the terminal behind
+it, and right-clicking offers the same.
+
+**Closing with something still running.** A window's terminals die with it, so
+closing one — or quitting — while a build, a test run or a Claude session is in
+flight asks first, naming what is running. The answer comes from the shells' own
+child processes, not from "are there tabs open", so a window of idle prompts
+closes on one click. A window that parks its session instead (background
+sessions, on by default) kills nothing and never asks.
 
 **Theming.** Themes drive the terminal palette and the app chrome at once.
 Settings → Theme → *Browse gallery* has 325 bundled

@@ -6,7 +6,9 @@ import {
   untrack,
   Show,
 } from "solid-js";
+import { Portal } from "solid-js/web";
 import type { EditorView } from "@codemirror/view";
+import type * as MarkdownEditor from "../lib/markdown-editor";
 import { getBackend } from "../backends";
 import { renderMarkdown, renderMermaidBlocks } from "../lib/markdown";
 import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
@@ -129,6 +131,44 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
 
   // Live CodeMirror instance while in edit mode (null in read mode).
   let editorView: EditorView | null = null;
+  // The editor module, captured when the lazy chunk lands (see the effect
+  // below). Its clipboard commands back both the editor's keys and the
+  // right-click menu, so the menu doesn't need a static import of the 500 KB
+  // CodeMirror bundle to call them.
+  let editorApi: typeof MarkdownEditor | null = null;
+
+  // Right-click menu over the editor: where, and whether there was a selection
+  // under the cursor when it opened.
+  const [menu, setMenu] = createSignal<{
+    x: number;
+    y: number;
+    hasSelection: boolean;
+  } | null>(null);
+
+  // Clamped so it never spills past the bottom/right window edge — the same
+  // thing the file tree's menu does, and for the same reason: right-clicking
+  // near a corner is exactly when a menu you can't reach is worst.
+  const MENU_W = 180;
+  const MENU_H = 140;
+
+  function openEditorMenu(e: MouseEvent) {
+    if (!editorView) return;
+    e.preventDefault();
+    setMenu({
+      x: Math.max(4, Math.min(e.clientX, window.innerWidth - MENU_W)),
+      y: Math.max(4, Math.min(e.clientY, window.innerHeight - MENU_H)),
+      hasSelection: editorView.state.selection.ranges.some((r) => !r.empty),
+    });
+  }
+
+  // Every item does its work on the live editor, then the menu goes away. The
+  // buttons suppress mousedown so the click doesn't move the caret or drop the
+  // selection the command is about to act on.
+  function runMenuAction(action: (view: EditorView) => void) {
+    const view = editorView;
+    setMenu(null);
+    if (view) action(view);
+  }
 
   // Store the original rendered HTML so we can re-highlight without re-rendering
   let renderedHtml = "";
@@ -249,9 +289,10 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     const initialDoc = untrack(content);
     let view: EditorView | null = null;
     let disposed = false;
-    import("../lib/markdown-editor").then(({ createMarkdownEditor }) => {
+    import("../lib/markdown-editor").then((mod) => {
       if (disposed || !editorRef) return;
-      view = createMarkdownEditor({
+      editorApi = mod;
+      view = mod.createMarkdownEditor({
         doc: initialDoc,
         parent: editorRef,
         onDocChanged: (v) => {
@@ -266,6 +307,7 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     });
     onCleanup(() => {
       disposed = true;
+      setMenu(null);
       if (view) {
         // Carry the (possibly unsaved) buffer back so the reader previews it.
         setContent(view.state.doc.toString());
@@ -512,6 +554,14 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     // Ignore when another pane is focused: the listener is global (window), so
     // without this guard every mounted markdown pane would react to one ⌘F.
     if (!props.isActive) return;
+    // Escape dismisses the editor's right-click menu, like the file tree's.
+    if (e.key === "Escape" && menu()) {
+      e.preventDefault();
+      e.stopPropagation();
+      setMenu(null);
+      editorView?.focus();
+      return;
+    }
     if (!matchesCmd(e)) return;
     const key = e.key.toLowerCase();
 
@@ -640,7 +690,74 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
       )}
       {error() && <div class="markdown-error">{error()}</div>}
       <Show when={mode() === "edit"}>
-        <div ref={editorRef} class="markdown-editor" />
+        <div
+          ref={editorRef}
+          class="markdown-editor"
+          onContextMenu={openEditorMenu}
+        />
+      </Show>
+      {/* Cut/copy/paste as a visible option, not just a chord. The app ships no
+          native Edit menu (it would claim ⌘C/⌘V before the terminal sees them),
+          so this menu — and the editor's own keymap — is how the clipboard
+          reaches a markdown file. Portalled over a full-viewport backdrop, the
+          same shape the file-tree menu uses. */}
+      <Show when={menu()}>
+        {(m) => (
+          <Portal>
+            <div
+              class="md-menu-backdrop"
+              onClick={() => setMenu(null)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setMenu(null);
+              }}
+            >
+              <div
+                class="md-context-menu"
+                style={{ left: `${m().x}px`, top: `${m().y}px` }}
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.preventDefault()}
+              >
+                <button
+                  class="md-menu-item"
+                  disabled={!m().hasSelection}
+                  onClick={() =>
+                    runMenuAction((v) => editorApi?.cutFromEditor(v))
+                  }
+                >
+                  Cut
+                </button>
+                <button
+                  class="md-menu-item"
+                  disabled={!m().hasSelection}
+                  onClick={() =>
+                    runMenuAction((v) => editorApi?.copyFromEditor(v))
+                  }
+                >
+                  Copy
+                </button>
+                <button
+                  class="md-menu-item"
+                  onClick={() =>
+                    runMenuAction((v) => editorApi?.pasteIntoEditor(v))
+                  }
+                >
+                  Paste
+                </button>
+                <div class="md-menu-sep" />
+                <button
+                  class="md-menu-item"
+                  onClick={() =>
+                    runMenuAction((v) => editorApi?.selectAllInEditor(v))
+                  }
+                >
+                  Select all
+                </button>
+              </div>
+            </div>
+          </Portal>
+        )}
       </Show>
       <Show when={mode() === "read"}>
         <div

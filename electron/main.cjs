@@ -2,6 +2,7 @@ const {
   app,
   BrowserWindow,
   ipcMain,
+  dialog,
   shell,
   Menu,
   clipboard,
@@ -21,6 +22,7 @@ const { watch } = require("chokidar");
 const { execFile, spawn } = require("child_process");
 const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
+const { filePathsFromArgv } = require("./open-paths.cjs");
 
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
@@ -333,21 +335,11 @@ function flushOpenPaths(win) {
   }
 }
 
-// Pull a markdown file path out of a process argv array — the Windows/Linux way
-// the OS passes a double-clicked/"Open With" file (cold start via process.argv,
-// warm start via the second-instance event). Scan for the first existing *.md.
-// macOS uses the `open-file` event instead, so this never runs there.
-function markdownPathFromArgv(argv) {
-  for (const arg of argv.slice(1)) {
-    if (typeof arg === "string" && arg.toLowerCase().endsWith(".md")) {
-      try {
-        if (fs.existsSync(arg)) return arg;
-      } catch {
-        // ignore unreadable args
-      }
-    }
-  }
-  return null;
+// Queue every file an argv array asks for. The classification — which arguments
+// are paths at all, what they resolve against, what is silently ignored — lives
+// in open-paths.cjs, where it can be tested without booting an app.
+function openPathsFromArgv(argv, cwd) {
+  for (const filePath of filePathsFromArgv(argv, cwd)) openPath(filePath);
 }
 
 // macOS delivers "Open With"/double-click through this event, which can fire
@@ -359,7 +351,7 @@ app.on("open-file", (event, filePath) => {
   openPath(filePath);
 });
 
-// Windows/Linux: a second launch (e.g. double-clicking another .md) starts a
+// Windows/Linux: a second launch (e.g. double-clicking another file) starts a
 // fresh process. Take a single-instance lock so that process forwards its file
 // to the already-running window instead of opening a duplicate. macOS routes
 // through `open-file` above and doesn't need this.
@@ -369,9 +361,10 @@ const singleInstanceOk =
 if (!singleInstanceOk) {
   app.quit();
 } else if (process.platform !== "darwin") {
-  app.on("second-instance", (_event, argv) => {
-    const p = markdownPathFromArgv(argv);
-    if (p) openPath(p);
+  // `workingDirectory` is the *other* process's cwd, and it is the only thing
+  // that can make sense of a relative path typed into a shell somewhere else.
+  app.on("second-instance", (_event, argv, workingDirectory) => {
+    openPathsFromArgv(argv, workingDirectory);
     const win = targetWindow();
     if (win) {
       if (win.isMinimized()) win.restore();
@@ -521,12 +514,10 @@ function updateTray() {
       {
         // The one path that actually stops the shells, so it says so.
         label: "Quit Specterm (ends detached shells)",
-        click: () => {
-          quitting = true;
-          killDetachedPtys();
-          updateTray();
-          app.quit();
-        },
+        // Just quit: `before-quit` is what sets `quitting` and ends the parked
+        // shells, and going first would kill them before the confirmation this
+        // quit may still be refused by.
+        click: () => app.quit(),
       },
     ])
   );
@@ -570,6 +561,145 @@ function raise(win) {
   if (win && !win.isDestroyed() && !BACKGROUND_WINDOWS) win.focus();
   return win;
 }
+
+// === Closing with something still running ===
+//
+// A window's terminals die with it (killPtysOwnedBy above), so closing one — or
+// quitting — while a build, a test run or a Claude session is in flight kills
+// it. Ask before that happens.
+//
+// Only when something is actually running: the answer is read from the shells
+// themselves (their live child processes), not from "are there tabs open", so
+// the everyday case of closing a window full of idle prompts stays a single
+// click with no dialog in the way.
+
+// Long-lived helpers a shell starts for itself rather than work the user began.
+// gitstatusd (powerlevel10k's git worker) lives as long as the shell does, and
+// on Windows ConPTY always has a console host child — counting either as "still
+// running" would put a dialog in front of every close.
+const IGNORED_DESCENDANTS = [
+  /^gitstatusd/i,
+  /^conhost\.exe$/i,
+  /^OpenConsole\.exe$/i,
+];
+
+// The scan shells out (`ps`, or PowerShell on Windows). It is fast, but a quit
+// must never hang on it: past this, close as if nothing were running.
+const BUSY_SCAN_TIMEOUT_MS = 2000;
+
+// An automated run quits the app programmatically and has no way to answer a
+// native dialog, so the e2e suite sets this to keep its own teardown scriptable.
+// The one place it doesn't is the check that covers this feature (see e2e.mjs).
+const CLOSE_CONFIRM_DISABLED = process.env.SPECTERM_NO_CLOSE_CONFIRM === "1";
+
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => {
+      const timer = setTimeout(() => resolve(fallback), ms);
+      // Never let the guard timer be the thing keeping the app alive.
+      timer.unref?.();
+    }),
+  ]);
+}
+
+/** Live PTYs, optionally narrowed to one window's. */
+function livePtysOwnedBy(wc) {
+  const live = [];
+  for (const [, instance] of ptyInstances) {
+    if (instance.disposed || !instance.process.pid) continue;
+    if (!instance.wc || instance.wc.isDestroyed()) {
+      // Two different shells have no window. A *parked* one is waiting in the
+      // tray, and Quit is the one thing that ends it (killDetachedPtys) — so a
+      // build left running in a detached session is exactly what an app-scope
+      // question is about. A PTY merely in transit between windows belongs to a
+      // tear-off in flight, and is nobody's to ask about.
+      if (!wc && instance.detached) live.push(instance);
+      continue;
+    }
+    if (wc && instance.wc !== wc) continue;
+    live.push(instance);
+  }
+  return live;
+}
+
+// What is running inside those shells, by name, deduplicated. Empty means the
+// shells are sitting at their prompts — or that we couldn't tell, which is
+// treated the same way: never block a close on a guess.
+async function runningCommands(wc) {
+  const shells = livePtysOwnedBy(wc);
+  if (shells.length === 0) return [];
+
+  const index = await childProcessIndex();
+  const names = new Set();
+  for (const instance of shells) {
+    for (const proc of await descendantsOf(instance.process.pid, index)) {
+      if (IGNORED_DESCENDANTS.some((re) => re.test(proc.comm))) continue;
+      names.add(proc.comm);
+    }
+  }
+  return [...names];
+}
+
+// Ask, and answer true when it's fine to go ahead. `scope` is "app" for a quit
+// (every window's terminals) and "window" for one window's.
+async function confirmClose(win, scope) {
+  if (CLOSE_CONFIRM_DISABLED) return true;
+  const commands = await withTimeout(
+    runningCommands(scope === "app" ? null : win.webContents),
+    BUSY_SCAN_TIMEOUT_MS,
+    []
+  );
+  if (commands.length === 0) return true;
+
+  const shown = commands.slice(0, 6).join(", ");
+  const list = commands.length > 6 ? `${shown}, …` : shown;
+  const options = {
+    type: "question",
+    buttons: ["Cancel", scope === "app" ? "Quit anyway" : "Close anyway"],
+    defaultId: 0,
+    cancelId: 0,
+    noLink: true,
+    message: scope === "app" ? "Quit Specterm?" : "Close this window?",
+    detail:
+      `Still running: ${list}.\n\n` +
+      `Closing ends ${commands.length === 1 ? "it" : "them"}.`,
+  };
+  // Attached to the window it is about (a sheet on macOS) when there is one —
+  // the two-argument form only accepts a real window, never undefined.
+  const parent = win && !win.isDestroyed() ? win : null;
+  const { response } = parent
+    ? await dialog.showMessageBox(parent, options)
+    : await dialog.showMessageBox(options);
+  return response === 1;
+}
+
+// Set once the user has agreed to quit (or the updater is deliberately
+// restarting us): from then on the windows close without asking again.
+let quitConfirmed = false;
+
+// A dialog is already up: a second ⌘Q while it waits must not stack another.
+let quitAsking = false;
+
+app.on("before-quit", (event) => {
+  if (quitConfirmed || CLOSE_CONFIRM_DISABLED) return;
+  // Nothing running anywhere: decided synchronously, so the ordinary quit path
+  // never waits on a process scan.
+  if (livePtysOwnedBy(null).length === 0) {
+    quitConfirmed = true;
+    return;
+  }
+  event.preventDefault();
+  if (quitAsking) return;
+  quitAsking = true;
+  const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0];
+  void confirmClose(win ?? null, "app").then((ok) => {
+    quitAsking = false;
+    if (!ok) return;
+    quitConfirmed = true;
+    app.quit();
+  });
+});
 
 function createWindow(opts = {}) {
   const isMac = process.platform === "darwin";
@@ -740,23 +870,63 @@ function createWindow(opts = {}) {
     if (!win.isDestroyed()) win.flashFrame(false);
   });
 
-  // --- detach-on-close ----------------------------------------------------
+  // --- closing a window ----------------------------------------------------
   //
-  // A close is intercepted once, to give the renderer a chance to hand its shells
-  // over before its terminals are destroyed. It can't be done from the renderer's
-  // own `beforeunload`: serializing a screen has to wait on xterm's write queue,
-  // and nothing asynchronous is guaranteed to finish there. So the close is
-  // cancelled, the renderer is asked to park itself, and the real close happens
-  // when it reports back (see the "park-session" handler).
+  // Two things can stop a close, in this order: a confirmation (the shells are
+  // about to be killed and something is still running in them) and the parking
+  // handshake (the shells are *not* about to be killed — they are being handed
+  // over to the tray). They are mutually exclusive by construction: a window
+  // that parks kills nothing, so it has nothing to warn about.
   //
-  // `parking` makes it a one-shot: the destroy below re-enters this handler, and
-  // a second interception would deadlock the window shut.
+  // A close can only be stopped synchronously, so both paths work the same way
+  // — cancel this close, do the asynchronous part, re-issue the close — and
+  // each has a one-shot flag, because the re-issued close comes back through
+  // here.
   const wcIdOf = (w) => (w.isDestroyed() ? -1 : w.webContents.id);
 
   let parking = false;
+  let closeConfirmed = false;
+  let closeAsking = false;
+
   win.on("close", (event) => {
-    if (quitting || parking || !backgroundSessions) return;
-    if (win.webContents.isDestroyed() || win.webContents.isCrashed()) return;
+    // Can this window still hand its shells over? A renderer that is gone or
+    // crashed can't be asked, and Quit means nothing is kept — in both cases the
+    // terminals die with the window, so the confirmation applies.
+    const parks =
+      !quitting &&
+      backgroundSessions &&
+      !win.webContents.isDestroyed() &&
+      !win.webContents.isCrashed();
+
+    // --- confirm ------------------------------------------------------------
+    //
+    // Only when the shells really are about to die. Already answered — for this
+    // window, or for the whole app on the way to a quit — lets it through.
+    if (!parks && !closeConfirmed && !quitConfirmed && !CLOSE_CONFIRM_DISABLED) {
+      event.preventDefault();
+      if (closeAsking) return; // a dialog is already up for this window
+      closeAsking = true;
+      void confirmClose(win, "window").then((ok) => {
+        closeAsking = false;
+        if (!ok || win.isDestroyed()) return;
+        closeConfirmed = true;
+        win.close();
+      });
+      return;
+    }
+
+    // --- detach-on-close ----------------------------------------------------
+    //
+    // A close is intercepted once, to give the renderer a chance to hand its shells
+    // over before its terminals are destroyed. It can't be done from the renderer's
+    // own `beforeunload`: serializing a screen has to wait on xterm's write queue,
+    // and nothing asynchronous is guaranteed to finish there. So the close is
+    // cancelled, the renderer is asked to park itself, and the real close happens
+    // when it reports back (see the "park-session" handler).
+    //
+    // `parking` makes it a one-shot: the destroy below re-enters this handler, and
+    // a second interception would deadlock the window shut.
+    if (!parks || parking) return;
     event.preventDefault();
     parking = true;
     win.webContents.send("detach-window");
@@ -964,6 +1134,9 @@ ipcMain.handle("adopt-pty", (event, id, cols, rows) => {
   if (!instance) return { buffered: EMPTY_BYTES, exited: true };
 
   instance.wc = event.sender;
+  // It has a window again, so it is no longer one of the parked shells Quit
+  // ends — and no longer one of the shells a quit has to ask about.
+  instance.detached = false;
   clearTransitTimer(instance);
   // Concatenated once and sent as bytes, not as an array of numbers — this can
   // be a megabyte of a build's output, and boxing every byte of it would stall
@@ -1155,9 +1328,54 @@ async function scanProcessTable() {
     return table;
   }
 
-  // Linux walks the kernel's child lists instead (see linuxChildren); Windows
-  // has no cheap equivalent at all, so panes there restore as plain shells.
+  if (process.platform === "win32") {
+    // No /proc and no `ps`; one CIM query is the cheap equivalent. Only the
+    // close confirmation uses this — the session providers stay off Windows.
+    try {
+      const out = await new Promise((resolve, reject) => {
+        execFile(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process | ForEach-Object " +
+              '{ "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }',
+          ],
+          (err, stdout) => (err ? reject(err) : resolve(stdout))
+        );
+      });
+      for (const line of out.split("\n")) {
+        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
+        if (!m) continue;
+        table.set(Number(m[1]), {
+          pid: Number(m[1]),
+          ppid: Number(m[2]),
+          comm: m[3].trim(),
+        });
+      }
+    } catch (_) {
+      // PowerShell missing or refused — no table, so nothing is reported as
+      // running and a close is never blocked on a guess.
+    }
+    return table;
+  }
+
+  // Linux walks the kernel's child lists instead (see linuxChildren), so it
+  // never needs an index.
   return table;
+}
+
+// pid -> [child, ...]. The shape descendantsOf walks on the platforms that need
+// an index; empty on Linux, which reads the kernel's per-pid child lists.
+async function childProcessIndex() {
+  const children = new Map();
+  for (const proc of (await scanProcessTable()).values()) {
+    const siblings = children.get(proc.ppid);
+    if (siblings) siblings.push(proc);
+    else children.set(proc.ppid, [proc]);
+  }
+  return children;
 }
 
 // Descendants of one shell, breadth-first. `table` is the macOS process table;
@@ -2628,6 +2846,10 @@ open "$TARGET"
     stdio: "ignore",
   });
   child.unref();
+  // The user pressed "install and restart" — that is the answer to "do you want
+  // to close?", so don't ask it again on the way out (and don't let a dialog
+  // stall a quit the swap script is already waiting on).
+  quitConfirmed = true;
   app.quit();
 }
 
@@ -2673,6 +2895,8 @@ ipcMain.handle("updater:install", () => {
     if (isMac) {
       macInstallUpdate();
     } else {
+      // Same as macInstallUpdate: the install *is* the confirmed quit.
+      quitConfirmed = true;
       autoUpdater.quitAndInstall(false, true);
     }
   } catch (err) {
@@ -2713,9 +2937,11 @@ app.whenReady().then(() => {
 
   // Windows/Linux cold start: the launched-with file arrives as an argv path.
   // (macOS already queued it via the open-file event before we got here.)
+  // Queued, never awaited — openPath() only puts it on a list the first window
+  // drains once its renderer says it is listening, so nothing here is in front
+  // of the first shell.
   if (process.platform !== "darwin") {
-    const p = markdownPathFromArgv(process.argv);
-    if (p) openPath(p);
+    openPathsFromArgv(process.argv, process.cwd());
   }
 
   loadSessionPrefs();
@@ -2748,6 +2974,12 @@ app.whenReady().then(() => {
 // the close handler intercepting the windows on their way out — a Quit that got
 // itself deferred into a detach would never finish.
 app.on("before-quit", () => {
+  // The confirmation handler above may be holding this quit for an answer.
+  // Preventing the default stops the *quit*, not the rest of the listeners — so
+  // without this, a quit the user is about to cancel would still have written
+  // the session file, killed every parked shell and taken the tray away, and
+  // left `quitting` set so no window ever parked again.
+  if (quitAsking) return;
   quitting = true;
   // Before anything is torn down: the windows are still open, so their bounds are
   // still readable, and the layouts they pushed are still current.

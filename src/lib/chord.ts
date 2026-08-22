@@ -161,6 +161,13 @@ export function isBareModifierChord(chord: Chord): boolean {
 export function chordStealsFromTerminal(chord: Chord): boolean {
   const key = chord.key.toLowerCase();
   if (/^f\d{1,2}$/.test(key)) return false;
+  // Ctrl+Tab is the one Ctrl+<key> combination a terminal cannot receive: Tab
+  // is already Ctrl+I, and there is no encoding left for the Ctrl'd version. So
+  // nothing running in a pane is waiting for it, and taking it costs the shell
+  // nothing — which is why it is the app's own default for cycling tabs
+  // (tab.cycleNext in stores/keymap.ts). Refusing it here would leave a default
+  // the panel that lists it won't let you record.
+  if (chord.ctrl && key === "tab") return false;
   if (chord.meta || chord.alt) return false;
   if (chord.ctrl && chord.shift) return false;
   return true; // bare key, or Ctrl+<key> on its own

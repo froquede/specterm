@@ -53,6 +53,7 @@ export { default as IconFolder } from "lucide-solid/icons/folder";
 export { default as IconDrive } from "lucide-solid/icons/hard-drive";
 export { default as IconReveal } from "lucide-solid/icons/external-link";
 export { default as IconCdHere } from "lucide-solid/icons/square-terminal";
+export { default as IconSyncCwd } from "lucide-solid/icons/folder-input";
 export { default as IconSave } from "lucide-solid/icons/save";
 export { default as IconEdit } from "lucide-solid/icons/pencil";
 export { default as IconPreview } from "lucide-solid/icons/eye";

@@ -38,10 +38,11 @@ import {
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
 import { initStoreSync } from "./lib/store-sync";
-import { getTerminalInstance } from "./lib/terminal-registry";
+import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
 import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
+import { isMarkdownPath, isImagePath } from "./lib/file-kind";
 import { collectLeaves } from "./lib/split-tree";
 import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
@@ -227,6 +228,23 @@ export default function App() {
     if (searching && searching !== active) closeSearch();
   });
 
+  // Where the active pane's shell currently is — the file tree's "go to the
+  // terminal's folder" button, and the inverse of cdActivePane below.
+  //
+  // Both reads are tracked, so the button follows the pane you're actually in:
+  // activePaneId() re-runs it when you switch pane or tab, and useTerminalCwd
+  // re-runs it when that shell cds. The second half matters more than it looks —
+  // a terminal registers with the registry *after* the sidebar has painted, so
+  // reading the cwd untracked leaves the button permanently hidden on a fresh
+  // window, with nothing to ever re-render it.
+  //
+  // Empty for a pane that isn't a terminal (a markdown/text/image viewer), which
+  // is exactly when the button should not be offered.
+  function activePaneCwd(): string {
+    const id = activePaneId();
+    return id ? useTerminalCwd(id) : "";
+  }
+
   // Send `cd <path>` to the active pane's shell. Used by the file tree's
   // favorites (click or the "fav-N" search token).
   function cdActivePane(path: string) {
@@ -281,12 +299,11 @@ export default function App() {
   }
 
   // Markdown gets the rendered preview; an image opens in the image viewer;
-  // every other text file opens in the read-only text viewer. Extension-only
-  // routing keeps this cheap and predictable — TextPane itself decides whether
-  // the bytes are actually viewable.
-  const isMarkdownPath = (p: string) => /\.(md|markdown)$/i.test(p);
-  const isImagePath = (p: string) =>
-    /\.(png|jpe?g|gif|svg|webp|bmp|ico|avif)$/i.test(p);
+  // every other text file opens in the read-only text viewer. The predicates
+  // live in lib/file-kind because the sidebar paints a row by the same rules
+  // this function routes by, and two copies of "what counts as an image" is one
+  // copy too many. Extension-only routing keeps this cheap and predictable —
+  // TextPane itself decides whether the bytes are actually viewable.
 
   function handleOpenFile(path: string, mode: "split" | "tab") {
     if (isMarkdownPath(path)) {
@@ -518,17 +535,18 @@ export default function App() {
       document.removeEventListener("visibilitychange", onHidden);
     });
 
-    // Open markdown files handed to us by the OS (Finder "Open With",
-    // double-click, or a path arg) in a new tab. The main process queues files
-    // that arrive before this listener attaches and replays them here.
+    // Files handed to us by the OS (Finder "Open With", double-click, or a path
+    // argument) open in a new tab. The main process queues files that arrive
+    // before this listener attaches and replays them here.
+    //
+    // They go through the same routing the file tree uses, deliberately: a file
+    // named on the command line opens the way clicking it in the sidebar does.
+    // This used to test for `.md` and drop everything else on the floor, which
+    // is why `specterm shot.png` did nothing at all.
     let unlistenOpenPath: (() => void) | undefined;
     getBackend().then((backend) =>
       backend
-        .onOpenPath((filePath) => {
-          if (filePath.toLowerCase().endsWith(".md")) {
-            handleOpenMarkdown(filePath, "tab");
-          }
-        })
+        .onOpenPath((filePath) => handleOpenFile(filePath, "tab"))
         .then((un) => {
           unlistenOpenPath = un;
         })
@@ -701,6 +719,7 @@ export default function App() {
           open={store.state.sidebarView === "files"}
           onOpenFile={handleOpenFile}
           onCdPath={cdActivePane}
+          activePaneCwd={activePaneCwd}
           onDismiss={focusActivePane}
         />
         {/* Mounted only while open. The panel probes the installed font list and

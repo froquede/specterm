@@ -67,6 +67,18 @@ async function pasteClipboard(paneId: string, ptyId: number) {
   }
 }
 
+// Focus is inside a rich-text editing surface that owns its own clipboard keys.
+// The markdown editor is CodeMirror, which types into a contenteditable rather
+// than an <input>/<textarea> — so the dispatcher's is-editable check (see
+// stores/keybindings.ts) doesn't cover it, and without this the paste chords
+// below would fire while you edit a document, dropping the clipboard into the
+// terminal behind the pane instead of into the file. Declining here (rather than
+// swallowing the key) lets it reach the editor, which pastes it itself.
+function inRichTextEditor(): boolean {
+  const el = document.activeElement;
+  return el instanceof HTMLElement && el.isContentEditable;
+}
+
 export interface KeymapContext {
   store: ReturnType<typeof useTabStore>;
   // Pull keyboard focus back into the active pane's terminal.
@@ -92,6 +104,15 @@ export function createKeymap({
   focusActivePane,
   toggleSettings,
 }: KeymapContext): BindingSpec[] {
+  // Move the selection one tab along, wrapping at both ends. Shared by the
+  // ⌘⇧[ / ⌘⇧] pair and by Ctrl+Tab, which are two chords for the same move.
+  const cycleTab = (step: 1 | -1) => {
+    const tabs = store.state.tabs;
+    if (tabs.length < 2) return;
+    const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
+    store.setActiveTab(tabs[(idx + step + tabs.length) % tabs.length].id);
+  };
+
   return [
     // Settings — ⌘, on macOS (the platform convention for Preferences);
     // Ctrl+Shift+, elsewhere. Toggles the settings sidebar, which shares its
@@ -182,11 +203,7 @@ export function createKeymap({
       ...cmd({ shift: true, code: "BracketRight" }),
       byOS: kitty("ArrowRight"),
       label: "Next tab",
-      run: () => {
-        const tabs = store.state.tabs;
-        const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
-        if (tabs.length > 1) store.setActiveTab(tabs[(idx + 1) % tabs.length].id);
-      },
+      run: () => cycleTab(1),
     },
     {
       id: "tab.prev",
@@ -194,12 +211,31 @@ export function createKeymap({
       ...cmd({ shift: true, code: "BracketLeft" }),
       byOS: kitty("ArrowLeft"),
       label: "Previous tab",
-      run: () => {
-        const tabs = store.state.tabs;
-        const idx = tabs.findIndex((t) => t.id === store.state.activeTabId);
-        if (tabs.length > 1)
-          store.setActiveTab(tabs[(idx - 1 + tabs.length) % tabs.length].id);
-      },
+      run: () => cycleTab(-1),
+    },
+    // Ctrl+Tab / Ctrl+⇧Tab — the same move again, on the chord browsers and
+    // every other tabbed terminal use. One chord on every platform, macOS
+    // included: this is the one place a bare Ctrl combination is safe on
+    // Windows/Linux, because a terminal cannot encode Ctrl+Tab at all (Tab is
+    // already Ctrl+I), so no program in a pane is waiting for it. Physical
+    // `code` rather than `key`, since a Tab arriving with modifiers is reported
+    // differently by some layouts and IMEs.
+    {
+      id: "tab.cycleNext",
+      key: "tab",
+      code: "Tab",
+      ctrl: true,
+      label: "Next tab (Ctrl+Tab)",
+      run: () => cycleTab(1),
+    },
+    {
+      id: "tab.cyclePrev",
+      key: "tab",
+      code: "Tab",
+      ctrl: true,
+      shift: true,
+      label: "Previous tab (Ctrl+Shift+Tab)",
+      run: () => cycleTab(-1),
     },
     // Rename the active tab (tmux rename-window) — opens the inline editor in
     // TabBar; see store.startRenameTab. macOS keeps ⌘R; Linux/Windows use F2,
@@ -411,6 +447,7 @@ export function createKeymap({
       meta: true,
       shift: true,
       byOS: kitty("v"),
+      enabled: () => !inRichTextEditor(),
       label: "Paste (image inline, else text)",
       run: async () => {
         const tab = store.activeTab;
@@ -431,6 +468,7 @@ export function createKeymap({
             id: "clipboard.pasteText",
             key: "v",
             meta: true,
+            enabled: () => !inRichTextEditor(),
             label: "Paste text",
             run: async () => {
               const tab = store.activeTab;
@@ -460,6 +498,7 @@ export function createKeymap({
             id: "clipboard.pasteImageInline",
             key: "v",
             alt: true,
+            enabled: () => !inRichTextEditor(),
             label: "Paste image inline (Claude Code Alt+V)",
             run: () => {
               const tab = store.activeTab;

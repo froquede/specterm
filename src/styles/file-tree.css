@@ -68,6 +68,26 @@
   flex-shrink: 0;
 }
 
+/* "Go to the active terminal's folder" button in the header — the inverse of
+   the cd-here button below, and styled to match it. */
+.file-tree-sync-cwd {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0 4px;
+  flex-shrink: 0;
+  line-height: 1;
+}
+
+.file-tree-sync-cwd:hover {
+  color: var(--ansi-blue);
+}
+
 /* "Open the active terminal here" (cd) button in the header */
 .file-tree-cd-here {
   display: flex;
@@ -310,10 +330,6 @@
   color: var(--ansi-blue);
 }
 
-.file-tree-md.is-selected {
-  color: var(--ansi-green);
-}
-
 /* Holds the row's type icon. A fixed box so every name starts on the same
    column whatever the icon inside it is. */
 .file-tree-icon {
@@ -323,6 +339,12 @@
   flex-shrink: 0;
   width: 14px;
 }
+
+/* Two hues, because there are two things a row can do: a directory takes you
+   somewhere, a file opens. Type is the icon's job now — colouring by type as
+   well would say the same thing twice, in a language every theme has to agree
+   to, and the one hue that used to try (green for .md) called markdown "the
+   openable one" back when it nearly was. */
 
 /* Directories — navigable */
 .file-tree-dir {
@@ -335,27 +357,32 @@
   color: var(--ansi-blue);
 }
 
-/* Markdown files — clickable to open */
-.file-tree-md {
-  color: var(--ansi-green);
-  cursor: pointer;
-}
-
-.file-tree-md:hover {
-  background: var(--bg-hover);
-  color: var(--ansi-green);
-}
-
-/* Other files — open in the read-only text viewer. Kept dimmer than markdown
-   so .md still reads as the "rich" target, but interactive all the same. */
-.file-tree-other {
-  color: var(--fg-muted);
-  cursor: pointer;
-}
-
-.file-tree-other:hover {
-  background: var(--bg-hover);
+/* Files — every one of them opens: markdown as a rendered preview, images in
+   the image viewer, the rest in the read-only text viewer. Full foreground,
+   because that is what "you can open this" looks like. */
+.file-tree-file {
   color: var(--fg);
+  cursor: pointer;
+}
+
+.file-tree-file:hover {
+  background: var(--bg-hover);
+}
+
+/* …except the ones the viewer will refuse — archives, binaries, media with no
+   viewer. Still clickable, since the refusal is the honest answer and the sniff
+   happens on the real bytes; just faded, so a listing shows at a glance where
+   its readable half is. Opacity rather than a colour: it dims the icon with the
+   name, needs no token, and reads the same in every theme. */
+.file-tree-no-preview {
+  opacity: 0.45;
+}
+
+/* Under the cursor it comes most of the way back — a row you are pointing at
+   should look like it will respond, whatever it then says. */
+.file-tree-no-preview:hover,
+.file-tree-no-preview.is-selected {
+  opacity: 0.8;
 }
 
 .file-tree-loading,

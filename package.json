@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.20.0",
+  "version": "0.21.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
@@ -32,6 +32,7 @@
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "test:paste": "node --experimental-strip-types test/paste.mjs",
+    "test:open-paths": "node test/open-paths.mjs",
     "hero:gif": "vite build && node scripts/hero-gif.mjs",
     "tauri": "tauri"
   },

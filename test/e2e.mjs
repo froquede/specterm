@@ -11,6 +11,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { execSync } from "node:child_process";
+import { PNG } from "pngjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
@@ -27,6 +28,28 @@ let lastCheckAt = Date.now();
 
 // A directory that reliably exists to point the startup path at.
 const STARTUP_TARGET = WIN ? "C:\\Windows" : "/usr";
+
+// The image fixture the viewer checks run against. Generated at runtime — a
+// binary in the repo would be a binary in every diff that ever touched it — and
+// deliberately wider than the panes here, so the viewer has something to fit.
+const IMG_W = 800;
+const IMG_H = 600;
+function makePng(width, height) {
+  const png = new PNG({ width, height });
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (width * y + x) << 2;
+      // A gradient with a grid over it: something whose scale is visible in a
+      // screenshot when one of these checks fails and gets eyeballed.
+      const grid = x % 100 === 0 || y % 100 === 0;
+      png.data[i] = grid ? 240 : (x * 255) / width;
+      png.data[i + 1] = grid ? 240 : (y * 255) / height;
+      png.data[i + 2] = grid ? 240 : 140;
+      png.data[i + 3] = 255;
+    }
+  }
+  return PNG.sync.write(png);
+}
 
 const results = [];
 const check = (name, pass, detail = "") => {
@@ -305,6 +328,10 @@ async function splitPane(win, key) {
 // --- run -------------------------------------------------------------------
 let app;
 try {
+  // Every harness quits its app programmatically, and a native confirmation
+  // dialog is not something a script can answer — so `launchOptions` opts out of
+  // it by default (see launch.mjs). The second app below deliberately opts back
+  // in: that is where the confirmation itself is checked.
   app = await electron.launch(launchOptions(root, userDataDir));
   const win = await app.firstWindow();
   win.on("pageerror", (e) => log("PAGEERROR:", e.message));
@@ -402,9 +429,29 @@ try {
     await win.keyboard.press("Backspace");
     await win.waitForTimeout(500);
     check("Backspace (empty filter) goes up", eqPath((await state(win)).crumbTitle, base), `back to ${base}`);
+
+    // 5b) The inverse of the cd control: the tree follows the terminal. The pty
+    // is still in `browsed` from the cd above while the tree has just walked up
+    // to `base`, so the button has somewhere real to go and a no-op cannot pass.
+    await win.locator(".file-tree-sync-cwd").click();
+    await win.waitForTimeout(600);
+    const synced = (await state(win)).crumbTitle;
+    check(
+      "sync control moves the tree to the terminal's folder",
+      eqPath(synced, browsed),
+      `pty=${browsed} tree=${synced}`
+    );
+    // Leave the tree at `base`, which is where the checks below start from.
+    // Conditional because a *failed* sync never left it, and walking up anyway
+    // would strand them above `base` and fail them for the wrong reason.
+    if (eqPath(synced, browsed)) {
+      await clickDotDot(win);
+      await win.waitForTimeout(400);
+    }
   } else {
     skip("cd control moves the terminal", "no safe subdirectory to cd into");
     skip("Backspace (empty filter) goes up", "no safe subdirectory to cd into");
+    skip("sync control moves the tree to the terminal's folder", "no safe subdirectory to cd into");
   }
 
   // 6b) PR #17 — "cd fav-N" typed at the shell prompt expands to a real cd into
@@ -1894,6 +1941,11 @@ try {
   );
   // A file with NUL bytes — must be refused by the viewer, not shown as garbage.
   fs.writeFileSync(binFixture, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x00, 0x01, 0x02, 0x00, 0xff, 0xfe, 0x03]));
+  // A real PNG, generated rather than committed — deliberately larger than any
+  // pane this suite opens, so it lands *fitted* (below 100%) and 1:1 is a
+  // genuine zoom rather than a no-op.
+  const imgFixture = path.join(fixturesDir, "sample-image.png");
+  fs.writeFileSync(imgFixture, makePng(IMG_W, IMG_H));
   try {
     // Point BOTH startupPath and lastBrowsedPath at the fixtures dir —
     // lastBrowsedPath takes precedence when the tree reopens, so setting the
@@ -2053,9 +2105,147 @@ try {
       transformAfter != null && transformAfter !== md.transformBefore && /scale\(/.test(transformAfter),
       `before="${md.transformBefore}" after="${transformAfter}"`
     );
+
+    // 13e) The image viewer: it opens fitted, and it pans and zooms with the
+    // same gestures the diagram viewport uses (lib/pan-zoom.ts, shared).
+    //
+    // In a tab of its own, because this section has been splitting the same tab
+    // for a dozen fixtures and the pane left over is a few pixels wide — an
+    // image fitted into 20px is at 3%, where a 10% zoom and a button press both
+    // round to the same number and the checks below say nothing.
+    await newTab(win);
+    const imgTab = await win.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+    await clickEntry(win, "sample-image.png");
+    await win.waitForSelector(".image-pane img", { timeout: 8000 });
+    // The fit — and so the percentage, which is measured against the image's
+    // own pixels — depends on the pane's final width. Read it after the split
+    // has settled, not while it is still animating into place.
+    await win.waitForTimeout(600);
+    const imgPane = win.locator(".pane", { has: win.locator(".image-pane") }).first();
+    // Read the viewer's own state: the transform the stage carries, and the
+    // percentage in the toolbar, which is scale measured against the image's
+    // real pixels rather than against the fit.
+    const viewer = () =>
+      win.evaluate(() => {
+        const img = document.querySelector(".image-pane img");
+        return {
+          transform: document.querySelector(".image-stage")?.style.transform ?? null,
+          percent: Number(
+            (document.querySelector(".image-zoom-level")?.textContent || "").replace("%", "")
+          ),
+          dims: document.querySelector(".image-dimensions")?.textContent ?? null,
+          fittedWidth: img?.clientWidth ?? 0,
+          naturalWidth: img?.naturalWidth ?? 0,
+        };
+      });
+
+    const fitted = await viewer();
+    check(
+      "image viewer renders the file the tree was clicked on",
+      fitted.naturalWidth === IMG_W && fitted.dims === `${IMG_W} × ${IMG_H}`,
+      JSON.stringify(fitted)
+    );
+    check(
+      "image opens fitted to the pane, not cropped or at 1:1",
+      fitted.fittedWidth > 0 &&
+        fitted.fittedWidth < IMG_W &&
+        fitted.percent > 0 &&
+        fitted.percent < 100,
+      `fitted=${fitted.fittedWidth}px of ${IMG_W} at ${fitted.percent}%`
+    );
+
+    // A wheel over the image zooms it, toward the pointer. Dispatched straight
+    // at the viewport for the same reason the mermaid one is: a synthesized
+    // gesture over a small split pane is unreliable, and this still runs the
+    // real handler.
+    const wheeled = await win.evaluate(() => {
+      const vp = document.querySelector(".image-body");
+      const r = vp.getBoundingClientRect();
+      vp.dispatchEvent(
+        new WheelEvent("wheel", {
+          deltaY: -120,
+          clientX: r.left + r.width / 2,
+          clientY: r.top + r.height / 2,
+          bubbles: true,
+          cancelable: true,
+        })
+      );
+      return {
+        transform: document.querySelector(".image-stage")?.style.transform ?? null,
+        percent: Number(
+          (document.querySelector(".image-zoom-level")?.textContent || "").replace("%", "")
+        ),
+      };
+    });
+    check(
+      "wheel zooms the image and the readout follows",
+      /scale\(1\.\d/.test(wheeled.transform || "") && wheeled.percent > fitted.percent,
+      `transform="${wheeled.transform}" ${fitted.percent}% → ${wheeled.percent}%`
+    );
+
+    // Drag to pan — a real mouse drag, since this is the gesture and not a
+    // wheel event that can be faked in one line.
+    const vpBox = await imgPane.locator(".image-body").boundingBox();
+    await win.mouse.move(vpBox.x + vpBox.width / 2, vpBox.y + vpBox.height / 2);
+    await win.mouse.down();
+    await win.mouse.move(vpBox.x + vpBox.width / 2 - 60, vpBox.y + vpBox.height / 2 - 40, { steps: 6 });
+    await win.mouse.up();
+    const panned = await viewer();
+    const translateOf = (t) => {
+      const m = /translate\((-?[\d.]+)px, (-?[\d.]+)px\)/.exec(t || "");
+      return m ? [Number(m[1]), Number(m[2])] : null;
+    };
+    const before = translateOf(wheeled.transform);
+    const after = translateOf(panned.transform);
+    check(
+      "dragging pans the image",
+      before && after && (after[0] !== before[0] || after[1] !== before[1]),
+      `${JSON.stringify(before)} → ${JSON.stringify(after)}`
+    );
+    check(
+      "panning doesn't change the zoom",
+      panned.percent === wheeled.percent,
+      `${wheeled.percent}% → ${panned.percent}%`
+    );
+
+    // 1:1 means one image pixel per screen pixel, whatever the fit was.
+    await imgPane.locator(".image-zoom-btn", { hasText: "1:1" }).click();
+    const oneToOne = await viewer();
+    check(
+      "1:1 shows the image at its own pixels",
+      oneToOne.percent === 100,
+      `${oneToOne.percent}%`
+    );
+
+    // And there are two ways back to the fit: the button, and the double-click
+    // the diagram viewport already answers to.
+    await imgPane.locator(".image-zoom-btn", { hasText: "Fit" }).click();
+    const refit = await viewer();
+    check(
+      "Fit goes back to the fitted view",
+      refit.percent === fitted.percent && refit.transform === "translate(0px, 0px) scale(1)",
+      `${oneToOne.percent}% → ${refit.percent}% transform="${refit.transform}"`
+    );
+
+    await imgPane.locator(".image-zoom-btn", { hasText: "+" }).click();
+    const zoomedIn = await viewer();
+    await imgPane.locator(".image-body").dblclick();
+    const reset = await viewer();
+    check(
+      "the + button zooms and a double-click resets",
+      zoomedIn.percent > refit.percent && reset.percent === fitted.percent,
+      `${refit.percent}% → ${zoomedIn.percent}% → ${reset.percent}%`
+    );
+
+    // Leave the tab bar as this section found it.
+    await win.locator(`.tab[data-tab-id="${imgTab}"] .tab-close`).click();
+    await win.waitForTimeout(400);
   } finally {
     try { fs.unlinkSync(binFixture); } catch {}
     try { fs.unlinkSync(envFixture); } catch {}
+    try { fs.unlinkSync(imgFixture); } catch {}
   }
 
   // 14) Cross-tab pane detach: drag a pane's titlebar onto another tab's chip to
@@ -2254,6 +2444,45 @@ try {
     await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
     await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
     await win.waitForTimeout(500);
+
+    // 17a) Pasting into the editor. There is no Edit menu (it would claim ⌘C/⌘V
+    // before the terminal ever saw them), so on macOS the chord is not native
+    // here: the editor's own clipboard command has to run, which means the
+    // global terminal paste must stand aside while the caret is in a document.
+    await writeOsClip("PASTED_INTO_EDITOR_42");
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.press(MAC ? "Meta+V" : "Control+V");
+    await win.waitForTimeout(600);
+    const pastedByKey = await win.evaluate(
+      () => document.querySelector(".markdown-editor .cm-content")?.textContent || ""
+    );
+    check(
+      "⌘V pastes into the markdown editor",
+      pastedByKey.includes("PASTED_INTO_EDITOR_42"),
+      pastedByKey.slice(-70)
+    );
+
+    // 17b) The same thing from the right-click menu — the discoverable half.
+    await writeOsClip("PASTED_FROM_MENU_7");
+    await win.locator(".markdown-editor .cm-content").click({ button: "right" });
+    await win.waitForSelector(".md-context-menu", { timeout: 3000 });
+    await win.locator(".md-menu-item", { hasText: "Paste" }).first().click();
+    await win.waitForTimeout(600);
+    const pastedByMenu = await win.evaluate(
+      () => document.querySelector(".markdown-editor .cm-content")?.textContent || ""
+    );
+    check(
+      "the editor's context menu pastes",
+      pastedByMenu.includes("PASTED_FROM_MENU_7"),
+      pastedByMenu.slice(-70)
+    );
+    check(
+      "the context menu closes after pasting",
+      !(await win.locator(".md-context-menu").isVisible()),
+      ""
+    );
+
     await win.locator(".markdown-editor .cm-content").click();
     await win.keyboard.press("Control+End");
     await win.keyboard.type("\nDRAFT_SURVIVES_RELOAD");
@@ -2518,6 +2747,36 @@ try {
   } else {
     skip("drag-to-reorder moves a tab past its neighbor", "tabs not in expected initial order");
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
+  }
+
+  // 18f) Ctrl+Tab cycles tabs and Ctrl+Shift+Tab comes back — the browser chord,
+  // the same on every platform, alongside the ⌘⇧[ / ⌘⇧] pair. It has to reach
+  // the window from a focused terminal, which is where it will always be
+  // pressed: xterm's hidden textarea must not count as a text field here.
+  const cycleOrder = await tabOrder();
+  const cycleFrom = await activeTab();
+  if (cycleOrder.length > 1 && cycleFrom && cycleOrder.includes(cycleFrom)) {
+    const expectNext = cycleOrder[(cycleOrder.indexOf(cycleFrom) + 1) % cycleOrder.length];
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.press("Control+Tab");
+    await win.waitForTimeout(500);
+    const afterNext = await activeTab();
+    check(
+      "Ctrl+Tab moves to the next tab",
+      afterNext === expectNext,
+      `${cycleFrom} → ${afterNext} (expected ${expectNext})`
+    );
+    await win.keyboard.press("Control+Shift+Tab");
+    await win.waitForTimeout(500);
+    const afterPrev = await activeTab();
+    check(
+      "Ctrl+Shift+Tab moves back",
+      afterPrev === cycleFrom,
+      `${afterNext} → ${afterPrev} (expected ${cycleFrom})`
+    );
+  } else {
+    skip("Ctrl+Tab moves to the next tab", "not enough tabs to cycle");
+    skip("Ctrl+Shift+Tab moves back", "not enough tabs to cycle");
   }
 
   // 20) F2 stands aside for full-screen programs. It renames the tab at a shell
@@ -2845,7 +3104,11 @@ try {
   }
   try { app.process().kill("SIGKILL"); } catch {}
 
-  const app2 = await electron.launch(launchOptions(root, userDataDir));
+  // This is the app the confirmation is checked on (section 24), so it opts back
+  // into the dialog the other harnesses suppress.
+  const app2 = await electron.launch(
+    launchOptions(root, userDataDir, { env: { SPECTERM_NO_CLOSE_CONFIRM: "" } })
+  );
   try {
     const win2 = await app2.firstWindow();
     win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
@@ -2867,6 +3130,92 @@ try {
       restoredTabs === tabsAtQuit && eqPath(restoredCwd, liveCwdAtQuit),
       `tabs ${tabsAtQuit}→${restoredTabs} cwd=${restoredCwd} (was at ${liveCwdAtQuit})`
     );
+
+    // 23) Scrollback geometry survives a tab switch. xterm sizes its scroll area
+    // on an animation frame, and a hidden tab is unmounted — so output that
+    // landed while another tab was in front used to be measured with the
+    // terminal detached from the page (height 0), leaving the viewport exactly
+    // one screen short: scrolling stopped early, and only a resize put it right.
+    // Print a long run while another tab is in front, come back, and the scroll
+    // area must already be the size a resize would give it.
+    const geoTab = await win2.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+    await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win2.keyboard.type("sleep 2; seq 1 400");
+    await win2.keyboard.press("Enter");
+    // Straight to another tab, so the 400 lines arrive with this one unmounted.
+    await win2.locator(".tab-new").click();
+    await win2.waitForTimeout(6000);
+    if (geoTab) await win2.locator(`.tab[data-tab-id="${geoTab}"]`).click();
+    await win2.waitForTimeout(1200);
+
+    const viewportGeometry = () =>
+      win2.evaluate(() => {
+        const vp = document.querySelector(".pane-active .xterm-viewport");
+        return vp
+          ? { scroll: vp.scrollHeight, client: vp.clientHeight }
+          : null;
+      });
+    const setWindowHeight = (delta) =>
+      app2.evaluate(({ BrowserWindow }, d) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        const [width, height] = w.getSize();
+        w.setSize(width, height + d);
+      }, delta);
+
+    const afterSwitch = await viewportGeometry();
+    // The resize that used to be the workaround. Height only: the width — and
+    // so the wrapping, and the line count — stays exactly as it was, which is
+    // what makes the two measurements comparable.
+    await setWindowHeight(-80);
+    await win2.waitForTimeout(1200);
+    const afterResize = await viewportGeometry();
+    await setWindowHeight(80);
+    await win2.waitForTimeout(600);
+
+    if (!afterSwitch || !afterResize || afterSwitch.scroll < afterSwitch.client * 2) {
+      skip(
+        "scrollback geometry survives a tab switch",
+        "the pane did not accumulate measurable scrollback"
+      );
+    } else {
+      // A whole screen is ~600px; a row of rounding is ~17. Anything under a few
+      // rows means the two agree.
+      const delta = Math.abs(afterSwitch.scroll - afterResize.scroll);
+      check(
+        "scrollback geometry survives a tab switch",
+        delta < 80,
+        `after switch ${afterSwitch.scroll}px, after resize ${afterResize.scroll}px (viewport ${afterSwitch.client}px)`
+      );
+    }
+
+    // 24) Quitting with something still running asks first. Start a command in a
+    // pane, then ask this app to quit exactly the way ⌘Q does: it must still be
+    // alive a moment later, parked on a confirmation dialog no script can
+    // answer. (Windows has no cheap process table here, so it is skipped there.)
+    if (WIN) {
+      skip("a running command holds the quit for confirmation", "no process scan on Windows");
+    } else {
+      await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+      await win2.keyboard.type("sleep 45");
+      await win2.keyboard.press("Enter");
+      await win2.waitForTimeout(1500);
+      try {
+        await Promise.race([
+          app2.evaluate(({ app }) => app.quit()),
+          new Promise((r) => setTimeout(r, 2000)),
+        ]);
+      } catch (_) {
+        // The app answering by exiting is itself the failure below.
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+      check(
+        "a running command holds the quit for confirmation",
+        app2.process().exitCode === null,
+        `exitCode=${app2.process().exitCode}`
+      );
+    }
   } finally {
     try {
       await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
@@ -2874,6 +3223,67 @@ try {
       // Nothing left to assert; the kill below is the backstop.
     }
     try { app2.process().kill("SIGKILL"); } catch {}
+  }
+
+  // 24) A path on the command line opens that file. The other half of the
+  // window Specterm gives the OS: a double-click on a registered type, an "Open
+  // With", or `specterm shot.png` typed into another terminal all arrive as an
+  // argv path (see electron/open-paths.cjs, and test/open-paths.mjs for the
+  // classification on its own). This needs a launch of its own — the argument
+  // is read once, before the first window — so it runs cold, on a profile of
+  // its own, with an image and a markdown file named on the command line.
+  //
+  // It is here because an image used to be dropped on the way past: the scan
+  // looked for `*.md` and nothing else, so the app opened as if you had asked
+  // for nothing.
+  const cliDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-cli-"));
+  const cliImage = path.join(cliDir, "from-cli.png");
+  const cliMarkdown = path.join(cliDir, "from-cli.md");
+  fs.writeFileSync(cliImage, makePng(320, 240));
+  fs.writeFileSync(cliMarkdown, "# opened from the command line\n");
+  const cliUserData = `${userDataDir}-cli`;
+  // The markdown is named absolutely and the image relatively — a relative path
+  // has to resolve against the shell's directory, not the app's, or it lands on
+  // a file:// URL under dist/ and quietly 404s. Launching from cliDir is what
+  // makes that a real test. The image goes last so its tab is the active one:
+  // only the active tab's panes are mounted.
+  const app3Options = launchOptions(root, cliUserData, {
+    args: [cliMarkdown, "from-cli.png"],
+  });
+  app3Options.cwd = cliDir;
+  const app3 = await electron.launch(app3Options);
+  try {
+    const win3 = await app3.firstWindow();
+    win3.on("pageerror", (e) => log("PAGEERROR(cli):", e.message));
+    await win3.waitForSelector(".app", { timeout: 20000 });
+    await win3.waitForSelector(".image-pane img", { timeout: 20000 });
+    const opened = await win3.evaluate(() => ({
+      image: document.querySelector(".image-filepath")?.textContent ?? null,
+      dims: document.querySelector(".image-dimensions")?.textContent ?? null,
+      tabs: Array.from(document.querySelectorAll(".tab")).length,
+    }));
+    check(
+      "an image named on the command line opens in the image viewer",
+      eqPath(opened.image, cliImage) && opened.dims === "320 × 240",
+      JSON.stringify(opened)
+    );
+    // The markdown went in the same way — it is the case that always worked,
+    // and the point of naming both is that widening the door didn't close it.
+    // Its tab is behind the image's, so the check is the tab, not the pane.
+    check(
+      "a markdown file named alongside it still opens too",
+      opened.tabs === 3,
+      `tabs=${opened.tabs} (terminal + markdown + image)`
+    );
+  } finally {
+    try {
+      await Promise.race([app3.close(), new Promise((r) => setTimeout(r, 3000))]);
+    } catch (_) {
+      // Nothing left to assert.
+    }
+    try { app3.process().kill("SIGKILL"); } catch {}
+    try { fs.rmSync(cliDir, { recursive: true, force: true }); } catch {}
+    try { fs.rmSync(cliUserData, { recursive: true, force: true }); } catch {}
   }
 
   // --- summary ---
