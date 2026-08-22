@@ -29,6 +29,9 @@ Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
 Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
 base16 gallery, and a tab bar that stands in for the title bar.
+Closing a window (or quitting) while a build, a test run or a Claude session is
+still going asks first, naming what is running — read from the shells' own child
+processes, so a window of idle prompts still closes on one click.
 
 ## Keybindings
 
@@ -54,6 +57,7 @@ later version doesn't take your setting with it.
 | Close tab | `⌘⇧W` | `Ctrl+Shift+Q` |
 | Close pane | `⌘W` | `Ctrl+Shift+W` |
 | Next / previous tab | `⌘⇧]` / `⌘⇧[` | `Ctrl+Shift+→` / `Ctrl+Shift+←` |
+| Next / previous tab (also) | `Ctrl+Tab` / `Ctrl+⇧Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Split — stacked | `⌘D` | `Ctrl+Shift+S` |
 | Split — side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
 | Focus pane left/right/up/down | `⌥`+arrow | `⌥`+arrow |
@@ -130,6 +134,17 @@ only when it is safe: a dirty working tree is left completely alone, the pull is
 branch has `main` advanced behind it without its working tree or its `HEAD`
 being touched. No clone, no `git`, no network — it skips. See
 `electron/repo-sync.cjs`.
+
+**Editing markdown.** Inside the markdown *editor*, `⌘V`/`⌘C`/`⌘X`
+(`Ctrl+V`/`Ctrl+C`/`Ctrl+X`) act on the document rather than the terminal behind
+it, and right-clicking offers the same.
+
+**Closing with something still running.** A window's terminals die with it, so
+closing one — or quitting — while a build, a test run or a Claude session is in
+flight asks first, naming what is running. The answer comes from the shells' own
+child processes, not from "are there tabs open", so a window of idle prompts
+closes on one click. A window that parks its session instead (background
+sessions, on by default) kills nothing and never asks.
 
 **Theming.** Themes drive the terminal palette and the app chrome at once.
 Settings → Theme → *Browse gallery* has 325 bundled

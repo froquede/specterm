@@ -328,6 +328,10 @@ async function splitPane(win, key) {
 // --- run -------------------------------------------------------------------
 let app;
 try {
+  // Every harness quits its app programmatically, and a native confirmation
+  // dialog is not something a script can answer — so `launchOptions` opts out of
+  // it by default (see launch.mjs). The second app below deliberately opts back
+  // in: that is where the confirmation itself is checked.
   app = await electron.launch(launchOptions(root, userDataDir));
   const win = await app.firstWindow();
   win.on("pageerror", (e) => log("PAGEERROR:", e.message));
@@ -2440,6 +2444,45 @@ try {
     await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
     await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
     await win.waitForTimeout(500);
+
+    // 17a) Pasting into the editor. There is no Edit menu (it would claim ⌘C/⌘V
+    // before the terminal ever saw them), so on macOS the chord is not native
+    // here: the editor's own clipboard command has to run, which means the
+    // global terminal paste must stand aside while the caret is in a document.
+    await writeOsClip("PASTED_INTO_EDITOR_42");
+    await win.locator(".markdown-editor .cm-content").click();
+    await win.keyboard.press("Control+End");
+    await win.keyboard.press(MAC ? "Meta+V" : "Control+V");
+    await win.waitForTimeout(600);
+    const pastedByKey = await win.evaluate(
+      () => document.querySelector(".markdown-editor .cm-content")?.textContent || ""
+    );
+    check(
+      "⌘V pastes into the markdown editor",
+      pastedByKey.includes("PASTED_INTO_EDITOR_42"),
+      pastedByKey.slice(-70)
+    );
+
+    // 17b) The same thing from the right-click menu — the discoverable half.
+    await writeOsClip("PASTED_FROM_MENU_7");
+    await win.locator(".markdown-editor .cm-content").click({ button: "right" });
+    await win.waitForSelector(".md-context-menu", { timeout: 3000 });
+    await win.locator(".md-menu-item", { hasText: "Paste" }).first().click();
+    await win.waitForTimeout(600);
+    const pastedByMenu = await win.evaluate(
+      () => document.querySelector(".markdown-editor .cm-content")?.textContent || ""
+    );
+    check(
+      "the editor's context menu pastes",
+      pastedByMenu.includes("PASTED_FROM_MENU_7"),
+      pastedByMenu.slice(-70)
+    );
+    check(
+      "the context menu closes after pasting",
+      !(await win.locator(".md-context-menu").isVisible()),
+      ""
+    );
+
     await win.locator(".markdown-editor .cm-content").click();
     await win.keyboard.press("Control+End");
     await win.keyboard.type("\nDRAFT_SURVIVES_RELOAD");
@@ -2704,6 +2747,36 @@ try {
   } else {
     skip("drag-to-reorder moves a tab past its neighbor", "tabs not in expected initial order");
     skip("a click right after a reorder still selects", "tabs not in expected initial order");
+  }
+
+  // 18f) Ctrl+Tab cycles tabs and Ctrl+Shift+Tab comes back — the browser chord,
+  // the same on every platform, alongside the ⌘⇧[ / ⌘⇧] pair. It has to reach
+  // the window from a focused terminal, which is where it will always be
+  // pressed: xterm's hidden textarea must not count as a text field here.
+  const cycleOrder = await tabOrder();
+  const cycleFrom = await activeTab();
+  if (cycleOrder.length > 1 && cycleFrom && cycleOrder.includes(cycleFrom)) {
+    const expectNext = cycleOrder[(cycleOrder.indexOf(cycleFrom) + 1) % cycleOrder.length];
+    await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win.keyboard.press("Control+Tab");
+    await win.waitForTimeout(500);
+    const afterNext = await activeTab();
+    check(
+      "Ctrl+Tab moves to the next tab",
+      afterNext === expectNext,
+      `${cycleFrom} → ${afterNext} (expected ${expectNext})`
+    );
+    await win.keyboard.press("Control+Shift+Tab");
+    await win.waitForTimeout(500);
+    const afterPrev = await activeTab();
+    check(
+      "Ctrl+Shift+Tab moves back",
+      afterPrev === cycleFrom,
+      `${afterNext} → ${afterPrev} (expected ${cycleFrom})`
+    );
+  } else {
+    skip("Ctrl+Tab moves to the next tab", "not enough tabs to cycle");
+    skip("Ctrl+Shift+Tab moves back", "not enough tabs to cycle");
   }
 
   // 20) F2 stands aside for full-screen programs. It renames the tab at a shell
@@ -3031,7 +3104,11 @@ try {
   }
   try { app.process().kill("SIGKILL"); } catch {}
 
-  const app2 = await electron.launch(launchOptions(root, userDataDir));
+  // This is the app the confirmation is checked on (section 24), so it opts back
+  // into the dialog the other harnesses suppress.
+  const app2 = await electron.launch(
+    launchOptions(root, userDataDir, { env: { SPECTERM_NO_CLOSE_CONFIRM: "" } })
+  );
   try {
     const win2 = await app2.firstWindow();
     win2.on("pageerror", (e) => log("PAGEERROR(restored):", e.message));
@@ -3053,6 +3130,92 @@ try {
       restoredTabs === tabsAtQuit && eqPath(restoredCwd, liveCwdAtQuit),
       `tabs ${tabsAtQuit}→${restoredTabs} cwd=${restoredCwd} (was at ${liveCwdAtQuit})`
     );
+
+    // 23) Scrollback geometry survives a tab switch. xterm sizes its scroll area
+    // on an animation frame, and a hidden tab is unmounted — so output that
+    // landed while another tab was in front used to be measured with the
+    // terminal detached from the page (height 0), leaving the viewport exactly
+    // one screen short: scrolling stopped early, and only a resize put it right.
+    // Print a long run while another tab is in front, come back, and the scroll
+    // area must already be the size a resize would give it.
+    const geoTab = await win2.evaluate(
+      () => document.querySelector(".tab.active")?.getAttribute("data-tab-id") ?? null
+    );
+    await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await win2.keyboard.type("sleep 2; seq 1 400");
+    await win2.keyboard.press("Enter");
+    // Straight to another tab, so the 400 lines arrive with this one unmounted.
+    await win2.locator(".tab-new").click();
+    await win2.waitForTimeout(6000);
+    if (geoTab) await win2.locator(`.tab[data-tab-id="${geoTab}"]`).click();
+    await win2.waitForTimeout(1200);
+
+    const viewportGeometry = () =>
+      win2.evaluate(() => {
+        const vp = document.querySelector(".pane-active .xterm-viewport");
+        return vp
+          ? { scroll: vp.scrollHeight, client: vp.clientHeight }
+          : null;
+      });
+    const setWindowHeight = (delta) =>
+      app2.evaluate(({ BrowserWindow }, d) => {
+        const w = BrowserWindow.getAllWindows()[0];
+        const [width, height] = w.getSize();
+        w.setSize(width, height + d);
+      }, delta);
+
+    const afterSwitch = await viewportGeometry();
+    // The resize that used to be the workaround. Height only: the width — and
+    // so the wrapping, and the line count — stays exactly as it was, which is
+    // what makes the two measurements comparable.
+    await setWindowHeight(-80);
+    await win2.waitForTimeout(1200);
+    const afterResize = await viewportGeometry();
+    await setWindowHeight(80);
+    await win2.waitForTimeout(600);
+
+    if (!afterSwitch || !afterResize || afterSwitch.scroll < afterSwitch.client * 2) {
+      skip(
+        "scrollback geometry survives a tab switch",
+        "the pane did not accumulate measurable scrollback"
+      );
+    } else {
+      // A whole screen is ~600px; a row of rounding is ~17. Anything under a few
+      // rows means the two agree.
+      const delta = Math.abs(afterSwitch.scroll - afterResize.scroll);
+      check(
+        "scrollback geometry survives a tab switch",
+        delta < 80,
+        `after switch ${afterSwitch.scroll}px, after resize ${afterResize.scroll}px (viewport ${afterSwitch.client}px)`
+      );
+    }
+
+    // 24) Quitting with something still running asks first. Start a command in a
+    // pane, then ask this app to quit exactly the way ⌘Q does: it must still be
+    // alive a moment later, parked on a confirmation dialog no script can
+    // answer. (Windows has no cheap process table here, so it is skipped there.)
+    if (WIN) {
+      skip("a running command holds the quit for confirmation", "no process scan on Windows");
+    } else {
+      await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+      await win2.keyboard.type("sleep 45");
+      await win2.keyboard.press("Enter");
+      await win2.waitForTimeout(1500);
+      try {
+        await Promise.race([
+          app2.evaluate(({ app }) => app.quit()),
+          new Promise((r) => setTimeout(r, 2000)),
+        ]);
+      } catch (_) {
+        // The app answering by exiting is itself the failure below.
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+      check(
+        "a running command holds the quit for confirmation",
+        app2.process().exitCode === null,
+        `exitCode=${app2.process().exitCode}`
+      );
+    }
   } finally {
     try {
       await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
