@@ -9,7 +9,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Multiple windows** -- `⌘N` opens another independent window; drag a tab (or a pane, by its title-bar) past the window's edge to tear it off into a window of its own, or drop it on another Specterm window to move it there. The shell is handed over still running, scrollback and all (see [Moving tabs between windows](#moving-tabs-between-windows))
 - **Copy from full-screen programs** -- selecting text works even in a pane running Claude Code, vim or htop, which normally take the mouse away from the terminal (see [Selection and the mouse](#selection-and-the-mouse))
 - **File sidebar** -- browse and `cd` from a filterable tree, pin favourites, and jump to them with `fav-1`, `fav-2`… from the filter box or straight from the shell prompt
-- **Markdown preview & editor** -- render `.md` files inline with Mermaid diagram support, or toggle (`⌘E`) into a live-preview CodeMirror editor and save (`⌘S`) back to disk; installed builds also register as a `.md` handler, so you can *Open With → Specterm* (or double-click) a markdown file to open it in a new tab
+- **Markdown preview & editor** -- render `.md` files inline with Mermaid diagram support, or toggle (`⌘E`) into a live-preview CodeMirror editor and save (`⌘S`) back to disk; the editor takes the usual clipboard keys (paste, copy, cut) and offers the same on right-click. Installed builds also register as a `.md` handler, so you can *Open With → Specterm* (or double-click) a markdown file to open it in a new tab
 - **Text & code viewer** -- open any other text file from the sidebar in a read-only, syntax-highlighted view with line numbers and find; binaries are declined and huge files are capped, so it never stalls the terminal
 - **Themes** -- five built-ins plus a 325-scheme base16 gallery (and paste/file/drag import); recolors the terminal and the whole app at once
 - **Configurable chrome** -- put the tab bar in any of the window's four corners, size it and the sidebar, or auto-hide the bar so the panes take the whole window
@@ -20,6 +20,7 @@ A GPU-accelerated terminal emulator with split panes, tabs, markdown preview, an
 - **Session history** -- reopen the last closed tab or pane (`⌘⇧T` / `Ctrl+Shift+R`), repeatedly, walking back through what you closed; and pick your tabs, splits and directories back up where you left them after a restart. A pane that was running Claude Code remembers *which session*, so the restored terminal comes back with `claude --resume <id>` waiting at the prompt (or runs it, or ignores it -- your choice in Settings)
 - **Panes tell you when they're waiting** -- a dot on the tab and the pane's title-bar (plus the dock/taskbar) when Claude Code finishes a turn or stops to ask permission, so a session can run in a tab you're not looking at. It clears when you focus the pane or type into it. Settings picks between detecting it with no setup at all (a Claude session that's working is never silent, so a pane that goes quiet has stopped for you) and installing two Claude Code hooks that say so exactly; a terminal bell flags a pane either way (see [Waiting panes](#waiting-panes))
 - **Optional tab-bar clock** -- off by default; when on, its format is a token string (`HH:mm`, `ddd DD/MM HH:mm`, `h:mm a`, `[at] HH:mm`) with a live preview in Settings. It wakes only when the displayed text would actually change -- once a minute unless the format shows seconds -- aligned to the boundary, and stops entirely while the window is hidden
+- **Closing asks when something is still running** -- a window's terminals die with it, so quitting (or closing a window) while a build, a test run or a Claude session is going gets a confirmation naming what is running. It reads the shells' own child processes, so a window of idle prompts still closes on one click with nothing in the way
 - **Per-OS keybindings** -- macOS uses `⌘`; Linux/Windows keep the Kitty-style `Ctrl+Shift+<key>` scheme
 
 ## Keybindings
@@ -37,6 +38,7 @@ free for terminal control codes).
 | Close tab | `⌘⇧W` | `Ctrl+Shift+Q` |
 | Close pane | `⌘W` | `Ctrl+Shift+W` |
 | Next / previous tab | `⌘⇧]` / `⌘⇧[` | `Ctrl+Shift+→` / `Ctrl+Shift+←` |
+| Next / previous tab (also) | `Ctrl+Tab` / `Ctrl+⇧Tab` | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
 | Split — new pane stacked (below) | `⌘D` | `Ctrl+Shift+S` |
 | Split — new pane side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
 | Focus next / previous pane | `⌘⌥→` / `⌘⌥←` | `Ctrl+Shift+Alt+→` / `Ctrl+Shift+Alt+←` |
@@ -51,8 +53,10 @@ free for terminal control codes).
 | Reset font size | `⌘0` | `Ctrl+Shift+0` |
 
 The markdown preview and the text/code viewer each have their own find box, on
-the same `⌘F` / `Ctrl+Shift+F`, when that pane is focused. Fullscreen is the `⊞`
-icon in the tab bar.
+the same `⌘F` / `Ctrl+Shift+F`, when that pane is focused. Inside the markdown
+*editor*, `⌘V`/`⌘C`/`⌘X` (`Ctrl+V`/`Ctrl+C`/`Ctrl+X`) act on the document rather
+than the terminal behind it, and right-clicking offers the same. Fullscreen is
+the `⊞` icon in the tab bar.
 
 ## Selection and the mouse
 
