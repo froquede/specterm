@@ -34,6 +34,7 @@ export { default as IconPlus } from "lucide-solid/icons/plus";
 export { default as IconFullscreen } from "lucide-solid/icons/maximize";
 export { default as IconFullscreenExit } from "lucide-solid/icons/minimize";
 export { default as IconSettings } from "lucide-solid/icons/settings";
+export { default as IconGithubPanel } from "lucide-solid/icons/git-branch";
 export { default as IconX } from "lucide-solid/icons/x";
 export { default as IconMinus } from "lucide-solid/icons/minus";
 export { default as IconSquare } from "lucide-solid/icons/square";
