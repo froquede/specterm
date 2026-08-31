@@ -150,6 +150,62 @@ export interface WindowInit {
   tabs: TransferTab[];
 }
 
+// Raw git-remote info for a directory, read straight off the local repo — no
+// network call. `branch` is "" for a detached HEAD; `remoteUrl` is whatever
+// `git remote get-url origin` printed, unparsed (see lib/github-remote.ts for
+// turning it into an owner/repo).
+export interface GitRemoteInfo {
+  remoteUrl: string;
+  branch: string;
+}
+
+// Whether the `gh` CLI is usable at all. `authenticated` is only meaningful
+// when `installed` is true.
+export interface GhStatus {
+  installed: boolean;
+  authenticated: boolean;
+}
+
+export interface GithubPullRequest {
+  number: number;
+  title: string;
+  author: string;
+  isDraft: boolean;
+  reviewDecision: string | null;
+  checksStatus: "pending" | "success" | "failure" | null;
+  url: string;
+}
+
+export interface GithubIssue {
+  number: number;
+  title: string;
+  author: string;
+  labels: string[];
+  url: string;
+}
+
+export interface GithubBranchRun {
+  status: string;
+  conclusion: string | null;
+  workflowName: string;
+  url: string;
+}
+
+// One repo's worth of data for the panel, assembled host-side from several
+// `gh` subcommands into a single IPC round trip.
+export interface GithubRepoSnapshot {
+  name: string;
+  description: string | null;
+  stars: number;
+  forks: number;
+  language: string | null;
+  pushedAt: string;
+  url: string;
+  openPRs: GithubPullRequest[];
+  openIssues: GithubIssue[];
+  branchRun: GithubBranchRun | null;
+}
+
 export interface Backend {
   // PTY
   spawnPty(opts: SpawnPtyOptions): Promise<number>;
@@ -236,6 +292,26 @@ export interface Backend {
   // copy/paste is reliable regardless of document focus or permissions.
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
+
+  // --- GitHub panel -----------------------------------------------------
+  //
+  // All three are read-only, best-effort host calls. gitRemoteInfo needs
+  // nothing but `git`; the other two need the `gh` CLI, already authenticated
+  // by the user outside specterm — no token ever passes through here.
+
+  // Local git remote/branch for a directory. null when the directory isn't
+  // inside a git repo, or the repo has no `origin` remote.
+  gitRemoteInfo(cwd: string): Promise<GitRemoteInfo | null>;
+  // Whether `gh` is installed and authenticated, checked fresh each call —
+  // cheap, and the answer can change any time outside the app.
+  ghStatus(): Promise<GhStatus>;
+  // Repo overview + open PRs + open issues + (when `branch` is given) that
+  // branch's latest workflow run, in one call.
+  ghRepoSnapshot(
+    owner: string,
+    repo: string,
+    branch?: string
+  ): Promise<GithubRepoSnapshot>;
 
   // Window
   isFullscreen(): Promise<boolean>;

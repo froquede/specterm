@@ -17,6 +17,9 @@ import type {
   UpdaterEvent,
   TransferTab,
   WindowInit,
+  GitRemoteInfo,
+  GhStatus,
+  GithubRepoSnapshot,
 } from "./types";
 
 interface PtyOutput {
@@ -184,6 +187,26 @@ export class TauriBackend implements Backend {
 
   async clipboardWriteText(text: string): Promise<void> {
     return navigator.clipboard.writeText(text);
+  }
+
+  // No Tauri commands for git/gh yet — Electron is the shipping target for
+  // this feature (same reasoning as listDrives/notifyWaiting above). A
+  // "not installed" answer keeps the panel's empty state truthful rather
+  // than silently hanging.
+  async gitRemoteInfo(_cwd: string): Promise<GitRemoteInfo | null> {
+    return null;
+  }
+
+  async ghStatus(): Promise<GhStatus> {
+    return { installed: false, authenticated: false };
+  }
+
+  async ghRepoSnapshot(
+    _owner: string,
+    _repo: string,
+    _branch?: string
+  ): Promise<GithubRepoSnapshot> {
+    throw new Error("GitHub data is not available on this backend");
   }
 
   async getHomePath(): Promise<string> {

@@ -101,7 +101,7 @@ export interface TabSnapshot {
 // What currently occupies the single sidebar slot in .app-body. The file tree
 // and the settings panel are mutually exclusive by construction — one field,
 // not two booleans to keep in sync.
-export type SidebarView = "files" | "settings";
+export type SidebarView = "files" | "github" | "settings";
 
 export interface AppState {
   tabs: Tab[];
