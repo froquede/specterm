@@ -20,3 +20,16 @@ export function parseGitStatus(output: string): GitStatusFile[] {
   }
   return files;
 }
+
+export type GitStatusCategory = "new" | "modified" | "deleted";
+
+// Buckets a raw status code into one of three display groups. A deleted file
+// is deleted no matter what else is going on with it; an untracked ("??") or
+// staged-add ("A"-containing, e.g. "AM") file reads as "new" to the user even
+// if it's since been edited again; everything else (M, R, C, U, and any
+// combination not caught above) is a plain edit.
+export function classifyGitStatus(code: string): GitStatusCategory {
+  if (code.includes("D")) return "deleted";
+  if (code === "??" || code.includes("A")) return "new";
+  return "modified";
+}

@@ -18,3 +18,6 @@ export { default as IconCircleDot } from "lucide-solid/icons/circle-dot";
 export { default as IconCircleCheck } from "lucide-solid/icons/circle-check";
 export { default as IconCircleX } from "lucide-solid/icons/circle-x";
 export { default as IconLoaderCircle } from "lucide-solid/icons/loader-circle";
+export { default as IconFilePlus } from "lucide-solid/icons/file-plus";
+export { default as IconFilePen } from "lucide-solid/icons/file-pen";
+export { default as IconFileMinus } from "lucide-solid/icons/file-minus";

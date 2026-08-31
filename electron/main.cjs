@@ -1593,11 +1593,12 @@ ipcMain.handle("get-hostname", () => {
 
 ipcMain.handle("git-remote-info", async (_event, cwd) => {
   try {
-    const [remoteUrl, branch] = await Promise.all([
+    const [remoteUrl, branch, root] = await Promise.all([
       runCmd("git", ["-C", cwd, "remote", "get-url", "origin"]),
       runCmd("git", ["-C", cwd, "branch", "--show-current"]).catch(() => ""),
+      runCmd("git", ["-C", cwd, "rev-parse", "--show-toplevel"]),
     ]);
-    return { remoteUrl, branch };
+    return { remoteUrl, branch, root };
   } catch (_) {
     // Not a git repo, or no `origin` remote — nothing to detect.
     return null;
@@ -1608,13 +1609,25 @@ ipcMain.handle("git-remote-info", async (_event, cwd) => {
 // parsing here on purpose — that logic lives in src/lib/git-status.ts, where
 // it's plain testable TS instead of duplicated across this file and a future
 // Tauri command.
-ipcMain.handle("git-status-raw", async (_event, cwd) => {
-  try {
-    return await runCmd("git", ["-C", cwd, "status", "--porcelain=v1"]);
-  } catch (_) {
-    // Not a git repo, or the command failed for some other reason.
-    return null;
-  }
+//
+// Deliberately NOT routed through runCmd: its `stdout.trim()` strips the
+// leading space off the first line's status column (e.g. " M file" →
+// "M file"), which throws off every fixed-offset slice in parseGitStatus by
+// one character — silently mis-parsing only the first changed file. Trim
+// the trailing newline only; parseGitStatus already skips blank lines, so
+// there's nothing else here to clean up.
+ipcMain.handle("git-status-raw", (_event, cwd) => {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", cwd, "status", "--porcelain=v1"],
+      { timeout: 15000 },
+      (err, stdout) => {
+        // Not a git repo, or the command failed for some other reason.
+        resolve(err ? null : stdout.replace(/\n$/, ""));
+      }
+    );
+  });
 });
 
 ipcMain.handle("gh-status", async () => {

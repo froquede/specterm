@@ -12,11 +12,20 @@ import {
   IconCircleCheck,
   IconCircleX,
   IconLoaderCircle,
+  IconFilePlus,
+  IconFilePen,
+  IconFileMinus,
 } from "../lib/icons-lazy";
 import { getBackend } from "../backends";
 import type { GithubRepoSnapshot } from "../backends/types";
 import { useTabStore } from "../stores/tabs";
 import { getTerminalCwd } from "../lib/terminal-registry";
+import { join, normalize, basename } from "../lib/fspath";
+import {
+  classifyGitStatus,
+  type GitStatusCategory,
+  type GitStatusFile,
+} from "../lib/git-status";
 import {
   ghCliStatus,
   currentRepo,
@@ -30,6 +39,33 @@ import {
   removeFromWatchlist,
   startGithubPolling,
 } from "../stores/github";
+
+interface GithubPanelProps {
+  // Always opens as a new tab — see App.tsx's wiring to handleOpenFile.
+  onOpenFile: (path: string) => void;
+}
+
+const STATUS_GROUPS: { category: GitStatusCategory; title: string }[] = [
+  { category: "modified", title: "Modified" },
+  { category: "new", title: "New" },
+  { category: "deleted", title: "Deleted" },
+];
+
+function StatusIcon(props: { category: GitStatusCategory }) {
+  return (
+    <>
+      <Show when={props.category === "modified"}>
+        <IconFilePen size={13} stroke-width={ICON_STROKE} class="gh-status-icon-modified" />
+      </Show>
+      <Show when={props.category === "new"}>
+        <IconFilePlus size={13} stroke-width={ICON_STROKE} class="gh-status-icon-new" />
+      </Show>
+      <Show when={props.category === "deleted"}>
+        <IconFileMinus size={13} stroke-width={ICON_STROKE} class="gh-status-icon-deleted" />
+      </Show>
+    </>
+  );
+}
 
 function openLink(url: string) {
   void getBackend().then((b) => b.openExternal(url));
@@ -142,10 +178,16 @@ function RepoCard(props: { repoKey: string; onRemove?: () => void }) {
   );
 }
 
-export default function GithubPanel() {
+export default function GithubPanel(props: GithubPanelProps) {
   const store = useTabStore();
   const [addValue, setAddValue] = createSignal("");
   const [statusExpanded, setStatusExpanded] = createSignal(false);
+
+  function openStatusFile(file: GitStatusFile) {
+    const root = current()?.root;
+    if (!root) return;
+    props.onOpenFile(normalize(join(root, file.path)));
+  }
 
   onCleanup(startGithubPolling());
 
@@ -271,13 +313,30 @@ export default function GithubPanel() {
                     </div>
                     <Show when={statusExpanded() && files().length > 0}>
                       <div class="gh-status-files">
-                        <For each={files()}>
-                          {(f) => (
-                            <div class="gh-status-file">
-                              <span class="gh-status-code">{f.status}</span>
-                              <span class="gh-status-path">{f.path}</span>
-                            </div>
-                          )}
+                        <For each={STATUS_GROUPS}>
+                          {(group) => {
+                            const groupFiles = () =>
+                              files().filter(
+                                (f) => classifyGitStatus(f.status) === group.category
+                              );
+                            return (
+                              <Show when={groupFiles().length > 0}>
+                                <div class="gh-status-group-title">{group.title}</div>
+                                <For each={groupFiles()}>
+                                  {(f) => (
+                                    <div
+                                      class="gh-status-file"
+                                      title={f.path}
+                                      onClick={() => openStatusFile(f)}
+                                    >
+                                      <StatusIcon category={group.category} />
+                                      <span class="gh-status-path">{basename(f.path)}</span>
+                                    </div>
+                                  )}
+                                </For>
+                              </Show>
+                            );
+                          }}
                         </For>
                       </div>
                     </Show>

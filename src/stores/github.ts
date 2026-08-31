@@ -16,6 +16,9 @@ export interface DetectedRepo {
   owner: string;
   repo: string;
   branch: string;
+  // The repo's top-level directory — see GitRemoteInfo for why. Used to
+  // resolve a changed file's repo-relative path back to an absolute one.
+  root: string;
 }
 
 const [ghCliStatus, setGhCliStatus] = createSignal<GhCliStatus>("checking");
@@ -134,7 +137,7 @@ export async function refreshCurrentRepo(cwd: string) {
     setCurrentWorkingTreeStatus(null);
     return;
   }
-  const detected: DetectedRepo = { ...parsed, branch: info.branch };
+  const detected: DetectedRepo = { ...parsed, branch: info.branch, root: info.root };
   setCurrentRepo(detected);
 
   // git-only, no `gh` needed — fetched every time the repo itself is

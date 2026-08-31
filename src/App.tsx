@@ -750,7 +750,7 @@ export default function App() {
         </Show>
         <Show when={githubOpen()}>
           <Suspense>
-            <GithubPanel />
+            <GithubPanel onOpenFile={(path) => handleOpenFile(path, "tab")} />
           </Suspense>
         </Show>
         <Show when={store.state.sidebarView !== null}>

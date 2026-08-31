@@ -157,6 +157,10 @@ export interface WindowInit {
 export interface GitRemoteInfo {
   remoteUrl: string;
   branch: string;
+  // The repo's top-level directory — `git status --porcelain` reports every
+  // path relative to this, not to whatever cwd it was invoked from, so
+  // resolving a changed file back to an absolute path needs it.
+  root: string;
 }
 
 // Whether the `gh` CLI is usable at all. `authenticated` is only meaningful
