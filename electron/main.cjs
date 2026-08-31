@@ -24,6 +24,25 @@ const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
 const { filePathsFromArgv } = require("./open-paths.cjs");
 
+// Runs `cmd` and resolves with trimmed stdout, or rejects with the error
+// (stdout/stderr attached) on a non-zero exit, spawn failure, or timeout.
+// Every git/gh call in the GitHub panel IPC below goes through this — args
+// are always passed as an array, never interpolated into a shell string, so
+// there is nothing here for a hostile "owner/repo" to inject into.
+function runCmd(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 15000, ...opts }, (err, stdout, stderr) => {
+      if (err) {
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
 // The .deb ships a setuid-root helper (see build/linux/after-install.tpl), but
@@ -1563,6 +1582,126 @@ ipcMain.handle("read-dir-stats", async (_event, dirPath) => {
 // meaningless locally. See registerCwdHandler in src/lib/osc.ts.
 ipcMain.handle("get-hostname", () => {
   return os.hostname();
+});
+
+// === GitHub panel IPC ===
+//
+// git-remote-info needs only `git`, already required for anything specterm
+// does with a repo. gh-status/gh-repo-snapshot need the `gh` CLI, which the
+// user installs and authenticates outside the app — see runCmd above for why
+// none of this is a shell-injection risk.
+
+ipcMain.handle("git-remote-info", async (_event, cwd) => {
+  try {
+    const [remoteUrl, branch] = await Promise.all([
+      runCmd("git", ["-C", cwd, "remote", "get-url", "origin"]),
+      runCmd("git", ["-C", cwd, "branch", "--show-current"]).catch(() => ""),
+    ]);
+    return { remoteUrl, branch };
+  } catch (_) {
+    // Not a git repo, or no `origin` remote — nothing to detect.
+    return null;
+  }
+});
+
+ipcMain.handle("gh-status", async () => {
+  try {
+    await runCmd("gh", ["--version"]);
+  } catch (_) {
+    return { installed: false, authenticated: false };
+  }
+  try {
+    // Writes its human-readable report to stderr; exit 0 means at least one
+    // host is authenticated, which is all the panel needs to know.
+    await runCmd("gh", ["auth", "status"]);
+    return { installed: true, authenticated: true };
+  } catch (_) {
+    return { installed: true, authenticated: false };
+  }
+});
+
+// gh's statusCheckRollup is an array of check-run/status-context objects.
+// Rolled up to one of three states: any real failure wins, anything still
+// running or unreported counts as pending, and an empty/all-success array is
+// success. No PR carries this field at all when the branch has no checks
+// configured, hence the two guards up front.
+function summarizeChecks(rollup) {
+  if (!Array.isArray(rollup) || rollup.length === 0) return null;
+  const bad = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"];
+  const pending = ["PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"];
+  let sawPending = false;
+  for (const check of rollup) {
+    const state = String(check.conclusion || check.state || check.status || "").toUpperCase();
+    if (bad.includes(state)) return "failure";
+    if (pending.includes(state) || !state) sawPending = true;
+  }
+  return sawPending ? "pending" : "success";
+}
+
+ipcMain.handle("gh-repo-snapshot", async (_event, owner, repo, branch) => {
+  const nwo = `${owner}/${repo}`;
+
+  const [repoOut, prOut, issueOut, runOut] = await Promise.all([
+    runCmd("gh", [
+      "repo", "view", nwo, "--json",
+      "name,description,stargazerCount,forkCount,primaryLanguage,pushedAt,url",
+    ]),
+    runCmd("gh", [
+      "pr", "list", "-R", nwo, "--state", "open", "--json",
+      "number,title,author,isDraft,reviewDecision,statusCheckRollup,url",
+      "--limit", "20",
+    ]),
+    runCmd("gh", [
+      "issue", "list", "-R", nwo, "--state", "open", "--json",
+      "number,title,author,labels,url",
+      "--limit", "20",
+    ]),
+    branch
+      ? runCmd("gh", [
+          "run", "list", "-R", nwo, "--branch", branch, "--limit", "1", "--json",
+          "status,conclusion,workflowName,url",
+        ]).catch(() => "[]")
+      : Promise.resolve("[]"),
+  ]);
+
+  const repoJson = JSON.parse(repoOut);
+  const prs = JSON.parse(prOut);
+  const issues = JSON.parse(issueOut);
+  const runs = JSON.parse(runOut);
+
+  return {
+    name: repoJson.name,
+    description: repoJson.description || null,
+    stars: repoJson.stargazerCount ?? 0,
+    forks: repoJson.forkCount ?? 0,
+    language: repoJson.primaryLanguage?.name ?? null,
+    pushedAt: repoJson.pushedAt,
+    url: repoJson.url,
+    openPRs: prs.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      author: pr.author?.login ?? "unknown",
+      isDraft: !!pr.isDraft,
+      reviewDecision: pr.reviewDecision || null,
+      checksStatus: summarizeChecks(pr.statusCheckRollup),
+      url: pr.url,
+    })),
+    openIssues: issues.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      author: issue.author?.login ?? "unknown",
+      labels: (issue.labels || []).map((l) => l.name),
+      url: issue.url,
+    })),
+    branchRun: runs[0]
+      ? {
+          status: runs[0].status,
+          conclusion: runs[0].conclusion || null,
+          workflowName: runs[0].workflowName,
+          url: runs[0].url,
+        }
+      : null,
+  };
 });
 
 ipcMain.handle("read-text-file", async (_event, filePath) => {

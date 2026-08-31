@@ -159,6 +159,12 @@ contextBridge.exposeInMainWorld("specterm", {
 
   getHostname: () => ipcRenderer.invoke("get-hostname"),
 
+  // GitHub panel
+  gitRemoteInfo: (cwd) => ipcRenderer.invoke("git-remote-info", cwd),
+  ghStatus: () => ipcRenderer.invoke("gh-status"),
+  ghRepoSnapshot: (owner, repo, branch) =>
+    ipcRenderer.invoke("gh-repo-snapshot", owner, repo, branch),
+
   watchDir: (path, cb) => {
     ipcRenderer.invoke("watch-dir", path);
     const handler = () => cb();
