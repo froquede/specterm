@@ -150,8 +150,15 @@ Refresh cadence:
 Mounted in `App.tsx` next to `FileTree`, gated by the same `<Show>` pattern
 against `store.state.sidebarView === "github"`. `SidebarView`
 (`src/types/index.ts`) becomes `"files" | "github" | "settings"`.
-`TitleStrip.tsx` gets a third toggle icon (Files / GitHub / Settings), wired
-to `store.toggleSidebarView("github")`, matching the existing two.
+`TabBar.tsx` — which already carries the Files-sidebar and Settings toggle
+buttons in its `.tab-actions` group — gets a third icon (Files / GitHub /
+Settings), wired to `store.toggleSidebarView("github")`, matching the
+existing two.
+
+The "current repo" section's visibility depends only on whether a repo was
+detected (a `git` question) — never on `gh`'s installed/authenticated state,
+which only gates the watchlist section and its own empty-state messages. A
+machine with no `gh` CLI still sees which repo and branch it's sitting in.
 
 Layout, top to bottom:
 
@@ -177,16 +184,20 @@ git-pull-request, circle-dot (issues), and check/x/loader for CI state.
 
 ## Testing
 
-- Pure-function unit coverage for the git-remote-URL → `{owner, repo}`
-  parser (HTTPS and SSH forms, plus non-GitHub remotes returning `null`) —
-  this is the one piece of real parsing logic and is trivial to test in
-  isolation.
-- Manual smoke test in dev (`npm run dev:electron`) against a real repo with
-  `gh` installed and authenticated: verify current-repo detection on tab
-  switch, watchlist add/remove/persist across restart, and the three empty
-  states (uninstalled/unauthenticated/fetch-error) by temporarily breaking
-  each precondition.
-- No new Playwright e2e test is planned for v1 — the existing e2e suite
-  doesn't stub external CLI calls, and scripting a `gh`-authenticated
-  environment inside CI is out of scope here; this is a manual-verification
-  feature like the theme gallery.
+- This project has no isolated unit-test runner (every existing test drives
+  the real built app via Playwright), so the git-remote-URL → `{owner, repo}`
+  parser — the one piece of real parsing logic here — is developed with a
+  throwaway local TDD script and given permanent regression coverage through
+  the e2e check below, rather than a standalone unit test file.
+- A hermetic Playwright e2e check (`test/e2e.mjs`) covers current-repo
+  detection end to end: it builds a throwaway local repo with a fake
+  `github.com` remote (`git init` + `git remote add origin ...`, no network
+  or `gh` involved) and asserts the panel's "Current repo" section shows the
+  right owner/repo/branch. This is the one part of the feature real CI can
+  verify, since it depends on `git` only.
+- Everything that depends on the `gh` CLI (watchlist data, PR/issue/CI
+  content, the three empty states) is out of reach for hermetic CI and stays
+  a manual smoke test in dev (`npm run dev:electron`) against a real repo
+  with `gh` installed and authenticated: watchlist add/remove/persist across
+  restart, and the three empty states (uninstalled/unauthenticated/fetch-
+  error) verified by temporarily breaking each precondition.
