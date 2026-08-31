@@ -1604,6 +1604,19 @@ ipcMain.handle("git-remote-info", async (_event, cwd) => {
   }
 });
 
+// Raw `git status --porcelain=v1` output for the working tree at `cwd`. No
+// parsing here on purpose — that logic lives in src/lib/git-status.ts, where
+// it's plain testable TS instead of duplicated across this file and a future
+// Tauri command.
+ipcMain.handle("git-status-raw", async (_event, cwd) => {
+  try {
+    return await runCmd("git", ["-C", cwd, "status", "--porcelain=v1"]);
+  } catch (_) {
+    // Not a git repo, or the command failed for some other reason.
+    return null;
+  }
+});
+
 ipcMain.handle("gh-status", async () => {
   try {
     await runCmd("gh", ["--version"]);

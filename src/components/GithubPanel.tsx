@@ -20,6 +20,7 @@ import { getTerminalCwd } from "../lib/terminal-registry";
 import {
   ghCliStatus,
   currentRepo,
+  currentWorkingTreeStatus,
   repoSnapshots,
   watchlist,
   refresh,
@@ -144,6 +145,7 @@ function RepoCard(props: { repoKey: string; onRemove?: () => void }) {
 export default function GithubPanel() {
   const store = useTabStore();
   const [addValue, setAddValue] = createSignal("");
+  const [statusExpanded, setStatusExpanded] = createSignal(false);
 
   onCleanup(startGithubPolling());
 
@@ -253,6 +255,35 @@ export default function GithubPanel() {
                   })()}
                 </Show>
               </div>
+              {/* Local `git status` — same cwd as the section above, no `gh`
+                  involved, refreshed on the exact same cadence as the repo
+                  detection itself (see refreshCurrentRepo). */}
+              <Show when={currentWorkingTreeStatus()}>
+                {(files) => (
+                  <div class="gh-status-summary">
+                    <div
+                      class="gh-status-toggle"
+                      onClick={() => setStatusExpanded((v) => !v)}
+                    >
+                      {files().length === 0
+                        ? "Working tree clean"
+                        : `${files().length} changed`}
+                    </div>
+                    <Show when={statusExpanded() && files().length > 0}>
+                      <div class="gh-status-files">
+                        <For each={files()}>
+                          {(f) => (
+                            <div class="gh-status-file">
+                              <span class="gh-status-code">{f.status}</span>
+                              <span class="gh-status-path">{f.path}</span>
+                            </div>
+                          )}
+                        </For>
+                      </div>
+                    </Show>
+                  </div>
+                )}
+              </Show>
             </div>
           )}
         </Show>

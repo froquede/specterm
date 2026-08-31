@@ -2,6 +2,7 @@ import { createSignal } from "solid-js";
 import { getBackend } from "../backends";
 import type { GithubRepoSnapshot } from "../backends/types";
 import { parseGithubRemote } from "../lib/github-remote";
+import { parseGitStatus, type GitStatusFile } from "../lib/git-status";
 import { githubWatchlist, setGithubWatchlist } from "./settings";
 
 // Snapshot cache and GitHub-CLI status for the sidebar panel. Lives outside
@@ -22,8 +23,14 @@ const [currentRepo, setCurrentRepo] = createSignal<DetectedRepo | null>(null);
 const [repoSnapshots, setRepoSnapshots] = createSignal<
   Record<string, GithubRepoSnapshot | "loading" | "error">
 >({});
+// The current repo's working-tree status (git-only, no `gh`) — null while
+// unknown/not-a-repo, [] for a clean tree. Refreshed in lockstep with
+// currentRepo itself; see refreshCurrentRepo.
+const [currentWorkingTreeStatus, setCurrentWorkingTreeStatus] = createSignal<
+  GitStatusFile[] | null
+>(null);
 
-export { ghCliStatus, currentRepo, repoSnapshots };
+export { ghCliStatus, currentRepo, repoSnapshots, currentWorkingTreeStatus };
 export const watchlist = githubWatchlist;
 
 // Last successful (or failed) fetch time per key, so the panel/tab-switch/open
@@ -111,21 +118,30 @@ export async function refreshAll(opts: { force?: boolean } = {}) {
 export async function refreshCurrentRepo(cwd: string) {
   if (!cwd) {
     setCurrentRepo(null);
+    setCurrentWorkingTreeStatus(null);
     return;
   }
   const backend = await getBackend();
   const info = await backend.gitRemoteInfo(cwd);
   if (!info) {
     setCurrentRepo(null);
+    setCurrentWorkingTreeStatus(null);
     return;
   }
   const parsed = parseGithubRemote(info.remoteUrl);
   if (!parsed) {
     setCurrentRepo(null);
+    setCurrentWorkingTreeStatus(null);
     return;
   }
   const detected: DetectedRepo = { ...parsed, branch: info.branch };
   setCurrentRepo(detected);
+
+  // git-only, no `gh` needed — fetched every time the repo itself is
+  // re-detected (tab/pane switch), same cadence as detection, no separate
+  // polling infra.
+  const rawStatus = await backend.gitStatusRaw(cwd);
+  setCurrentWorkingTreeStatus(rawStatus !== null ? parseGitStatus(rawStatus) : null);
 
   const key = `${parsed.owner}/${parsed.repo}`;
   await refresh(key, info.branch);

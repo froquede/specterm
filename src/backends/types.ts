@@ -295,13 +295,19 @@ export interface Backend {
 
   // --- GitHub panel -----------------------------------------------------
   //
-  // All three are read-only, best-effort host calls. gitRemoteInfo needs
-  // nothing but `git`; the other two need the `gh` CLI, already authenticated
-  // by the user outside specterm — no token ever passes through here.
+  // All four are read-only, best-effort host calls. gitRemoteInfo and
+  // gitStatusRaw need nothing but `git`; the other two need the `gh` CLI,
+  // already authenticated by the user outside specterm — no token ever
+  // passes through here.
 
   // Local git remote/branch for a directory. null when the directory isn't
   // inside a git repo, or the repo has no `origin` remote.
   gitRemoteInfo(cwd: string): Promise<GitRemoteInfo | null>;
+  // Raw `git status --porcelain=v1` output for a directory, or null if it
+  // isn't a git repo. Parsing lives in src/lib/git-status.ts, not here — same
+  // reasoning as gitRemoteInfo/parseGithubRemote: host calls stay thin, the
+  // actual logic stays in testable TS.
+  gitStatusRaw(cwd: string): Promise<string | null>;
   // Whether `gh` is installed and authenticated, checked fresh each call —
   // cheap, and the answer can change any time outside the app.
   ghStatus(): Promise<GhStatus>;

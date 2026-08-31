@@ -44,6 +44,7 @@ interface SpectermAPI {
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
   gitRemoteInfo(cwd: string): Promise<GitRemoteInfo | null>;
+  gitStatusRaw(cwd: string): Promise<string | null>;
   ghStatus(): Promise<GhStatus>;
   ghRepoSnapshot(
     owner: string,
@@ -222,6 +223,10 @@ export class ElectronBackend implements Backend {
 
   async gitRemoteInfo(cwd: string): Promise<GitRemoteInfo | null> {
     return this.api.gitRemoteInfo(cwd);
+  }
+
+  async gitStatusRaw(cwd: string): Promise<string | null> {
+    return this.api.gitStatusRaw(cwd);
   }
 
   async ghStatus(): Promise<GhStatus> {

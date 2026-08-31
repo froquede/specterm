@@ -88,6 +88,43 @@
   background: var(--bg-chrome);
 }
 
+.gh-status-summary {
+  margin-top: 6px;
+  font-size: 12px;
+}
+.gh-status-toggle {
+  cursor: pointer;
+  color: var(--fg-muted);
+}
+.gh-status-toggle:hover {
+  color: var(--fg);
+}
+.gh-status-files {
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+.gh-status-file {
+  display: flex;
+  gap: 8px;
+  padding: 2px 0;
+  font-family: monospace;
+  font-size: 11px;
+}
+.gh-status-code {
+  color: var(--accent);
+  width: 20px;
+  flex-shrink: 0;
+}
+.gh-status-path {
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .gh-add-form {
   display: flex;
   gap: 6px;

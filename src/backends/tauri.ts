@@ -197,6 +197,10 @@ export class TauriBackend implements Backend {
     return null;
   }
 
+  async gitStatusRaw(_cwd: string): Promise<string | null> {
+    return null;
+  }
+
   async ghStatus(): Promise<GhStatus> {
     return { installed: false, authenticated: false };
   }

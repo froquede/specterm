@@ -161,6 +161,7 @@ contextBridge.exposeInMainWorld("specterm", {
 
   // GitHub panel
   gitRemoteInfo: (cwd) => ipcRenderer.invoke("git-remote-info", cwd),
+  gitStatusRaw: (cwd) => ipcRenderer.invoke("git-status-raw", cwd),
   ghStatus: () => ipcRenderer.invoke("gh-status"),
   ghRepoSnapshot: (owner, repo, branch) =>
     ipcRenderer.invoke("gh-repo-snapshot", owner, repo, branch),
