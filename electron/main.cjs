@@ -1610,6 +1610,11 @@ ipcMain.handle("git-remote-info", async (_event, cwd) => {
 // it's plain testable TS instead of duplicated across this file and a future
 // Tauri command.
 //
+// `--untracked-files=all` matters: without it, a new directory with no
+// tracked files in it collapses to one "?? somedir/" line instead of listing
+// what's actually inside — which the panel would otherwise render as a
+// clickable "file" that can't be opened, since it's a directory.
+//
 // Deliberately NOT routed through runCmd: its `stdout.trim()` strips the
 // leading space off the first line's status column (e.g. " M file" →
 // "M file"), which throws off every fixed-offset slice in parseGitStatus by
@@ -1620,7 +1625,7 @@ ipcMain.handle("git-status-raw", (_event, cwd) => {
   return new Promise((resolve) => {
     execFile(
       "git",
-      ["-C", cwd, "status", "--porcelain=v1"],
+      ["-C", cwd, "status", "--porcelain=v1", "--untracked-files=all"],
       { timeout: 15000 },
       (err, stdout) => {
         // Not a git repo, or the command failed for some other reason.
