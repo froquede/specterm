@@ -325,6 +325,52 @@ async function splitPane(win, key) {
   await panesReady(win, before + 1);
 }
 
+// GitHub panel: current-repo detection is hermetic (git only, no `gh`/network),
+// so this is the one part of the feature real CI can verify. It builds a throw-
+// away repo with a fake github.com remote, cds a terminal into it, and checks
+// the panel's "Current repo" line — proving detectRepo's remote-URL parsing
+// (src/lib/github-remote.ts) end to end without ever calling `gh`.
+async function testGithubPanelCurrentRepo(win) {
+  const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-gh-"));
+  execSync("git init -q", { cwd: repoDir });
+  execSync("git remote add origin https://github.com/acme/widgets.git", { cwd: repoDir });
+  execSync("git checkout -q -b feature/panel-test", { cwd: repoDir });
+  // A repo needs a commit before `git branch --show-current` is meaningful on
+  // some git versions' fresh-init state.
+  fs.writeFileSync(path.join(repoDir, "README.md"), "test fixture\n");
+  execSync("git add README.md && git -c user.email=t@e.st -c user.name=t commit -q -m init", {
+    cwd: repoDir,
+  });
+
+  await win.keyboard.type(`cd ${repoDir}`);
+  await win.keyboard.press("Enter");
+  // Give the OSC7/probe cwd update (see terminal-registry.ts's scheduleCwdRefresh)
+  // time to land before the panel reads it.
+  await win.waitForTimeout(1800);
+
+  await win.evaluate(() => document.querySelector(".tab-github")?.click());
+  await win.waitForTimeout(500);
+
+  const state = await win.evaluate(() => ({
+    name: document.querySelector(".gh-current-repo-name")?.textContent ?? null,
+    branch: document.querySelector(".gh-current-repo-branch")?.textContent ?? null,
+  }));
+
+  check(
+    "GitHub panel detects the repo from the active pane's cwd",
+    state.name === "acme/widgets",
+    `got name="${state.name}"`
+  );
+  check(
+    "GitHub panel shows the current branch",
+    state.branch === "feature/panel-test",
+    `got branch="${state.branch}"`
+  );
+
+  await win.evaluate(() => document.querySelector(".tab-github")?.click());
+  fs.rmSync(repoDir, { recursive: true, force: true });
+}
+
 // --- run -------------------------------------------------------------------
 let app;
 try {
@@ -3216,6 +3262,13 @@ try {
         `exitCode=${app2.process().exitCode}`
       );
     }
+
+    // 25) GitHub panel: hermetic repo detection, run last against the restored
+    // window so it doesn't disturb the tab/cwd bookkeeping the checks above rely
+    // on. Focus the active pane first — restoring on boot doesn't leave the
+    // terminal focused the way the earlier in-session checks do.
+    await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await testGithubPanelCurrentRepo(win2);
   } finally {
     try {
       await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
