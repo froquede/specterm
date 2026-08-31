@@ -163,15 +163,22 @@ machine with no `gh` CLI still sees which repo and branch it's sitting in.
 Layout, top to bottom:
 
 1. **Current repo** (hidden entirely if `detectRepo` returned `null` for the
-   active tab): repo name, branch name, a CI status pill
-   (passed/failed/running/none, clickable → `openExternal` to the run URL),
-   and — if one exists — a single line for the open PR on that branch.
+   active tab): repo name, branch name, and a CI status pill
+   (passed/failed/running/none, clickable → `openExternal` to the run URL).
+   *(v1 scope cut, found during final review: an "open PR on this branch"
+   line was originally planned here but never implemented — the fetched PR
+   list has no per-PR branch field to filter on, so showing it needs a new
+   `gh pr list --json headRefName` field threaded through the IPC handler,
+   the `GithubPullRequest` type, and this component. Deferred rather than
+   rushed into the very last fix wave of this branch; a natural follow-up.)*
 2. **Watchlist**: an "add repo" text input (`owner/repo` format, validated
    loosely client-side) at the top, then one collapsible card per pinned
-   entry: header row with name, star count, language dot, and PR/issue open
-   counts as small badges; expanding a card lists PR/issue titles (PR rows
-   show author + a small checks icon). Every title is a link via
-   `openExternal`.
+   entry: header row with name, star count, and PR/issue open counts as
+   small badges; expanding a card lists PR/issue titles (PR rows show
+   author + a small checks icon). Every title is a link via `openExternal`.
+   *(The "language dot" this originally described is not rendered — the
+   `language` field is fetched and typed through `GithubRepoSnapshot` but
+   unused in the UI. Same v1 deferral as the current-repo PR line above.)*
 
 Empty/error states, all inline (no modal):
 - `gh` not installed → short message + link to the `gh` install docs.
@@ -193,8 +200,12 @@ git-pull-request, circle-dot (issues), and check/x/loader for CI state.
   detection end to end: it builds a throwaway local repo with a fake
   `github.com` remote (`git init` + `git remote add origin ...`, no network
   or `gh` involved) and asserts the panel's "Current repo" section shows the
-  right owner/repo/branch. This is the one part of the feature real CI can
-  verify, since it depends on `git` only.
+  right owner/repo/branch. This is the one part of the feature that COULD run
+  hermetically in CI, since it depends on `git` only — though as of this
+  writing the repo's only GitHub Actions workflow (`release.yml`) doesn't run
+  `npm run test:e2e` at all, so today this is local/manual regression
+  coverage, not CI-enforced. Wiring `test/e2e.mjs` into CI is a pre-existing
+  repo gap, unrelated to this feature, and out of scope here.
 - Everything that depends on the `gh` CLI (watchlist data, PR/issue/CI
   content, the three empty states) is out of reach for hermetic CI and stays
   a manual smoke test in dev (`npm run dev:electron`) against a real repo

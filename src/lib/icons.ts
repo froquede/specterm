@@ -25,8 +25,8 @@
 //                 controls, the pane title-bars. A dynamic import here would
 //                 mean a visible frame with holes where the icons go.
 //   icons-lazy  — everything reachable only from a panel that is itself lazily
-//                 mounted (settings). It rides in that panel's chunk, so it
-//                 costs a launch that never opens settings nothing at all.
+//                 mounted (settings, github). It rides in that panel's chunk,
+//                 so it costs a launch that never opens settings nothing at all.
 
 export { default as IconSidebarOpen } from "lucide-solid/icons/panel-left-open";
 export { default as IconSidebarClose } from "lucide-solid/icons/panel-left-close";

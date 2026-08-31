@@ -73,9 +73,9 @@ export default function App() {
   // that says what a release will do.
   const [fileDragActive, setFileDragActive] = createSignal(false);
 
-  // The file tree and the settings panel share one slot in .app-body, so the
-  // store models it as a single `sidebarView` — there's no state in which both
-  // are open, and no invariant for callers to maintain.
+  // The file tree, the GitHub panel, and the settings panel share one slot in
+  // .app-body, so the store models it as a single `sidebarView` — there's no
+  // state in which both are open, and no invariant for callers to maintain.
   const settingsOpen = () => store.state.sidebarView === "settings";
 
   function toggleSettings() {

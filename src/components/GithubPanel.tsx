@@ -23,6 +23,7 @@ import {
   repoSnapshots,
   watchlist,
   refresh,
+  refreshAll,
   refreshCurrentRepo,
   addToWatchlist,
   removeFromWatchlist,
@@ -75,7 +76,7 @@ function RepoCard(props: { repoKey: string; onRemove?: () => void }) {
           title="Refresh"
           onClick={(e) => {
             e.stopPropagation();
-            void refresh(props.repoKey);
+            void refresh(props.repoKey, undefined, { force: true });
           }}
         >
           <IconRefresh size={12} stroke-width={ICON_STROKE} />
@@ -99,7 +100,7 @@ function RepoCard(props: { repoKey: string; onRemove?: () => void }) {
       <Show when={snapshot() === "error"}>
         <div class="gh-card-status gh-card-error">
           Couldn't load this repo.
-          <button onClick={() => void refresh(props.repoKey)}>Retry</button>
+          <button onClick={() => void refresh(props.repoKey, undefined, { force: true })}>Retry</button>
         </div>
       </Show>
       <Show when={expanded() && typeof snapshot() === "object"}>
@@ -180,17 +181,18 @@ export default function GithubPanel() {
         <button
           class="gh-card-refresh"
           title="Refresh all"
-          onClick={() => {
-            const c = current();
-            if (c) void refresh(`${c.owner}/${c.repo}`, c.branch);
-            for (const key of watchlist()) void refresh(key);
-          }}
+          onClick={() => void refreshAll({ force: true })}
         >
           <IconRefresh size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
       </div>
 
       <div class="github-panel-scroll">
+        <Show when={ghCliStatus() === "checking"}>
+          <div class="gh-empty-state">
+            <p>Checking for the <code>gh</code> CLI…</p>
+          </div>
+        </Show>
         <Show when={ghCliStatus() === "missing"}>
           <div class="gh-empty-state">
             <p>The <code>gh</code> CLI isn't installed.</p>

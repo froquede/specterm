@@ -41,21 +41,43 @@ function setSnapshot(
 
 export async function checkGhStatus() {
   const backend = await getBackend();
-  const status = await backend.ghStatus();
-  setGhCliStatus(
-    !status.installed
-      ? "missing"
-      : !status.authenticated
-        ? "unauthenticated"
-        : "ready"
-  );
-  return status;
+  try {
+    const status = await backend.ghStatus();
+    setGhCliStatus(
+      !status.installed
+        ? "missing"
+        : !status.authenticated
+          ? "unauthenticated"
+          : "ready"
+    );
+    return status;
+  } catch (_) {
+    // The IPC call itself failed (not just "gh missing") — degrade to a
+    // visible "missing" state rather than leaving the panel stuck on
+    // "checking" forever with no explanation.
+    setGhCliStatus("missing");
+    return { installed: false, authenticated: false };
+  }
 }
 
-export async function refresh(key: string, branch?: string) {
+// Staleness-gated by default: a call within STALE_MS of the last successful
+// fetch for this key is a no-op, so reopening the panel or a poll tick that
+// lands right after a fresh fetch doesn't hammer `gh` for nothing. Pass
+// `{ force: true }` for an explicit user action (a click on a refresh/retry
+// button, or the interval poll tick) that must always go through.
+export async function refresh(
+  key: string,
+  branch?: string,
+  opts: { force?: boolean } = {}
+) {
   if (ghCliStatus() !== "ready") return;
   const [owner, repo] = key.split("/");
   if (!owner || !repo) return;
+
+  if (!opts.force) {
+    const age = Date.now() - (lastFetched.get(key) ?? 0);
+    if (age <= STALE_MS) return;
+  }
 
   setSnapshot(key, "loading");
   try {
@@ -68,21 +90,24 @@ export async function refresh(key: string, branch?: string) {
   }
 }
 
-export async function refreshAll() {
+export async function refreshAll(opts: { force?: boolean } = {}) {
   await checkGhStatus();
   if (ghCliStatus() !== "ready") return;
-  const keys = watchlist();
   const current = currentRepo();
   const currentKey = current ? `${current.owner}/${current.repo}` : null;
+  // Exclude the current repo from the watchlist pass — see Fix 1 above for
+  // why fetching it twice (once with a branch, once without) is a real bug,
+  // not just wasted work.
+  const keys = watchlist().filter((key) => key !== currentKey);
   await Promise.all([
-    ...keys.map((key) => refresh(key)),
-    currentKey ? refresh(currentKey, current!.branch) : Promise.resolve(),
+    ...keys.map((key) => refresh(key, undefined, opts)),
+    currentKey ? refresh(currentKey, current!.branch, opts) : Promise.resolve(),
   ]);
 }
 
-// Re-detects the repo for `cwd` (the active pane's directory) and, if it
-// resolves to a GitHub repo whose cache is stale, refreshes it. Called on
-// every active-pane change — see GithubPanel's effect in Task 7.
+// Re-detects the repo for `cwd` (the active pane's directory) and hands off
+// to refresh()'s own staleness gate — see the comment there for why this no
+// longer duplicates that check itself.
 export async function refreshCurrentRepo(cwd: string) {
   if (!cwd) {
     setCurrentRepo(null);
@@ -103,8 +128,7 @@ export async function refreshCurrentRepo(cwd: string) {
   setCurrentRepo(detected);
 
   const key = `${parsed.owner}/${parsed.repo}`;
-  const age = Date.now() - (lastFetched.get(key) ?? 0);
-  if (age > STALE_MS) await refresh(key, info.branch);
+  await refresh(key, info.branch);
 }
 
 export function addToWatchlist(key: string) {
@@ -112,7 +136,7 @@ export function addToWatchlist(key: string) {
   if (!/^[^/\s]+\/[^/\s]+$/.test(trimmed)) return; // loose owner/repo shape check
   if (watchlist().includes(trimmed)) return;
   setGithubWatchlist([...watchlist(), trimmed]);
-  void refresh(trimmed);
+  void refresh(trimmed, undefined, { force: true });
 }
 
 export function removeFromWatchlist(key: string) {
@@ -126,6 +150,6 @@ const POLL_MS = 5 * 60 * 1000;
 
 export function startGithubPolling(): () => void {
   void refreshAll();
-  const id = window.setInterval(() => void refreshAll(), POLL_MS);
+  const id = window.setInterval(() => void refreshAll({ force: true }), POLL_MS);
   return () => window.clearInterval(id);
 }
