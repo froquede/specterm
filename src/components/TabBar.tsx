@@ -13,6 +13,7 @@ import {
   IconFullscreen,
   IconFullscreenExit,
   IconSettings,
+  IconGithubPanel,
   IconX,
   ICON_SIZE,
   ICON_STROKE,
@@ -46,6 +47,8 @@ interface TabBarProps {
   onCreate: () => void;
   onToggleSidebar: () => void;
   onOpenSettings: () => void;
+  onToggleGithub: () => void;
+  githubOpen: boolean;
   onStartRename: (tabId: string) => void;
   onCommitRename: (tabId: string, title: string) => void;
   onCancelRename: () => void;
@@ -326,6 +329,15 @@ export default function TabBar(props: TabBarProps) {
           title={`${props.settingsOpen ? "Hide" : "Open"} settings (${settingsKey()})`}
         >
           <IconSettings size={ICON_SIZE} stroke-width={ICON_STROKE} />
+        </button>
+        <button
+          class="tab-icon-btn tab-github"
+          classList={{ active: props.githubOpen }}
+          onClick={props.onToggleGithub}
+          aria-pressed={props.githubOpen}
+          title={`${props.githubOpen ? "Hide" : "Open"} GitHub panel`}
+        >
+          <IconGithubPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
       </div>
       <div class="tab-list" onWheel={onTabListWheel}>
