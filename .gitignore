@@ -1,3 +1,7 @@
+# Superpowers subagent-driven-development scratch workspace (ledgers, briefs,
+# review packages) — per-plan, regenerated locally, never part of the repo.
+.superpowers/
+
 # Logs
 logs
 *.log
