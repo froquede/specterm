@@ -3177,7 +3177,19 @@ try {
       `tabs ${tabsAtQuit}→${restoredTabs} cwd=${restoredCwd} (was at ${liveCwdAtQuit})`
     );
 
-    // 23) Scrollback geometry survives a tab switch. xterm sizes its scroll area
+    // 23) GitHub panel: hermetic repo detection. Run right here, immediately
+    // after the restore-on-boot check and before anything below it — the
+    // "scrollback geometry" and "quitting holds for confirmation" checks that
+    // follow both leave commands running in the active pane's shell (a long
+    // `seq` print, then a `sleep 45`), and typing `cd` into a pane whose shell
+    // is still busy running something else just queues garbage input instead
+    // of actually changing directory. Focus the active pane first — restoring
+    // on boot doesn't leave the terminal focused the way the earlier
+    // in-session checks do.
+    await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await testGithubPanelCurrentRepo(win2);
+
+    // 24) Scrollback geometry survives a tab switch. xterm sizes its scroll area
     // on an animation frame, and a hidden tab is unmounted — so output that
     // landed while another tab was in front used to be measured with the
     // terminal detached from the page (height 0), leaving the viewport exactly
@@ -3236,7 +3248,7 @@ try {
       );
     }
 
-    // 24) Quitting with something still running asks first. Start a command in a
+    // 25) Quitting with something still running asks first. Start a command in a
     // pane, then ask this app to quit exactly the way ⌘Q does: it must still be
     // alive a moment later, parked on a confirmation dialog no script can
     // answer. (Windows has no cheap process table here, so it is skipped there.)
@@ -3262,13 +3274,6 @@ try {
         `exitCode=${app2.process().exitCode}`
       );
     }
-
-    // 25) GitHub panel: hermetic repo detection, run last against the restored
-    // window so it doesn't disturb the tab/cwd bookkeeping the checks above rely
-    // on. Focus the active pane first — restoring on boot doesn't leave the
-    // terminal focused the way the earlier in-session checks do.
-    await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-    await testGithubPanelCurrentRepo(win2);
   } finally {
     try {
       await Promise.race([app2.close(), new Promise((r) => setTimeout(r, 3000))]);
