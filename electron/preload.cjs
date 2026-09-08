@@ -149,6 +149,11 @@ contextBridge.exposeInMainWorld("specterm", {
 
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 
+  openPathInDefaultApp: (path) =>
+    ipcRenderer.invoke("open-path-default-app", path),
+
+  statPath: (path) => ipcRenderer.invoke("stat-path", path),
+
   clipboardHasImage: () => ipcRenderer.invoke("clipboard-has-image"),
 
   clipboardReadText: () => ipcRenderer.invoke("clipboard-read-text"),

@@ -1647,6 +1647,50 @@ ipcMain.handle("reveal-in-file-manager", async (_event, targetPath, isDirectory)
   }
 });
 
+// Is this path there, and what is it? Asked before a modifier-click decides
+// where to send it: a file Specterm can display opens in a pane, a directory
+// goes to the file manager, and anything else is handed to the OS. Terminal
+// output outlives the files it names, so "not there" is a real answer and the
+// pane says so rather than opening nothing.
+ipcMain.handle("stat-path", async (_event, targetPath) => {
+  if (typeof targetPath !== "string" || !targetPath) return { exists: false, isDirectory: false };
+  try {
+    const stats = await fs.promises.stat(targetPath);
+    return { exists: true, isDirectory: stats.isDirectory() };
+  } catch {
+    return { exists: false, isDirectory: false };
+  }
+});
+
+// Open a path with the OS's default application for its type — what a modifier-
+// click on a path in terminal output asks for (see src/lib/terminal-links.ts).
+// A directory opens in the file manager instead, which is the same thing one
+// level up.
+//
+// A path is stat'd before it is opened. Terminal output is full of paths that
+// were true when they were printed and aren't any more, and `shell.openPath`
+// answers a missing one with an error string the user never sees; reporting the
+// miss lets the pane say so.
+ipcMain.handle("open-path-default-app", async (_event, targetPath) => {
+  if (typeof targetPath !== "string" || !targetPath) {
+    return { ok: false, reason: "missing" };
+  }
+  let isDirectory;
+  try {
+    isDirectory = (await fs.promises.stat(targetPath)).isDirectory();
+  } catch {
+    return { ok: false, reason: "missing" };
+  }
+  const err = await shell.openPath(targetPath);
+  if (err) {
+    // No application claimed it. Showing it in the file manager is the next
+    // most useful answer, and is what a double-click with no handler does.
+    if (!isDirectory) shell.showItemInFolder(targetPath);
+    return { ok: false, reason: "refused" };
+  }
+  return { ok: true };
+});
+
 // Hand a link to the OS default browser. The renderer asks for this explicitly
 // rather than letting the click navigate and catching it in will-navigate:
 // relying on the navigation meant a link the guard didn't recognize took the

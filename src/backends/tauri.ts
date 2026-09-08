@@ -161,6 +161,30 @@ export class TauriBackend implements Backend {
     await open(url);
   }
 
+  async statPath(path: string): Promise<{ exists: boolean; isDirectory: boolean }> {
+    try {
+      const { stat } = await import("@tauri-apps/plugin-fs");
+      const info = await stat(path);
+      return { exists: true, isDirectory: info.isDirectory };
+    } catch {
+      return { exists: false, isDirectory: false };
+    }
+  }
+
+  async openPathInDefaultApp(
+    path: string
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }> {
+    // The shell plugin hands the path to the OS and tells us nothing about what
+    // happened to it, so a rejection here is all we can report.
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(path);
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: "missing" };
+    }
+  }
+
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     return listen("fs-change", () => cb());
   }

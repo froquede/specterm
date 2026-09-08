@@ -37,6 +37,10 @@ interface SpectermAPI {
   listDrives(): Promise<DriveEntry[]>;
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   openExternal(url: string): Promise<void>;
+  openPathInDefaultApp(
+    path: string
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }>;
+  statPath(path: string): Promise<{ exists: boolean; isDirectory: boolean }>;
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
@@ -192,6 +196,16 @@ export class ElectronBackend implements Backend {
 
   async openExternal(url: string): Promise<void> {
     return this.api.openExternal(url);
+  }
+
+  async openPathInDefaultApp(
+    path: string
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }> {
+    return this.api.openPathInDefaultApp(path);
+  }
+
+  async statPath(path: string): Promise<{ exists: boolean; isDirectory: boolean }> {
+    return this.api.statPath(path);
   }
 
   async revealInFileManager(path: string, isDirectory: boolean): Promise<void> {

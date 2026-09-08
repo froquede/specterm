@@ -35,7 +35,7 @@ interface PaneProps {
   onFocus: () => void;
   onTitle?: (title: string) => void;
   onClose?: () => void;
-  onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+  onOpenFile?: (path: string, mode: "split" | "tab") => void;
   onDrop?: (
     sourceId: PaneId,
     targetId: PaneId,
@@ -240,11 +240,11 @@ export default function Pane(props: PaneProps) {
               props.onTitle?.(t);
             }}
             onExit={props.onClose}
-            onOpenMarkdown={props.onOpenMarkdown}
+            onOpenFile={props.onOpenFile}
           />
         </Show>
         <Show when={props.pane.kind === "markdown" ? (props.pane as PaneType & { kind: "markdown" }).filePath : null} keyed>
-          {(filePath) => <MarkdownPane filePath={filePath} isActive={props.isActive} onOpenMarkdown={props.onOpenMarkdown} />}
+          {(filePath) => <MarkdownPane filePath={filePath} isActive={props.isActive} onOpenFile={props.onOpenFile} />}
         </Show>
         <Show when={props.pane.kind === "text" ? (props.pane as PaneType & { kind: "text" }).filePath : null} keyed>
           {(filePath) => <TextPane filePath={filePath} isActive={props.isActive} />}

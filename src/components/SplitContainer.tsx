@@ -22,7 +22,7 @@ interface SplitContainerProps {
   onTearOffPane?: (sourceId: PaneId) => void;
   onTitle?: (title: string) => void;
   onClosePane?: (id: PaneId) => void;
-  onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+  onOpenFile?: (path: string, mode: "split" | "tab") => void;
 }
 
 export default function SplitContainer(props: SplitContainerProps) {
@@ -62,7 +62,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                     onFocus={() => props.onFocusPane(leafId)}
                     onTitle={props.onTitle}
                     onClose={() => props.onClosePane?.(leafId)}
-                    onOpenMarkdown={props.onOpenMarkdown}
+                    onOpenFile={props.onOpenFile}
                     onDrop={props.onDropPane}
                     onDropToTab={props.onDropPaneToTab}
                     onDropToNewTab={props.onDropPaneToNewTab}
@@ -107,7 +107,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTearOffPane={props.onTearOffPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
-                onOpenMarkdown={props.onOpenMarkdown}
+                onOpenFile={props.onOpenFile}
               />
             </div>
             <SplitHandle
@@ -136,7 +136,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTearOffPane={props.onTearOffPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
-                onOpenMarkdown={props.onOpenMarkdown}
+                onOpenFile={props.onOpenFile}
               />
             </div>
           </div>

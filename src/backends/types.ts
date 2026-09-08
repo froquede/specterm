@@ -223,6 +223,16 @@ export interface Backend {
   // the user opened. Never navigates the window — a navigation that lands
   // replaces the whole app with the target.
   openExternal(url: string): Promise<void>;
+  // Open a path with the OS's default application for its type; a directory
+  // opens in the file manager. Reports back rather than failing silently: a
+  // path printed to a terminal may not exist any more ("missing"), and one
+  // no application claims is revealed in the file manager instead ("refused").
+  // Does this path exist, and is it a directory? A cheap yes/no for deciding
+  // where a click on a path should send it.
+  statPath(path: string): Promise<{ exists: boolean; isDirectory: boolean }>;
+  openPathInDefaultApp(
+    path: string
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }>;
   onFsChange(cb: () => void): Promise<UnlistenFn>;
   // A file the OS asked the app to open (Finder "Open With", double-click, CLI
   // path arg). Fires once per file, replaying any that queued before subscribe.
