@@ -7,7 +7,9 @@ Distributable installers are built in CI by `.github/workflows/release.yml`:
 - **Windows** → NSIS installer (`.exe`)
 - **macOS** → `.dmg` + `.zip` for Apple silicon (`arm64`) and Intel (`x64`),
   unsigned — both from the one mac job, so a single `latest-mac.yml` covers the
-  two architectures for the in-app updater
+  two architectures. The in-app updater picks the zip for the running Mac by
+  file name (`macAssetFromUpdateInfo` in `electron/main.cjs` matches
+  `mac-<arch>.zip`), so `artifactName` must keep `${os}-${arch}`
 
 Versioning is semantic (`MAJOR.MINOR.FIX`). To cut a release: land the work on
 `main`, bump `version` in `package.json`, update `CHANGELOG.md`, then push a

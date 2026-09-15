@@ -19,10 +19,13 @@ name: Release
 # runner's own arch, which is why this leg used to ship arm64 alone.
 # electron-builder rebuilds node-pty once per arch, cross-compiling x64 on the
 # arm64 runner. Keep it a single leg: electron-builder writes one latest-mac.yml
-# naming every mac zip, and electron-updater picks the file for the running arch
-# from it. Two separate mac legs would each upload
-# their own latest-mac.yml, the last one would clobber the other, and one of the
-# two architectures would silently stop receiving updates.
+# naming every mac zip. On macOS electron-updater only *detects* the update;
+# the zip is picked and installed by macAssetFromUpdateInfo in
+# electron/main.cjs, which matches `mac-${process.arch}.zip` — so it depends on
+# artifactName in package.json keeping `${os}-${arch}` in the file name. Two
+# separate mac legs would each upload their own latest-mac.yml, the last one
+# would clobber the other, and one of the two architectures would silently stop
+# receiving updates.
 #
 # Triggered by pushing a semantic-version tag (vMAJOR.MINOR.FIX, e.g. v0.6.0).
 on:
