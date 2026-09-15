@@ -35,8 +35,10 @@ const path = require("node:path");
 
 const REPO_DIR_NAME = "specterm";
 // `origin` must look like <host>[:/]<owner>/specterm[.git]. Confirms the
-// directory is a clone of *this* project before we run anything in it.
-const ORIGIN_RE = /[/:][^/:]+\/specterm(\.git)?\/?$/i;
+// directory is a clone of *this* project before we run anything in it. A remote
+// that is a local path on Windows is written with backslashes, so both
+// separators count.
+const ORIGIN_RE = /[/:\\][^/:\\]+[/\\]specterm(\.git)?[/\\]?$/i;
 
 // Search budget. The scan runs at most once per install (the hit is cached) and
 // only after an update download, but it still walks a home directory, so it is
