@@ -59,6 +59,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // gets the boot budget instead. It was already mounted lazily; this makes it
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
+const GithubPanel = lazy(() => import("./components/GithubPanel"));
 import type { PaneId } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
@@ -72,14 +73,21 @@ export default function App() {
   // that says what a release will do.
   const [fileDragActive, setFileDragActive] = createSignal(false);
 
-  // The file tree and the settings panel share one slot in .app-body, so the
-  // store models it as a single `sidebarView` — there's no state in which both
-  // are open, and no invariant for callers to maintain.
+  // The file tree, the GitHub panel, and the settings panel share one slot in
+  // .app-body, so the store models it as a single `sidebarView` — there's no
+  // state in which both are open, and no invariant for callers to maintain.
   const settingsOpen = () => store.state.sidebarView === "settings";
 
   function toggleSettings() {
     store.toggleSidebarView("settings");
     if (!settingsOpen()) focusActivePane();
+  }
+
+  const githubOpen = () => store.state.sidebarView === "github";
+
+  function toggleGithub() {
+    store.toggleSidebarView("github");
+    if (!githubOpen()) focusActivePane();
   }
 
   // Keep keyboard focus on the active pane's terminal. The active pane is the
@@ -713,6 +721,8 @@ export default function App() {
         }
         onTearOff={(id) => void tearOff("tab", id)}
         settingsOpen={settingsOpen()}
+        onToggleGithub={toggleGithub}
+        githubOpen={githubOpen()}
       />
       <div class="app-body">
         <FileTree
@@ -736,6 +746,11 @@ export default function App() {
                 focusActivePane();
               }}
             />
+          </Suspense>
+        </Show>
+        <Show when={githubOpen()}>
+          <Suspense>
+            <GithubPanel onOpenFile={(path) => handleOpenFile(path, "tab")} />
           </Suspense>
         </Show>
         <Show when={store.state.sidebarView !== null}>

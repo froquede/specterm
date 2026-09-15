@@ -162,6 +162,7 @@ interface Persisted {
   desktopNotifications: boolean;
   clockEnabled: boolean;
   clockFormat: string;
+  githubWatchlist: string[];
 }
 
 const DEFAULTS: Persisted = {
@@ -181,6 +182,7 @@ const DEFAULTS: Persisted = {
   desktopNotifications: DESKTOP_NOTIFICATIONS_DEFAULT,
   clockEnabled: false,
   clockFormat: CLOCK_FORMAT_DEFAULT,
+  githubWatchlist: [],
 };
 
 // Every field is read defensively: a blob written by an older version simply
@@ -258,6 +260,9 @@ function load(): Persisted {
         typeof p.clockFormat === "string"
           ? p.clockFormat.slice(0, CLOCK_FORMAT_MAX)
           : DEFAULTS.clockFormat,
+      githubWatchlist: Array.isArray(p.githubWatchlist)
+        ? p.githubWatchlist.filter((v: unknown) => typeof v === "string")
+        : DEFAULTS.githubWatchlist,
     };
   } catch (_) {
     // Corrupt or unavailable storage — fall back to defaults.
@@ -301,6 +306,9 @@ const [desktopNotifications, setDesktopNotificationsSignal] = createSignal(
 );
 const [clockEnabled, setClockEnabledSignal] = createSignal(initial.clockEnabled);
 const [clockFormat, setClockFormatSignal] = createSignal(initial.clockFormat);
+const [githubWatchlist, setGithubWatchlistSignal] = createSignal(
+  initial.githubWatchlist
+);
 
 export {
   unfocusedOpacity,
@@ -319,6 +327,7 @@ export {
   desktopNotifications,
   clockEnabled,
   clockFormat,
+  githubWatchlist,
 };
 
 /** Which window edge the tab bar sits on. */
@@ -371,6 +380,7 @@ function persist() {
         desktopNotifications: desktopNotifications(),
         clockEnabled: clockEnabled(),
         clockFormat: clockFormat(),
+        githubWatchlist: githubWatchlist(),
       } satisfies Persisted)
     );
   } catch (_) {
@@ -473,6 +483,7 @@ function reloadFromStorage() {
   setDesktopNotificationsSignal(p.desktopNotifications);
   setClockEnabledSignal(p.clockEnabled);
   setClockFormatSignal(p.clockFormat);
+  setGithubWatchlistSignal(p.githubWatchlist);
   applyCssVars();
   applyWindowOpacity();
 }
@@ -558,6 +569,16 @@ export function setClockEnabled(v: boolean) {
 export function setClockFormat(v: string) {
   const trimmed = v.slice(0, CLOCK_FORMAT_MAX);
   setClockFormatSignal(trimmed.trim() === "" ? CLOCK_FORMAT_DEFAULT : trimmed);
+  persist();
+}
+
+// --- GitHub watchlist -------------------------------------------------------
+
+export function setGithubWatchlist(v: string[]) {
+  // Dedupe and drop blanks — the add-repo input in the panel already validates
+  // format, this is just the last line of defense against a corrupt blob.
+  const cleaned = [...new Set(v.map((s) => s.trim()).filter(Boolean))];
+  setGithubWatchlistSignal(cleaned);
   persist();
 }
 

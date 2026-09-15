@@ -9,6 +9,9 @@ import type {
   UpdaterEvent,
   TransferTab,
   WindowInit,
+  GitRemoteInfo,
+  GhStatus,
+  GithubRepoSnapshot,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -40,6 +43,14 @@ interface SpectermAPI {
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
   clipboardWriteText(text: string): Promise<void>;
+  gitRemoteInfo(cwd: string): Promise<GitRemoteInfo | null>;
+  gitStatusRaw(cwd: string): Promise<string | null>;
+  ghStatus(): Promise<GhStatus>;
+  ghRepoSnapshot(
+    owner: string,
+    repo: string,
+    branch?: string
+  ): Promise<GithubRepoSnapshot>;
   watchDir(path: string, cb: () => void): () => void;
   onOpenPath(cb: (path: string) => void): () => void;
   getHomePath(): Promise<string>;
@@ -208,6 +219,26 @@ export class ElectronBackend implements Backend {
 
   async clipboardWriteText(text: string): Promise<void> {
     return this.api.clipboardWriteText(text);
+  }
+
+  async gitRemoteInfo(cwd: string): Promise<GitRemoteInfo | null> {
+    return this.api.gitRemoteInfo(cwd);
+  }
+
+  async gitStatusRaw(cwd: string): Promise<string | null> {
+    return this.api.gitStatusRaw(cwd);
+  }
+
+  async ghStatus(): Promise<GhStatus> {
+    return this.api.ghStatus();
+  }
+
+  async ghRepoSnapshot(
+    owner: string,
+    repo: string,
+    branch?: string
+  ): Promise<GithubRepoSnapshot> {
+    return this.api.ghRepoSnapshot(owner, repo, branch);
   }
 
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
