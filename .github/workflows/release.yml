@@ -6,12 +6,23 @@ name: Release
 #                                   runs on Ubuntu 20.04+; the runner image's
 #                                   newer glibc would break older distros)
 #   • Windows  → NSIS installer (.exe)   (uses node-pty's shipped N-API prebuild)
-#   • macOS    → .dmg + .zip (Apple-silicon, unsigned)
+#   • macOS    → .dmg + .zip for Apple silicon (arm64) and Intel (x64), unsigned
 #
 # node-pty is N-API (ABI-stable), so its prebuilt binaries run on Electron as-is.
 # Windows therefore skips the native rebuild entirely (npmRebuild=false), which
 # sidesteps node-gyp/Visual Studio detection. Linux has no prebuild, so it
 # compiles from source inside the container; macOS rebuilds against Electron.
+#
+# Both macOS architectures come out of the one mac leg, via the explicit
+# --arm64 --x64 flags: naming targets on the command line (dmg zip) makes
+# electron-builder ignore the per-target arch in package.json and build only the
+# runner's own arch, which is why this leg used to ship arm64 alone.
+# electron-builder rebuilds node-pty once per arch, cross-compiling x64 on the
+# arm64 runner. Keep it a single leg: electron-builder writes one latest-mac.yml
+# naming every mac zip, and electron-updater picks the file for the running arch
+# from it. Two separate mac legs would each upload
+# their own latest-mac.yml, the last one would clobber the other, and one of the
+# two architectures would silently stop receiving updates.
 #
 # Triggered by pushing a semantic-version tag (vMAJOR.MINOR.FIX, e.g. v0.6.0).
 on:
@@ -40,7 +51,7 @@ jobs:
           - os: windows-latest
             build_args: "--win nsis --config.npmRebuild=false"
           - os: macos-latest
-            build_args: "--mac dmg zip"
+            build_args: "--mac dmg zip --arm64 --x64"
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     env:

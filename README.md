@@ -9,7 +9,7 @@ markdown renders inline. SolidJS + xterm.js on Electron — Linux, macOS, Window
 ## Install
 
 Grab a build from [Releases](https://github.com/froquede/specterm/releases):
-AppImage or `.deb` on Linux, `.exe` on Windows, `.dmg` on macOS (Apple silicon).
+AppImage or `.deb` on Linux, `.exe` on Windows, `.dmg` on macOS (`arm64` for Apple silicon, `x64` for Intel).
 
 macOS is unsigned, so clear the quarantine flag once after installing:
 
