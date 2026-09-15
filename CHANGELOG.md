@@ -47,6 +47,11 @@
   recomputed whenever the pane redraws, not only when the pointer changes row,
   so a path that appears under a motionless pointer is clickable straight away.
 
+- **Intel Macs get a build.** Releases now ship a macOS `.dmg`/`.zip` for `x64`
+  next to the Apple-silicon one, so Specterm installs on Intel Macs instead of
+  offering only an `arm64` bundle that can't run there. Both come out of the same
+  release job, so the in-app updater keeps serving each Mac the right one.
+
 ## 0.21.0 — 2026-08-21
 
 ### Added
