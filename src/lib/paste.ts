@@ -51,9 +51,11 @@ const COLS_SLACK = WRAP_SLACK + 4;
 const MAX_JOINABLE_ROWS = 64;
 const MAX_JOINABLE_BYTES = 64 * 1024;
 
-// The deepest left margin a program wrapping its own output plausibly draws
-// (a chat pane's bullet and padding). Past this, indentation is structure.
-const MAX_MARGIN = 8;
+// The deepest left margin a program wrapping its own output plausibly draws:
+// Claude Code's two columns, or three under a numbered list's "1. ". Four is
+// where code indentation starts, and two indented lines of code that happen to
+// fill the pane are structure, not one wrapped command.
+const MAX_MARGIN = 3;
 
 // A row ending in one of these broke because the author wanted it to: an
 // explicit continuation, an operator waiting for its right-hand side, an open

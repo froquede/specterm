@@ -143,6 +143,11 @@ refuses(
     `${a}\n  gres:16-alpine`
   );
   refuses("a margin deeper than a chat pane draws", `${a}\n            gres:16-alpine`);
+  // Two lines of 4-space-indented code, the first long enough to reach the
+  // pane's edge, are two lines of code — not a command a program wrapped.
+  const code =
+    "    result = transform(records, key=lambda r: (r.created_at, r.priority), reverse=True, limit=settings.MAX_BATCH)";
+  refuses("indented code that fills the pane", `${code}\n    return result`);
 }
 
 refuses(

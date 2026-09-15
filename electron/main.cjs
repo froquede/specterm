@@ -957,6 +957,12 @@ function createWindow(opts = {}) {
     reapUnparkedPtys(wcId);
 
     windowLayouts.delete(wcId);
+    // Its screens go with its layout: a window that closed without parking is
+    // no longer part of the saved session, so its scrollback would only sit in
+    // this process and be rewritten on every later save. A parked window keeps
+    // its entry (its layout lives on in parkedLayouts), and so does every window
+    // closing on the way out of a Quit — those are the session being saved.
+    if (!parking && !quitting) screensByWindow.delete(wcId);
     pendingDrops.delete(wcId);
     // Nothing to keep lit, and nothing to put out later either.
     if (dragTarget === win) clearDragTarget();
@@ -1344,7 +1350,10 @@ async function scanProcessTable() {
             "Get-CimInstance Win32_Process | ForEach-Object " +
               '{ "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)" }',
           ],
-          { windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
+          // A wedged WMI repository never answers; without a timeout this
+          // scan would pin the shared in-flight promise, and every caller
+          // after it, until restart. execFile kills the child when it fires.
+          { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
           (err, stdout) => (err ? reject(err) : resolve(stdout))
         );
       });
@@ -2176,8 +2185,9 @@ async function writeScreensToDisk(screens) {
 // the maps are kept per window and merged, and the writes run one at a time.
 //
 // Pane ids are unique across windows, so the merge never has to choose. A window
-// that has since closed keeps its entry: a detached window is still part of the
-// saved session. Insertion order puts a reattached window after the one it came
+// that has since parked keeps its entry: a detached window is still part of the
+// saved session. One that closed for good drops it (see the window's `closed`
+// handler). Insertion order puts a reattached window after the one it came
 // from, so where both hold the same pane the newer screen wins.
 const screensByWindow = new Map();
 let screensWrite = Promise.resolve();

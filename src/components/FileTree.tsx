@@ -335,8 +335,11 @@ export default function FileTree(props: FileTreeProps) {
 
   // The folder a path search points at, listed on its own so the tree keeps
   // its place until the user commits to a row.
+  // The source is null, not "", when there's no path query: Solid only skips
+  // the fetch for a falsy-by-identity source (null/undefined/false), so "" would
+  // send a read-dir of nothing to the host on every boot.
   const [pathEntries] = createResource(
-    () => pathQuery()?.dir ?? "",
+    () => pathQuery()?.dir || null,
     (dir) => listDir(dir)
   );
 
