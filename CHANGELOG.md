@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.22.0 — 2026-09-15
 
 ### Added
 - **Click a path in terminal output and it's on your clipboard.** URLs were the
@@ -51,6 +51,48 @@
   next to the Apple-silicon one, so Specterm installs on Intel Macs instead of
   offering only an `arm64` bundle that can't run there. Both come out of the same
   release job, so the in-app updater keeps serving each Mac the right one.
+
+- **A GitHub panel in the sidebar.** A third sidebar view, next to Files and
+  Settings, for the repository you're working in: the repo and branch the active
+  pane's shell is in, that branch's latest CI run, and the working tree's changed
+  files grouped as modified, new and deleted — a click opens one. It follows the
+  shell, so a `cd` into another repo updates it. A watchlist pins other
+  `owner/repo`s with their stars, forks, open pull requests and issues, and each
+  card expands to the titles. Everything comes from local `git` and your own
+  authenticated `gh` CLI; no token passes through Specterm, and detecting the
+  current repo needs only `git`. It costs nothing until opened: the panel, its
+  icons and its styles load with it, and the five-minute refresh runs only while
+  it is open.
+- **Type a path into the sidebar filter.** Anything with a separator, or
+  starting with `~`, browses that folder instead of filtering by name —
+  absolute, relative, or pasted from "Copy as path" with its quotes. `Enter`
+  opens a file or enters a folder, `Tab` completes. The sidebar button also shows
+  as pressed while the sidebar is open, like the settings button.
+
+### Fixed
+- **Pasting a command Claude Code wrapped.** Claude draws its replies two
+  columns in, so every wrapped row carried that margin — and the unwrap refused
+  any indented row, pasting one command as two. A shared margin of up to three
+  columns now counts toward the row width. Deeper indentation is still left
+  alone: two lines of indented code that fill the pane are code, not a wrapped
+  command.
+- **Windows: resume, session detection and restore.** The Claude project
+  directory never matched on Windows (the drive colon wasn't turned into a dash),
+  so no transcript was found for resume or for a diagram's exact source. Session
+  detection, resume and the attention signal had no process table to read and now
+  get one from a single `Get-CimInstance` query, shared across windows and given
+  a timeout. A restored pane's replayed screen was wiped by ConPTY's initial
+  clear, and `cd fav-N` stopped working once a pane had been clicked, because
+  ConPTY's focus report was read as typing.
+- **Saved scrollback with more than one window.** The last window to close
+  overwrote every other window's screens, and two windows closing together
+  raced onto the same temporary file, which is how a restart could come back
+  with a corrupt one. Screens are now kept per window, merged, and written one
+  at a time, with a final synchronous write on quit; a window closed for good
+  drops its share instead of being kept in memory.
+- **Shells left running after a failed detach.** If closing a window with
+  background sessions on threw after its shells were handed over, they were
+  forgotten without being killed. They are reaped now.
 
 ## 0.21.0 — 2026-08-21
 
