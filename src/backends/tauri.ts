@@ -62,7 +62,7 @@ export class TauriBackend implements Backend {
   }
 
   // Process inspection has no Tauri command yet. Empty answers are a supported
-  // outcome everywhere (Windows reports nothing either), so panes here restore
+  // outcome everywhere (the Electron host can fail to look, too), so panes here restore
   // as plain shells rather than resumed sessions.
   async ptyDescendants(
     _ids: number[]

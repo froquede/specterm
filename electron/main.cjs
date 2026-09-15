@@ -1329,8 +1329,10 @@ async function scanProcessTable() {
   }
 
   if (process.platform === "win32") {
-    // No /proc and no `ps`; one CIM query is the cheap equivalent. Only the
-    // close confirmation uses this — the session providers stay off Windows.
+    // No /proc and no `ps`; one CIM query is the cheap equivalent (under a
+    // second on a desktop's table). It carries the command line too, since
+    // Windows has no per-pid file to read it from later. Tab-separated: an
+    // image name can hold spaces, a tab it can't.
     try {
       const out = await new Promise((resolve, reject) => {
         execFile(
@@ -1340,18 +1342,22 @@ async function scanProcessTable() {
             "-NonInteractive",
             "-Command",
             "Get-CimInstance Win32_Process | ForEach-Object " +
-              '{ "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }',
+              '{ "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)" }',
           ],
+          { windowsHide: true, maxBuffer: 16 * 1024 * 1024 },
           (err, stdout) => (err ? reject(err) : resolve(stdout))
         );
       });
-      for (const line of out.split("\n")) {
-        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-        if (!m) continue;
-        table.set(Number(m[1]), {
-          pid: Number(m[1]),
-          ppid: Number(m[2]),
-          comm: m[3].trim(),
+      for (const line of out.split(/\r?\n/)) {
+        const [pid, ppid, name, ...cmd] = line.split("\t");
+        if (!/^\d+$/.test(pid ?? "") || !/^\d+$/.test(ppid ?? "")) continue;
+        table.set(Number(pid), {
+          pid: Number(pid),
+          ppid: Number(ppid),
+          // The image name as Windows reports it (`claude.exe`) — the close
+          // confirmation lists and filters these. pty-descendants trims it.
+          comm: (name ?? "").trim(),
+          args: cmd.join("\t").trim() || null,
         });
       }
     } catch (_) {
@@ -1366,11 +1372,38 @@ async function scanProcessTable() {
   return table;
 }
 
+// One scan for everyone who asks at about the same moment. Every window runs its
+// own session poll, and on Windows each scan is a whole PowerShell start — so a
+// few windows booting together used to launch a few PowerShells together, and the
+// load alone was enough to reorder the exit-time writes the session restore
+// depends on. Concurrent callers share the scan in flight; a caller right behind
+// them gets its answer, which is at most this old.
+const PROCESS_TABLE_TTL_MS = 1000;
+let processTableInFlight = null;
+let processTableCached = null;
+let processTableAt = 0;
+
+function sharedProcessTable() {
+  if (processTableCached && Date.now() - processTableAt < PROCESS_TABLE_TTL_MS) {
+    return Promise.resolve(processTableCached);
+  }
+  processTableInFlight ??= scanProcessTable()
+    .then((table) => {
+      processTableCached = table;
+      processTableAt = Date.now();
+      return table;
+    })
+    .finally(() => {
+      processTableInFlight = null;
+    });
+  return processTableInFlight;
+}
+
 // pid -> [child, ...]. The shape descendantsOf walks on the platforms that need
 // an index; empty on Linux, which reads the kernel's per-pid child lists.
 async function childProcessIndex() {
   const children = new Map();
-  for (const proc of (await scanProcessTable()).values()) {
+  for (const proc of (await sharedProcessTable()).values()) {
     const siblings = children.get(proc.ppid);
     if (siblings) siblings.push(proc);
     else children.set(proc.ppid, [proc]);
@@ -1436,20 +1469,41 @@ async function processArgs(pid) {
   return null;
 }
 
+// A Windows command line in the shape providers read on the other platforms:
+// the program's bare name first, then its arguments, space-joined and unquoted.
+// Windows quotes the image path (and sometimes every argument —
+// `"claude.exe" "--chrome-native-host"`), which would otherwise hide a flag
+// from a provider comparing tokens.
+function windowsArgs(commandLine) {
+  if (!commandLine) return null;
+  const tokens = commandLine.match(/"[^"]*"|\S+/g) ?? [];
+  return tokens
+    .map((token, i) => {
+      const bare = token.replace(/^"|"$/g, "");
+      return i === 0 ? windowsComm(path.win32.basename(bare)) : bare;
+    })
+    .join(" ");
+}
+
+// `claude.exe` → `claude`: the name providers match on everywhere else.
+const windowsComm = (name) => name.replace(/\.exe$/i, "");
+
 // Descendants of each pty's shell, breadth-first, as { [ptyId]: [proc, ...] }.
 // The shell itself is excluded — a provider is looking for what's *running in*
 // the pane, and the shell is the pane.
+//
+// Windows answers without `cwd`: another process's working directory lives in
+// its PEB, which nothing short of native code reads. Providers fall back to the
+// pane's own directory, which the PowerShell prompt hook keeps current.
 ipcMain.handle("pty-descendants", async (_event, ids) => {
   const result = {};
   if (!Array.isArray(ids) || ids.length === 0) return result;
 
-  if (process.platform === "win32") return result;
-
-  // macOS builds its pid -> children index once for every pane; Linux doesn't
-  // need one (descendantsOf walks the kernel's lists directly).
+  // macOS and Windows build their pid -> children index once for every pane;
+  // Linux doesn't need one (descendantsOf walks the kernel's lists directly).
   let children = new Map();
-  if (process.platform === "darwin") {
-    const table = await scanProcessTable();
+  if (process.platform === "darwin" || process.platform === "win32") {
+    const table = await sharedProcessTable();
     if (table.size === 0) return result;
     for (const proc of table.values()) {
       const siblings = children.get(proc.ppid);
@@ -1469,6 +1523,17 @@ ipcMain.handle("pty-descendants", async (_event, ids) => {
     // processes, so the sequencing costs nothing measurable.
     const procs = [];
     for (const p of found) {
+      if (process.platform === "win32") {
+        // Everything already came with the table; there is nothing to read.
+        procs.push({
+          pid: p.pid,
+          ppid: p.ppid,
+          comm: windowsComm(p.comm),
+          args: windowsArgs(p.args),
+          cwd: null,
+        });
+        continue;
+      }
       procs.push({
         pid: p.pid,
         ppid: p.ppid,
@@ -2104,11 +2169,56 @@ async function writeScreensToDisk(screens) {
   }
 }
 
+// Each window sends only its own panes' screens, but the file is the whole
+// session's. Writing whichever map arrived last used to drop every other window's
+// screens — and two windows unloading together raced each other onto the same
+// temp file, which is how a restart could come back holding a corrupt file. So
+// the maps are kept per window and merged, and the writes run one at a time.
+//
+// Pane ids are unique across windows, so the merge never has to choose. A window
+// that has since closed keeps its entry: a detached window is still part of the
+// saved session. Insertion order puts a reattached window after the one it came
+// from, so where both hold the same pane the newer screen wins.
+const screensByWindow = new Map();
+let screensWrite = Promise.resolve();
+let screensDirty = false;
+
+function mergedScreens() {
+  return screensByWindow.size ? Object.assign({}, ...screensByWindow.values()) : null;
+}
+
 // Fired by a window on its way out, which is why it is `on` and not `handle`:
 // there is no renderer left to receive a reply, and this process is still here to
 // finish the job.
-ipcMain.on("session:write-screens-async", (_event, screens) => {
-  void writeScreensToDisk(screens);
+ipcMain.on("session:write-screens-async", (event, screens) => {
+  if (!screens || typeof screens !== "object") {
+    // A clear is for the whole session, as it always was.
+    screensByWindow.clear();
+  } else {
+    screensByWindow.set(event.sender.id, screens);
+  }
+  screensDirty = true;
+  const snapshot = mergedScreens();
+  screensWrite = screensWrite.then(() => writeScreensToDisk(snapshot));
+});
+
+// The queue above is asynchronous and a quitting process doesn't wait for it. By
+// the time `will-quit` fires every window has closed, so every screen it sent has
+// arrived: write the final merge synchronously so the last word is on disk.
+app.on("will-quit", () => {
+  if (!screensDirty) return;
+  try {
+    const merged = mergedScreens();
+    if (!merged) {
+      fs.rmSync(screensPath(), { force: true });
+      return;
+    }
+    const body = JSON.stringify({ version: 1, screens: merged });
+    if (body.length > MAX_SCREEN_FILE_BYTES) return;
+    fs.writeFileSync(screensPath(), body, "utf8");
+  } catch (err) {
+    console.warn("[session] final screens write failed:", err?.message ?? err);
+  }
 });
 
 ipcMain.handle("session:read-screens", async () => {
@@ -2178,9 +2288,34 @@ ipcMain.handle("detach-ptys", (event, ids) => {
 ipcMain.handle("park-session", (event, payload) => {
   const win = windowOf(event);
   const tabs = payload?.tabs;
-  // Whatever this window detached is now owned by the session about to be parked,
-  // so it is no longer at risk of being reaped as an orphan.
+  // Whatever this window detached and the payload carries is now owned by the
+  // session about to be parked. Whatever it detached and the payload *doesn't*
+  // carry has no route back: the renderer answers with an empty list when its
+  // detach throws after the release, and a tab can fail to serialize. Those used
+  // to be forgotten here while still running — shells with no window and nothing
+  // left to reap them. They die now, the same as when the renderer never answers.
+  const claimed = detachedButUnparked.get(event.sender.id);
   detachedButUnparked.delete(event.sender.id);
+  if (claimed?.size) {
+    const carried = new Set();
+    const walk = (node) => {
+      if (!node) return;
+      if (node.type === "leaf") {
+        if (node.pane?.kind === "terminal" && Number.isInteger(node.pane.ptyId)) {
+          carried.add(node.pane.ptyId);
+        }
+        return;
+      }
+      walk(node.first);
+      walk(node.second);
+    };
+    for (const tab of Array.isArray(tabs) ? tabs : []) walk(tab?.root);
+    const orphans = [...claimed].filter((id) => !carried.has(id));
+    if (orphans.length) {
+      detachedButUnparked.set(event.sender.id, new Set(orphans));
+      reapUnparkedPtys(event.sender.id);
+    }
+  }
   if (Array.isArray(tabs) && tabs.length) {
     const bounds = win && !win.isDestroyed() ? win.getBounds() : undefined;
     const layout = windowLayouts.get(event.sender.id);
