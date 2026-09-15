@@ -51,6 +51,10 @@ const COLS_SLACK = WRAP_SLACK + 4;
 const MAX_JOINABLE_ROWS = 64;
 const MAX_JOINABLE_BYTES = 64 * 1024;
 
+// The deepest left margin a program wrapping its own output plausibly draws
+// (a chat pane's bullet and padding). Past this, indentation is structure.
+const MAX_MARGIN = 8;
+
 // A row ending in one of these broke because the author wanted it to: an
 // explicit continuation, an operator waiting for its right-hand side, an open
 // group. Shells already join these correctly, so joining them here would at
@@ -110,10 +114,34 @@ export function joinWrappedLines(text: string, cols?: number): string {
   if (lines.some((line) => line.trim() === "")) return text;
 
   const rest = lines.slice(1);
-  // Indentation is a shape someone chose. Wrapping never produces it.
-  if (rest.some((line) => /^\s/.test(line))) return text;
+  // Indentation is a shape someone chose — with one exception: a margin. A chat
+  // pane lays its whole reply out a couple of columns in, so every row of a
+  // wrapped command it printed starts with the same run of spaces, and a
+  // selection dragged from the command's first character copies the first row
+  // without it. So: every row after the first indented by exactly the same few
+  // spaces, the first row either at that margin or with none at all. Anything
+  // else — a deeper row, a tab, a ragged indent — is still a chosen shape.
+  const margin = /^ */.exec(rest[0])?.[0].length ?? 0;
+  if (margin > 0) {
+    // A margin is only believable against the pane's width; without it, an
+    // indented block that happens to be long would qualify.
+    if (cols === undefined || margin > MAX_MARGIN) return text;
+    const pad = " ".repeat(margin);
+    if (rest.some((line) => !line.startsWith(pad) || /^\s/.test(line.slice(margin)))) {
+      return text;
+    }
+    const firstIndent = /^\s*/.exec(lines[0])?.[0] ?? "";
+    if (firstIndent !== "" && firstIndent !== pad) return text;
+  } else if (rest.some((line) => /^\s/.test(line))) {
+    return text;
+  }
   if (rest.some((line) => CONTINUES_BLOCK.test(line.trim()))) return text;
 
+  // Row widths as the pane drew them: the margin counts toward the column a
+  // row reached, whether or not the selection copied it.
+  const rows = lines.map((line) =>
+    margin > 0 ? margin + line.trim().length : line.length
+  );
   const heads = lines.slice(0, -1);
   if (
     heads.some((line) => {
@@ -131,11 +159,12 @@ export function joinWrappedLines(text: string, cols?: number): string {
   // array into a call passes one argument per element, and a paste of a few
   // hundred thousand rows overflows the stack — a RangeError thrown out of the
   // paste handler, which is the one place that must never fail loudly.
+  const headRows = rows.slice(0, -1);
   let width = 0;
-  for (const line of heads) if (line.length > width) width = line.length;
+  for (const row of headRows) if (row > width) width = row;
   if (width < MIN_WRAP_WIDTH) return text;
-  if (heads.some((line) => line.length < width - WRAP_SLACK)) return text;
-  if (lines[lines.length - 1].length > width) return text;
+  if (headRows.some((row) => row < width - WRAP_SLACK)) return text;
+  if (rows[rows.length - 1] > width) return text;
   if (cols !== undefined && (width > cols || width < cols - COLS_SLACK)) {
     return text;
   }

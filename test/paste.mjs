@@ -11,13 +11,14 @@
 // (no enums, no parameter properties).
 //
 // Run: node --experimental-strip-types test/paste.mjs
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+// A URL, not a bare path: on Windows the ESM loader reads "C:" as a scheme.
 const { joinWrappedLines, preparePaste } = await import(
-  path.join(root, "src", "lib", "paste.ts")
+  pathToFileURL(path.join(root, "src", "lib", "paste.ts")).href
 );
 
 let passed = 0;
@@ -81,6 +82,30 @@ const COLS = 120;
   );
 }
 
+// A chat pane (Claude Code) draws its reply two columns in, so the wrapped
+// command's rows all carry that margin. Dragging from column 0 copies it on
+// every row; dragging from the command's first character leaves it off the
+// first row only. Both are one command.
+{
+  const head =
+    "sudo apt-get install -y build-essential libssl-dev pkg-config curl git ca-certificates gnupg lsb-releas";
+  eq(
+    "wrapped rows sharing a margin join",
+    joinWrappedLines(`  ${head}\n  software-properties-common`, COLS),
+    `${head} software-properties-common`
+  );
+  eq(
+    "margin missing from the first row still joins",
+    joinWrappedLines(`${head}\n  software-properties-common`, COLS),
+    `${head} software-properties-common`
+  );
+  eq(
+    "margin joins keep the trailing newline",
+    joinWrappedLines(`${head}\r\n  software-properties-common\r\n`, COLS),
+    `${head} software-properties-common\n`
+  );
+}
+
 // --- the refusals ---------------------------------------------------------
 const refuses = (name, text, cols = COLS) =>
   eq(name, joinWrappedLines(text, cols), text);
@@ -106,6 +131,19 @@ refuses(
   "indentation is a chosen shape",
   "for f in *.log; do gzip --best --keep --force --verbose -- \"$f\" ; done ; echo done\n  echo finished"
 );
+
+{
+  const a = "  docker run -d --name postgres -e POSTGRES_PASSWORD=hunter2 -e POSTGRES_DB=app -p 5432:5432 -v pgdata:/var/l";
+  const b = "  ib/postgresql/data --restart unless-stopped --health-cmd 'pg_isready -U postgres' --health-interval 10s po";
+  refuses("rows indented unevenly are structure", `${a}\n${b}\n    stgres:16`);
+  refuses("a first row indented past the margin", `    ${a.trim()}\n${b}`);
+  eq(
+    "a margin without the pane width",
+    joinWrappedLines(`${a}\n  gres:16-alpine`),
+    `${a}\n  gres:16-alpine`
+  );
+  refuses("a margin deeper than a chat pane draws", `${a}\n            gres:16-alpine`);
+}
 
 refuses(
   "explicit backslash continuation",
