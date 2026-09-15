@@ -468,7 +468,7 @@ body,
   background: var(--bg-hover);
 }
 
-/* Pressed-in state for the toggles (settings). Stroke icons have no filled
+/* Pressed-in state for the toggles (sidebar, settings). Stroke icons have no filled
    variant to switch to the way the old gear did, so the button carries the
    state instead — which is also how a toggle is supposed to read. */
 .tab-icon-btn.active {
