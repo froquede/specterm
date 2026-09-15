@@ -19,7 +19,7 @@ interface MarkdownPaneProps {
   // Whether this pane is the focused one. ⌘F only acts on the active pane so a
   // single keypress doesn't toggle search in every open markdown pane at once.
   isActive?: boolean;
-  onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+  onOpenFile?: (path: string, mode: "split" | "tab") => void;
 }
 
 // Unsaved edits are auto-persisted as a "draft" in localStorage, keyed by file
@@ -547,7 +547,7 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
     const dir = props.filePath.substring(0, props.filePath.lastIndexOf("/"));
     const resolved = path.startsWith("/") ? path : dir + "/" + path;
     const mode = isAccelClick(e) ? "tab" : "split";
-    props.onOpenMarkdown?.(resolved, mode);
+    props.onOpenFile?.(resolved, mode);
   }
 
   function handleKeyDown(e: KeyboardEvent) {

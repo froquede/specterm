@@ -1,4 +1,5 @@
 import type { Terminal } from "@xterm/xterm";
+import { activateLinkAt } from "./terminal-links";
 
 // Selecting text in a pane whose program has grabbed the mouse.
 //
@@ -189,6 +190,12 @@ export function installClickVsDragSelection(
     pending = null;
     target = null;
     if (!on) return;
+    // A click that landed on a path or a URL copies it (see lib/terminal-links).
+    // The click is still forwarded below: in a pane running Claude Code it
+    // means nothing, but lazygit and vim do act on clicks, and silently eating
+    // one because the row under it happened to look like a path would be the
+    // worse surprise.
+    activateLinkAt(container, e);
     // Clicking dismisses the previous selection, as it does in any terminal.
     // xterm won't do it for us here: its selection service is disabled while the
     // program owns the mouse, so it ignores the press entirely.

@@ -27,6 +27,7 @@ and a syntax-highlighted viewer for everything else — from the sidebar, or by
 naming the file on the command line.
 Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
+Paths and URLs in terminal output are clickable, and a click copies them.
 Find in scrollback, WebGL rendering, five built-in themes plus a 325-scheme
 base16 gallery, and a tab bar that stands in for the title bar.
 Closing a window (or quitting) while a build, a test run or a Claude session is
@@ -82,6 +83,18 @@ normally can't select text out of Claude Code or vim, and why every terminal's
 answer is *"hold Shift"*. Specterm tells the two intents apart: a **click** goes
 to the program, a **drag** past 3px becomes a local selection. `Shift+drag` still
 works, `Alt+drag` selects a column. See `src/lib/mouse-selection.ts`.
+
+**Click a path, get it on the clipboard.** Paths and URLs in output underline on
+hover; clicking copies. Copy rather than open, because the path is nearly always
+on its way into the next command — `Ctrl/⌘+click` opens instead: a file Specterm
+can show (markdown, an image, any text) in a pane split off the one you clicked
+in, a URL in the browser, a directory in the file manager, and everything else in
+whatever application owns its type — except anything the OS would run, which is
+revealed in the file manager instead. `~` is expanded and a relative path is
+resolved against that pane's directory. It works in panes running Claude Code,
+vim or lazygit too — the click copies on its way through and still reaches the
+program. What counts as a path is deliberately reluctant, so `24/7` and `and/or`
+stay plain text. See `src/lib/path-links.ts` and `src/lib/terminal-links.ts`.
 
 **Moving tabs between windows.** Drag a tab — or a pane by its title-bar — past
 the window edge. Release over another Specterm window to move it there, anywhere

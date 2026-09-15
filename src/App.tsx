@@ -788,7 +788,7 @@ export default function App() {
                 onTearOffPane={(sourceId) => void tearOff("pane", sourceId)}
                 onTitle={(title) => store.updateTabTitle(tab().id, title)}
                 onClosePane={(id) => store.closePane(id)}
-                onOpenMarkdown={handleOpenMarkdown}
+                onOpenFile={handleOpenFile}
               />
             )}
           </Show>
