@@ -8,7 +8,6 @@ import "./styles/markdown.css";
 import "./styles/text.css";
 import "./styles/image.css";
 import "./styles/file-tree.css";
-import "./styles/github-panel.css";
 
 // Platform hook for OS-specific styling (e.g. macOS traffic-light spacing).
 if (isMac) {

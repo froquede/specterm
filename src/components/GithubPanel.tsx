@@ -1,4 +1,4 @@
-import { createEffect, createSignal, For, Show, onCleanup } from "solid-js";
+import { createEffect, createMemo, createSignal, For, Show, onCleanup } from "solid-js";
 import {
   IconStar,
   IconRefresh,
@@ -19,7 +19,8 @@ import {
 import { getBackend } from "../backends";
 import type { GithubRepoSnapshot } from "../backends/types";
 import { useTabStore } from "../stores/tabs";
-import { getTerminalCwd } from "../lib/terminal-registry";
+import { useTerminalCwd } from "../lib/terminal-registry";
+import "../styles/github-panel.css";
 import { join, normalize, basename } from "../lib/fspath";
 import {
   classifyGitStatus,
@@ -192,13 +193,19 @@ export default function GithubPanel(props: GithubPanelProps) {
   onCleanup(startGithubPolling());
 
   // Re-detects the repo whenever the active pane changes (tab switch, pane
-  // focus change, split) — see stores/github.ts's staleness check for why
-  // this doesn't refetch on every render.
-  const activePaneId = () => store.activeTab?.activePaneId;
+  // focus change, split) or its shell changes directory — useTerminalCwd is
+  // the reactive read, so a `cd` into another repo is picked up without
+  // switching panes. See stores/github.ts's staleness check for why this
+  // doesn't refetch `gh` on every one.
+  // The memo matters: the cwd epoch bumps when *any* pane changes directory,
+  // and only a change to the active pane's should spawn `git` again.
+  const activePaneCwd = createMemo(() => {
+    const paneId = store.activeTab?.activePaneId;
+    return paneId ? useTerminalCwd(paneId) : null;
+  });
   createEffect(() => {
-    const paneId = activePaneId();
-    if (!paneId) return;
-    const cwd = getTerminalCwd(paneId);
+    const cwd = activePaneCwd();
+    if (cwd === null) return;
     void refreshCurrentRepo(cwd);
   });
 

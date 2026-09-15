@@ -89,7 +89,10 @@ export async function refresh(
     if (age <= STALE_MS) return;
   }
 
-  setSnapshot(key, "loading");
+  // Only an empty card shows "Loading…". A repo already on screen keeps its
+  // last data while the refetch runs, so the 5-minute poll doesn't blank every
+  // card; an error still replaces it, since stale data would read as current.
+  if (typeof repoSnapshots()[key] !== "object") setSnapshot(key, "loading");
   try {
     const backend = await getBackend();
     const snapshot = await backend.ghRepoSnapshot(owner, repo, branch);
@@ -105,9 +108,9 @@ export async function refreshAll(opts: { force?: boolean } = {}) {
   if (ghCliStatus() !== "ready") return;
   const current = currentRepo();
   const currentKey = current ? `${current.owner}/${current.repo}` : null;
-  // Exclude the current repo from the watchlist pass — see Fix 1 above for
-  // why fetching it twice (once with a branch, once without) is a real bug,
-  // not just wasted work.
+  // Exclude the current repo from the watchlist pass: fetched twice (once
+  // with its branch, once without), whichever lands last wins, and the
+  // branchless one wipes the CI pill.
   const keys = watchlist().filter((key) => key !== currentKey);
   await Promise.all([
     ...keys.map((key) => refresh(key, undefined, opts)),
@@ -118,7 +121,15 @@ export async function refreshAll(opts: { force?: boolean } = {}) {
 // Re-detects the repo for `cwd` (the active pane's directory) and hands off
 // to refresh()'s own staleness gate — see the comment there for why this no
 // longer duplicates that check itself.
+// Every await below can be overtaken by a newer call (a quick pane switch, a
+// `cd` right after another), and a slow `git` answering for the old directory
+// must not overwrite the new one. Each call takes a generation number and
+// drops its results once a later call has started.
+let detectGeneration = 0;
+
 export async function refreshCurrentRepo(cwd: string) {
+  const generation = ++detectGeneration;
+  const stale = () => generation !== detectGeneration;
   if (!cwd) {
     setCurrentRepo(null);
     setCurrentWorkingTreeStatus(null);
@@ -126,6 +137,7 @@ export async function refreshCurrentRepo(cwd: string) {
   }
   const backend = await getBackend();
   const info = await backend.gitRemoteInfo(cwd);
+  if (stale()) return;
   if (!info) {
     setCurrentRepo(null);
     setCurrentWorkingTreeStatus(null);
@@ -141,9 +153,10 @@ export async function refreshCurrentRepo(cwd: string) {
   setCurrentRepo(detected);
 
   // git-only, no `gh` needed — fetched every time the repo itself is
-  // re-detected (tab/pane switch), same cadence as detection, no separate
-  // polling infra.
+  // re-detected (tab/pane switch, `cd`), same cadence as detection, no
+  // separate polling infra.
   const rawStatus = await backend.gitStatusRaw(cwd);
+  if (stale()) return;
   setCurrentWorkingTreeStatus(rawStatus !== null ? parseGitStatus(rawStatus) : null);
 
   const key = `${parsed.owner}/${parsed.repo}`;
