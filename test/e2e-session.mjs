@@ -60,6 +60,17 @@ if (hard) hard.unref();
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const WIN = process.platform === "win32";
+
+// The foreground probe every section runs: a line a second into `file`, for
+// fifteen minutes. Windows panes run PowerShell, which has no `seq` or `sleep`.
+const tickLoop = (file) =>
+  WIN
+    ? `1..900 | ForEach-Object { Add-Content -LiteralPath '${file}' tick; Start-Sleep 1 }`
+    : `for i in $(seq 1 900); do echo tick >> ${file}; sleep 1; done`;
+// Text from that command, to find it again in a pane's scrollback.
+const TICK_NEEDLE = WIN ? "Start-Sleep 1" : "seq 1 900";
+
 // Wait for a condition instead of for the clock.
 //
 // Almost every sleep in this file was really "however long a window takes to
@@ -155,9 +166,7 @@ try {
 
   // Foreground, so its life is tied to the shell's. See the header.
   await winA.locator(".xterm-helper-textarea:visible").first().click({ force: true });
-  await winA.keyboard.type(
-    `for i in $(seq 1 900); do echo tick >> ${ticks}; sleep 1; done`
-  );
+  await winA.keyboard.type(tickLoop(ticks));
   await winA.keyboard.press("Enter");
   // The loop writes a line a second, so this is a few seconds — not the five it
   // used to be, but not instant either: the point of the section is what happens
@@ -248,7 +257,7 @@ try {
   for (const w of await app.windows()) {
     try {
       await w.waitForSelector(".file-tree", { timeout: 8000 });
-      const c = await findCount(w, "seq 1 900");
+      const c = await findCount(w, TICK_NEEDLE);
       if (foundSomething(c)) {
         reattachedCount = c;
         break;
@@ -340,7 +349,12 @@ try {
   );
 
   await win.locator(".xterm-helper-textarea:visible").first().click({ force: true });
-  await win.keyboard.type(`printf '\\033]0;${PANE_TITLE}\\007'; sleep 600`);
+  // PowerShell sets the console title, which ConPTY reports as the same OSC.
+  await win.keyboard.type(
+    WIN
+      ? `$Host.UI.RawUI.WindowTitle = '${PANE_TITLE}'; Start-Sleep 600`
+      : `printf '\\033]0;${PANE_TITLE}\\007'; sleep 600`
+  );
   await win.keyboard.press("Enter");
   await win.waitForTimeout(2000);
   const paneTitleBefore = await win.locator(".pane-title").first().innerText();
@@ -545,6 +559,19 @@ try {
     await kill(appM);
   }
 
+  // What the host wrote, before anything can rewrite it. When the tab-count check
+  // below fails the question is which half lost the second tab — the save on the
+  // way out, or the restore on the way in — and only this file can answer it.
+  try {
+    const saved = JSON.parse(fs.readFileSync(path.join(multiDir, "session.json"), "utf8"));
+    log(
+      "multi-window session on disk:",
+      JSON.stringify((saved.windows ?? []).map((wn) => (wn.tabs ?? []).length))
+    );
+  } catch (err) {
+    log("multi-window session on disk: unreadable —", err.message);
+  }
+
   const appM2 = await multiLaunch();
   try {
     await appM2.firstWindow();
@@ -622,9 +649,7 @@ try {
     await w.waitForSelector(".file-tree", { timeout: 20000 });
     await w.waitForTimeout(3000);
     await w.locator(".xterm-helper-textarea:visible").first().click({ force: true });
-    await w.keyboard.type(
-      `for i in $(seq 1 900); do echo tick >> ${safetyTicks}; sleep 1; done`
-    );
+    await w.keyboard.type(tickLoop(safetyTicks));
     await w.keyboard.press("Enter");
     await w.waitForTimeout(5000);
     check(
@@ -684,9 +709,7 @@ try {
     await w.waitForSelector(".file-tree", { timeout: 20000 });
     await w.waitForTimeout(3000);
     await w.locator(".xterm-helper-textarea:visible").first().click({ force: true });
-    await w.keyboard.type(
-      `for i in $(seq 1 900); do echo tick >> ${quitTicks}; sleep 1; done`
-    );
+    await w.keyboard.type(tickLoop(quitTicks));
     await w.keyboard.press("Enter");
     await w.waitForTimeout(5000);
     check("the quit probe is running", countQuitTicks() > 1, `ticks=${countQuitTicks()}`);
@@ -740,7 +763,7 @@ try {
     os.homedir(),
     ".claude",
     "projects",
-    workDir.replace(/[/\\]/g, "-")
+    workDir.replace(/[^a-zA-Z0-9]/g, "-")
   );
   const transcript = path.join(projectDir, `${SESSION_ID}.jsonl`);
 

@@ -86,11 +86,13 @@ export function isRunning(descendants: ProcessInfo[]): boolean {
 
 /**
  * How Claude Code names the directory holding a project's transcripts: the
- * absolute path with every separator turned into a dash, so /home/me/dev
- * becomes -home-me-dev.
+ * absolute path with every character that isn't a letter or a digit turned
+ * into a dash, so /home/me/dev becomes -home-me-dev and C:\Users\me becomes
+ * C--Users-me. Dashing only the separators missed the drive colon, which is
+ * why no transcript was ever found on Windows.
  */
 export function projectDirName(cwd: string): string {
-  return cwd.replace(/[/\\]/g, "-");
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
 }
 
 const uuidFile = new RegExp(

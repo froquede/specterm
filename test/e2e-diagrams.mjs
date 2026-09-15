@@ -75,12 +75,13 @@ const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-dg-home-"));
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-dg-"));
 const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-dg-work-"));
 
-// Claude names a project directory for its path, with every separator dashed.
+// Claude names a project directory for its path, with everything but letters
+// and digits dashed (the drive colon included).
 const projectDir = path.join(
   fakeHome,
   ".claude",
   "projects",
-  workDir.replace(/[/\\]/g, "-")
+  workDir.replace(/[^a-zA-Z0-9]/g, "-")
 );
 fs.mkdirSync(projectDir, { recursive: true });
 fs.writeFileSync(
@@ -106,7 +107,9 @@ fs.writeFileSync(
 let app;
 try {
   app = await electron.launch(
-    launchOptions(root, userDataDir, { env: { HOME: fakeHome } })
+    // Both: node's os.homedir() — which the app asks for its home — reads
+    // USERPROFILE on Windows and HOME everywhere else.
+    launchOptions(root, userDataDir, { env: { HOME: fakeHome, USERPROFILE: fakeHome } })
   );
   const win = await app.firstWindow();
   win.on("pageerror", (e) => log("PAGEERROR:", e.message));

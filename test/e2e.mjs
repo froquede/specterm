@@ -65,8 +65,14 @@ const skip = (name, why) => {
   log(`SKIP  ${name}  — ${why}`);
 };
 
+// Windows paths compare case- and separator-insensitively: PowerShell reports a
+// directory as C:\Windows, the prompt hook's OSC 7 URL as C:/Windows.
 const eqPath = (a, b) =>
-  a != null && b != null && (WIN ? a.toLowerCase() === b.toLowerCase() : a === b);
+  a != null &&
+  b != null &&
+  (WIN
+    ? a.replace(/\//g, "\\").toLowerCase() === b.replace(/\//g, "\\").toLowerCase()
+    : a === b);
 const joinPath = (base, name) => base.replace(/[\\/]+$/, "") + SEP + name;
 
 // Whole-suite deadline. Raised from 180s when the cwd-inheritance checks landed,
@@ -815,21 +821,31 @@ try {
   await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
   await win.keyboard.type("echo CLIP_MARK_98765");
   await win.keyboard.press("Enter");
-  await win.waitForTimeout(700);
   // Drag-select the visible pane content so the echoed marker line is selected.
   const cbox = await win.evaluate(() => {
     const c = document.querySelector(".pane-content");
     const r = c.getBoundingClientRect();
     return { x: r.left, y: r.top, w: r.width, h: r.height };
   });
-  await win.mouse.move(cbox.x + 8, cbox.y + 8);
-  await win.mouse.down();
-  await win.mouse.move(cbox.x + cbox.w - 8, cbox.y + cbox.h * 0.5, { steps: 10 });
-  await win.mouse.up();
-  await win.waitForTimeout(250);
-  await win.keyboard.press(COPY_KEY);
-  await win.waitForTimeout(400);
-  const copied = await readOsClip();
+  // Select and copy until the marker is in what came back, rather than after a
+  // fixed pause. The pause was a guess at how long the shell takes to echo the
+  // command, and with every suite running at once it guessed short: the copy
+  // landed while PowerShell was still echoing `echo CLIP_M…`. What this guards —
+  // copy not reaching the OS clipboard at all — fails every attempt, not just
+  // the early ones, so retrying doesn't hide it.
+  let copied = "";
+  const copyDeadline = Date.now() + 8000;
+  do {
+    await win.waitForTimeout(700);
+    await win.mouse.move(cbox.x + 8, cbox.y + 8);
+    await win.mouse.down();
+    await win.mouse.move(cbox.x + cbox.w - 8, cbox.y + cbox.h * 0.5, { steps: 10 });
+    await win.mouse.up();
+    await win.waitForTimeout(250);
+    await win.keyboard.press(COPY_KEY);
+    await win.waitForTimeout(400);
+    copied = await readOsClip();
+  } while (!copied.includes("CLIP_MARK_98765") && Date.now() < copyDeadline);
   check("copy reaches the OS clipboard", copied.includes("CLIP_MARK_98765"), `clip=${JSON.stringify(copied.slice(0, 48))}`);
 
   // Paste: a command placed on the OS clipboard must land in the pane's shell.
@@ -1701,6 +1717,9 @@ try {
   // needed, so this runs everywhere.
   const MOUSE_LOG = path.join(os.tmpdir(), `specterm_mouse_${process.pid}.txt`);
   const SGR_REPORT = /\x1b\[<\d+;\d+;\d+[Mm]/; // ESC [ < btn ; col ; row  M|m
+  // PowerShell has no printf/stty/cat, so Windows records through a script that
+  // turns on the console's VT input (see the fixture for why that's needed).
+  const MOUSE_RECORDER = path.join(root, "test", "fixtures", "mouse-recorder.ps1");
 
   // The recorder writes through `cat` in raw mode, so every byte the terminal
   // sends lands in the file as it arrives — there is nothing to wait for except
@@ -1728,15 +1747,24 @@ try {
       ? "\\033[?1000l\\033[?1002l\\033[?1003l\\033[?1006l"
       : "\\033[?1000l\\033[?1002l\\033[?1006l";
     await win.keyboard.type(
-      `clear; printf '${modes}'; printf 'GRAB_MARKER\\r\\n'; ` +
-        `stty raw -echo; timeout ${RECORD_SECONDS} cat > "${MOUSE_LOG}"; stty sane; ` +
-        `printf '${off}'`
+      WIN
+        ? `powershell -NoProfile -ExecutionPolicy Bypass -File '${MOUSE_RECORDER}' ` +
+            `'${MOUSE_LOG}' ${RECORD_SECONDS}` +
+            (motion ? " motion" : "")
+        : `clear; printf '${modes}'; printf 'GRAB_MARKER\\r\\n'; ` +
+            `stty raw -echo; timeout ${RECORD_SECONDS} cat > "${MOUSE_LOG}"; stty sane; ` +
+            `printf '${off}'`
     );
     await win.keyboard.press("Enter");
     // Wait for the recorder to be up rather than for a guessed interval: the
     // marker is printed on the line before `cat` starts.
+    // Windows starts a whole PowerShell for the recorder, which takes longer than
+    // the grace below; its script creates the log just before it prints, so wait
+    // for that file rather than for a guess.
     await until("the mouse recorder to start", () =>
-      win.evaluate(() => document.body.innerText.includes("GRAB_MARKER") || true)
+      WIN
+        ? fs.existsSync(MOUSE_LOG)
+        : win.evaluate(() => document.body.innerText.includes("GRAB_MARKER") || true)
     );
     await win.waitForTimeout(250);
     recorderEndsAt = Date.now() + RECORD_SECONDS * 1000 + 400;
@@ -2837,7 +2865,9 @@ try {
     await newTab(win);
     await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
     // Enter the alternate screen buffer the way a full-screen program does.
-    await win.keyboard.type("printf '\\033[?1049h'");
+    await win.keyboard.type(
+      WIN ? 'Write-Host -NoNewline "$([char]27)[?1049h"' : "printf '\\033[?1049h'"
+    );
     await win.keyboard.press("Enter");
     await win.waitForTimeout(900);
 
@@ -2851,7 +2881,9 @@ try {
     );
 
     // Back to the normal buffer — the key is ours again.
-    await win.keyboard.type("printf '\\033[?1049l'");
+    await win.keyboard.type(
+      WIN ? 'Write-Host -NoNewline "$([char]27)[?1049l"' : "printf '\\033[?1049l'"
+    );
     await win.keyboard.press("Enter");
     await win.waitForTimeout(900);
     await win.keyboard.press("F2");
@@ -2942,9 +2974,7 @@ try {
   // test walks away to another tab first: a pane the user is looking at is
   // deliberately never flagged, so firing it in the foreground would prove
   // nothing.
-  if (WIN) {
-    skip("a waiting pane flags its tab", "no printf / /dev/tty on Windows");
-  } else {
+  {
     const tabIdOf = (sel) =>
       win.evaluate((s) => document.querySelector(s)?.getAttribute("data-tab-id") ?? null, sel);
     const attentionKind = (id) =>
@@ -2959,8 +2989,12 @@ try {
     await newTab(win);
     const waitingTab = await tabIdOf(".tab.active");
     await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    // PowerShell has no `&` background job that shares the console, so there it
+    // runs in the foreground — the tab switch below doesn't wait for it anyway.
     await win.keyboard.type(
-      `(sleep 3; printf '\\033]1337;Attention;kind=permission\\007') &`
+      WIN
+        ? 'Start-Sleep 3; Write-Host -NoNewline "$([char]27)]1337;Attention;kind=permission$([char]7)"'
+        : `(sleep 3; printf '\\033]1337;Attention;kind=permission\\007') &`
     );
     await win.keyboard.press("Enter");
 
@@ -3017,7 +3051,8 @@ try {
       os.homedir(),
       ".claude",
       "projects",
-      workDir.replace(/[/\\]/g, "-")
+      // Claude's own rule: everything but letters and digits dashed.
+      workDir.replace(/[^a-zA-Z0-9]/g, "-")
     );
     try {
       fs.mkdirSync(projectDir, { recursive: true });
@@ -3028,7 +3063,18 @@ try {
 
       await newTab(win);
       await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-      await win.keyboard.type(`cd "${workDir}" && claude`);
+      if (WIN) {
+        // Two commands, not one line. Windows can't read claude's own working
+        // directory, so the provider goes by the pane's — which only moves when
+        // the prompt hook runs, and a `Set-Location …; claude` line never draws
+        // a prompt between the two.
+        await win.keyboard.type(`Set-Location "${workDir}"`);
+        await win.keyboard.press("Enter");
+        await win.waitForTimeout(2500);
+        await win.keyboard.type("claude");
+      } else {
+        await win.keyboard.type(`cd "${workDir}" && claude`);
+      }
       await win.keyboard.press("Enter");
       // Providers poll on a 20s cycle (see lib/session-providers), and claude
       // itself takes a few seconds to come up.
@@ -3251,12 +3297,11 @@ try {
     // 25) Quitting with something still running asks first. Start a command in a
     // pane, then ask this app to quit exactly the way ⌘Q does: it must still be
     // alive a moment later, parked on a confirmation dialog no script can
-    // answer. (Windows has no cheap process table here, so it is skipped there.)
-    if (WIN) {
-      skip("a running command holds the quit for confirmation", "no process scan on Windows");
-    } else {
+    // answer. PowerShell's Start-Sleep is a cmdlet, not a child process, so
+    // Windows waits on ping.exe instead.
+    {
       await win2.locator(".xterm-helper-textarea:visible").last().click({ force: true });
-      await win2.keyboard.type("sleep 45");
+      await win2.keyboard.type(WIN ? "ping -n 45 127.0.0.1" : "sleep 45");
       await win2.keyboard.press("Enter");
       await win2.waitForTimeout(1500);
       try {

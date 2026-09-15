@@ -776,6 +776,13 @@ function foldInput(
   tracked: boolean,
   data: string
 ): { buffer: string; tracked: boolean } {
+  // Focus in/out and mouse reports travel the same channel as typing but never
+  // touch the prompt line. A shell that asks for focus events (ConPTY does on
+  // Windows) sends one on the very click that focuses the pane, and treating it
+  // as an unknown key left every line typed after that click untracked.
+  if (data === "\x1b[I" || data === "\x1b[O" || MOUSE_REPORT.test(data)) {
+    return { buffer, tracked };
+  }
   // Backspace / DEL — drop the last char.
   if (data === "\x7f" || data === "\x08") {
     return { buffer: buffer.slice(0, -1), tracked };
@@ -1401,6 +1408,12 @@ async function attachTerminalInner(
       if (screen) {
         term.write(screen);
         term.write(REVIVED_MARKER);
+        // ConPTY opens every session by clearing the screen (ESC[2J). That
+        // erases the visible rows but leaves scrollback alone, so without this
+        // the replayed screen was wiped the moment the new shell said anything
+        // and only what had already scrolled off survived. Scrolling the replay
+        // up out of the viewport hands ConPTY a blank screen to clear.
+        if (os === "windows") term.write("\r\n".repeat(term.rows));
       }
     } catch {
       // No screen to be had — the pane just opens on a fresh prompt.

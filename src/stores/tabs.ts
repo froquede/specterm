@@ -611,8 +611,17 @@ export function useTabStore() {
       for (const tab of ordered) {
         // Sequential: each flush waits on its own terminal's write queue, and the
         // host is timing us.
-        const transfer = await serializeTab(tab);
-        if (transfer) transfers.push(transfer);
+        //
+        // One tab that won't serialize doesn't get to take the others with it: a
+        // throw here used to fall through to an empty park, so every tab in the
+        // window lost its session. The failed tab's shells are simply left out of
+        // the payload, and the host reaps what the payload doesn't carry.
+        try {
+          const transfer = await serializeTab(tab);
+          if (transfer) transfers.push(transfer);
+        } catch (err) {
+          console.warn("[window] a tab could not be detached:", err);
+        }
       }
 
       // Drop this window's terminals without killing the shells. Done after every

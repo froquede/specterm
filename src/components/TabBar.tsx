@@ -296,6 +296,7 @@ export default function TabBar(props: TabBarProps) {
             the old ◧/▯ pair only said which state you were in. */}
         <button
           class="tab-icon-btn"
+          classList={{ active: props.sidebarOpen }}
           onClick={props.onToggleSidebar}
           aria-pressed={props.sidebarOpen}
           title={`${props.sidebarOpen ? "Hide" : "Show"} sidebar (${sidebarKey()})`}
