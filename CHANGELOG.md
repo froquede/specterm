@@ -1,5 +1,99 @@
 # Changelog
 
+## 0.22.0 — 2026-09-15
+
+### Added
+- **Click a path in terminal output and it's on your clipboard.** URLs were the
+  only thing a pane treated as clickable; a file path — the thing you actually
+  want in the next command — had to be dragged out of a stack trace, an `ls`
+  listing or an agent's sentence, one careful selection at a time, catching the
+  space before it or the period after about half the time.
+
+  Paths now underline on hover the way links do, and a click copies. A `Copied`
+  flash appears at the pointer so a click that worked looks different from one
+  that missed. Links copy on click too, since copying is what the click is
+  nearly always for.
+
+  `Ctrl/⌘+click` is the other half: it opens. A file Specterm can already show —
+  markdown, an image, anything its text viewer reads — opens in a pane beside
+  the one you clicked in, in this window: not a tab, not a second copy of the
+  app, not somebody else's editor. A URL goes to the browser, a directory to the
+  file manager, and a file Specterm has no viewer for (a PDF, a spreadsheet) to
+  whatever application owns its type. Anything the OS would *run* rather than
+  show — an `.exe`, a `.app`, a `.desktop` file, a script with its exec bit — is
+  revealed in the file manager instead, and a Windows network-share path isn't
+  touched at all: output is text anyone could have printed, and a click on it
+  shouldn't be able to launch a program. The path is made real first — the
+  `:12:5` a compiler appended comes off, a `~` expands, and a relative path is
+  resolved against the directory that pane's shell is actually in. Output
+  outlives the files it names, so a path that isn't there any more says so at
+  the pointer instead of opening nothing.
+
+  What counts as a path is deliberately reluctant, because a wrong guess
+  underlines prose on every screen of output: absolute, `~`, `./` and `../`
+  paths, Windows and UNC paths, anything with a directory chain or a file
+  extension, a compiler's `file.ts:12:5`, and a quoted path with a space in it.
+  `24/7`, `and/or`, `08/09/2026` and `km/h` are left alone. Soft wraps are
+  followed, so a path broken across two rows copies whole.
+
+  It works inside a full-screen program too — Claude Code, vim, lazygit — which
+  is where most of the paths you want actually appear. Two things were in the
+  way. A frame rule, a bullet or a non-breaking space drawn hard against a path
+  used to come along with it; those glyphs are now excluded, and an agent's
+  `@src/file.ts` mention copies as the path. And a click in a pane whose program
+  owns the mouse is held back by Specterm to tell a click from a drag — a click
+  that landed on a path now copies it on the way through, and is still handed to
+  the program, which is what lazygit and vim expect of a click. Hovering is
+  recomputed whenever the pane redraws, not only when the pointer changes row,
+  so a path that appears under a motionless pointer is clickable straight away.
+
+- **Intel Macs get a build.** Releases now ship a macOS `.dmg`/`.zip` for `x64`
+  next to the Apple-silicon one, so Specterm installs on Intel Macs instead of
+  offering only an `arm64` bundle that can't run there. Both come out of the same
+  release job, so the in-app updater keeps serving each Mac the right one.
+
+- **A GitHub panel in the sidebar.** A third sidebar view, next to Files and
+  Settings, for the repository you're working in: the repo and branch the active
+  pane's shell is in, that branch's latest CI run, and the working tree's changed
+  files grouped as modified, new and deleted — a click opens one. It follows the
+  shell, so a `cd` into another repo updates it. A watchlist pins other
+  `owner/repo`s with their stars, forks, open pull requests and issues, and each
+  card expands to the titles. Everything comes from local `git` and your own
+  authenticated `gh` CLI; no token passes through Specterm, and detecting the
+  current repo needs only `git`. It costs nothing until opened: the panel, its
+  icons and its styles load with it, and the five-minute refresh runs only while
+  it is open.
+- **Type a path into the sidebar filter.** Anything with a separator, or
+  starting with `~`, browses that folder instead of filtering by name —
+  absolute, relative, or pasted from "Copy as path" with its quotes. `Enter`
+  opens a file or enters a folder, `Tab` completes. The sidebar button also shows
+  as pressed while the sidebar is open, like the settings button.
+
+### Fixed
+- **Pasting a command Claude Code wrapped.** Claude draws its replies two
+  columns in, so every wrapped row carried that margin — and the unwrap refused
+  any indented row, pasting one command as two. A shared margin of up to three
+  columns now counts toward the row width. Deeper indentation is still left
+  alone: two lines of indented code that fill the pane are code, not a wrapped
+  command.
+- **Windows: resume, session detection and restore.** The Claude project
+  directory never matched on Windows (the drive colon wasn't turned into a dash),
+  so no transcript was found for resume or for a diagram's exact source. Session
+  detection, resume and the attention signal had no process table to read and now
+  get one from a single `Get-CimInstance` query, shared across windows and given
+  a timeout. A restored pane's replayed screen was wiped by ConPTY's initial
+  clear, and `cd fav-N` stopped working once a pane had been clicked, because
+  ConPTY's focus report was read as typing.
+- **Saved scrollback with more than one window.** The last window to close
+  overwrote every other window's screens, and two windows closing together
+  raced onto the same temporary file, which is how a restart could come back
+  with a corrupt one. Screens are now kept per window, merged, and written one
+  at a time, with a final synchronous write on quit; a window closed for good
+  drops its share instead of being kept in memory.
+- **Shells left running after a failed detach.** If closing a window with
+  background sessions on threw after its shells were handed over, they were
+  forgotten without being killed. They are reaped now.
+
 ## 0.21.0 — 2026-08-21
 
 ### Added

@@ -149,6 +149,11 @@ contextBridge.exposeInMainWorld("specterm", {
 
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
 
+  openPathInDefaultApp: (path) =>
+    ipcRenderer.invoke("open-path-default-app", path),
+
+  statPath: (path) => ipcRenderer.invoke("stat-path", path),
+
   clipboardHasImage: () => ipcRenderer.invoke("clipboard-has-image"),
 
   clipboardReadText: () => ipcRenderer.invoke("clipboard-read-text"),
@@ -158,6 +163,13 @@ contextBridge.exposeInMainWorld("specterm", {
   getHomePath: () => ipcRenderer.invoke("get-home-path"),
 
   getHostname: () => ipcRenderer.invoke("get-hostname"),
+
+  // GitHub panel
+  gitRemoteInfo: (cwd) => ipcRenderer.invoke("git-remote-info", cwd),
+  gitStatusRaw: (cwd) => ipcRenderer.invoke("git-status-raw", cwd),
+  ghStatus: () => ipcRenderer.invoke("gh-status"),
+  ghRepoSnapshot: (owner, repo, branch) =>
+    ipcRenderer.invoke("gh-repo-snapshot", owner, repo, branch),
 
   watchDir: (path, cb) => {
     ipcRenderer.invoke("watch-dir", path);

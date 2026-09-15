@@ -45,6 +45,9 @@ const SUITES = [
   // Not an Electron suite — it drives electron/repo-sync.cjs against real git
   // in a temp sandbox, so it costs seconds and runs alongside the rest for free.
   { name: "repo-sync", file: "repo-sync.mjs" },
+  // Owns the clipboard too: it clicks paths in output and reads back what
+  // landed there.
+  { name: "links", file: "e2e-links.mjs", clipboard: true },
   // Not an Electron suite — pure functions from src/lib/paste.ts, imported as
   // TypeScript. Node 22 strips types behind a flag (unflagged from 23), hence
   // the `node` argument this one suite needs. It costs milliseconds.
@@ -52,6 +55,8 @@ const SUITES = [
   // Not an Electron suite either — the argv classifier from
   // electron/open-paths.cjs, required straight in. Milliseconds.
   { name: "open-paths", file: "open-paths.mjs" },
+  // Same shape as paste: the matcher behind click-to-copy, pure and DOM-free.
+  { name: "path-links", file: "path-links.mjs", node: ["--experimental-strip-types"] },
 ];
 
 const started = Date.now();

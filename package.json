@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.21.0",
+  "version": "0.22.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
@@ -31,7 +31,9 @@
     "test:repo-sync": "node test/repo-sync.mjs",
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
+    "test:e2e:links": "vite build && node test/e2e-links.mjs",
     "test:paste": "node --experimental-strip-types test/paste.mjs",
+    "test:links": "node --experimental-strip-types test/path-links.mjs",
     "test:open-paths": "node test/open-paths.mjs",
     "hero:gif": "vite build && node scripts/hero-gif.mjs",
     "tauri": "tauri"
@@ -49,7 +51,6 @@
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",
     "@xterm/addon-serialize": "^0.14.0",
-    "@xterm/addon-web-links": "^0.11.0",
     "@xterm/addon-webgl": "^0.18.0",
     "@xterm/xterm": "^5.5.0",
     "chokidar": "^4.0.0",
@@ -96,11 +97,11 @@
       "target": [
         {
           "target": "dmg",
-          "arch": "arm64"
+          "arch": ["arm64", "x64"]
         },
         {
           "target": "zip",
-          "arch": "arm64"
+          "arch": ["arm64", "x64"]
         }
       ],
       "category": "public.app-category.developer-tools",

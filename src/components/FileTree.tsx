@@ -24,7 +24,7 @@ import { fileKind } from "../lib/file-kind";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
 import { isAccelClick, os } from "../lib/platform";
-import { join, dirname, normalize, equalPath } from "../lib/fspath";
+import { join, dirname, normalize, equalPath, sep } from "../lib/fspath";
 import { favorites, toggleFavorite, favoriteByIndex } from "../stores/favorites";
 import {
   startupPath,
@@ -38,6 +38,50 @@ const WIN = os === "windows";
 // is a cd command, not a name filter — used both to suppress filtering while
 // it's being typed and to resolve it on Enter.
 const FAV_TOKEN = /^fav-\d*$/i;
+
+// A search that names a location rather than a file: anything with a separator
+// in it, or starting at home. Typed or pasted, it browses that folder instead of
+// filtering this one.
+const PATH_LIKE = /[\\/]|^~$/;
+
+// Leading "C:", "\\server" (Windows) or "/" (POSIX) — a path that doesn't hang
+// off the folder being browsed.
+const ABSOLUTE = WIN ? /^(?:[A-Za-z]:|[\\/]{2})/ : /^\//;
+
+// Split a path typed into the search box into the folder to list and the name
+// to match inside it. Relative paths resolve against `base`, "~" against home.
+// A trailing separator means "this folder", so the name is empty.
+function parsePathQuery(
+  raw: string,
+  base: string,
+  home: string
+): { dir: string; leaf: string; prefix: string } | null {
+  // Paths copied from Explorer ("Copy as path") or a shell arrive quoted.
+  const q = raw.trim().replace(/^(["'])(.*)\1$/, "$2");
+  if (!PATH_LIKE.test(q)) return null;
+  let full = q;
+  if (/^~(?=[\\/]|$)/.test(q)) {
+    if (!home) return null;
+    full = join(home, q.slice(1).replace(/^[\\/]+/, ""));
+  } else if (!ABSOLUTE.test(q)) {
+    if (!base) return null;
+    full = join(base, q);
+  }
+  full = normalize(full);
+  const cut = Math.max(full.lastIndexOf("/"), full.lastIndexOf("\\"));
+  if (cut < 0) return null;
+  // "C:\foo" lists "C:\", "/foo" lists "/": a root keeps its separator.
+  const dir =
+    normalize(full.slice(0, cut).replace(/[\\/]+$/, "")) ||
+    full.slice(0, cut + 1);
+  // What the user typed up to the name — what Tab completion keeps.
+  const qCut = Math.max(q.lastIndexOf("/"), q.lastIndexOf("\\"));
+  return {
+    dir,
+    leaf: full.slice(cut + 1),
+    prefix: qCut < 0 ? q + sep : q.slice(0, qCut + 1),
+  };
+}
 
 interface FileTreeProps {
   open: boolean;
@@ -281,9 +325,44 @@ export default function FileTree(props: FileTreeProps) {
     });
   });
 
+  // The search box holding a path (see parsePathQuery) — null for a plain
+  // name filter or a "fav-N" command.
+  const pathQuery = createMemo(() => {
+    const q = filter();
+    if (FAV_TOKEN.test(q.trim())) return null;
+    return parsePathQuery(q, drivesView() ? "" : currentPath(), home());
+  });
+
+  // The folder a path search points at, listed on its own so the tree keeps
+  // its place until the user commits to a row.
+  // The source is null, not "", when there's no path query: Solid only skips
+  // the fetch for a falsy-by-identity source (null/undefined/false), so "" would
+  // send a read-dir of nothing to the host on every boot.
+  const [pathEntries] = createResource(
+    () => pathQuery()?.dir || null,
+    (dir) => listDir(dir)
+  );
+
   // Memoized: filter runs once per (rows, filter) change instead of on each
   // of its call sites (For, ghost text, the selection effect, key handlers).
   const filteredEntries = createMemo<DirEntry[]>(() => {
+    const pq = pathQuery();
+    if (pq) {
+      // Reading a resource while errored re-throws; a folder that doesn't
+      // exist (yet — the user is still typing) is simply no matches.
+      const listed = pathEntries.error ? [] : pathEntries.latest || [];
+      const leaf = pq.leaf.toLowerCase();
+      if (!leaf) return listed;
+      // The exact name first, so Enter on a pasted path opens what it names,
+      // then prefix matches — typing a path is completing it — then the rest.
+      const rank = (e: DirEntry) => {
+        const name = e.name.toLowerCase();
+        return name === leaf ? 0 : name.startsWith(leaf) ? 1 : name.includes(leaf) ? 2 : 3;
+      };
+      return listed
+        .filter((e) => rank(e) < 3)
+        .sort((a, b) => rank(a) - rank(b));
+    }
     const all = rows();
     const q = filter().trim();
     // While a "fav-N" command is being typed, don't filter the listing — it's
@@ -297,7 +376,8 @@ export default function FileTree(props: FileTreeProps) {
   // é um prefixo dele — é a parte que o Tab completa.
   function ghostSuffix(): string {
     const sel = filteredEntries()[selectedIndex()];
-    const q = filter();
+    const pq = pathQuery();
+    const q = pq ? pq.leaf : filter();
     if (!sel || !q) return "";
     if (sel.name.toLowerCase().startsWith(q.toLowerCase())) {
       return sel.name.slice(q.length);
@@ -347,6 +427,26 @@ export default function FileTree(props: FileTreeProps) {
       e.preventDefault();
       if (!list.length) return;
       const sel = list[selectedIndex()];
+      const pq = pathQuery();
+      // In a path search the typed name is the last segment, and completing a
+      // folder adds its separator so the next Tab lists inside it.
+      if (pq) {
+        if (!sel) return;
+        const done = pq.leaf.toLowerCase() === sel.name.toLowerCase();
+        if (done && sel.isDirectory) {
+          setFilter(pq.prefix + sel.name + sep);
+          setSelectedIndex(0);
+        } else if (done) {
+          const next = e.shiftKey
+            ? (selectedIndex() - 1 + list.length) % list.length
+            : (selectedIndex() + 1) % list.length;
+          setSelectedIndex(next);
+          setFilter(pq.prefix + list[next].name);
+        } else {
+          setFilter(pq.prefix + sel.name);
+        }
+        return;
+      }
       // 1º Tab completa o filtro com o nome do item selecionado;
       // se já estiver completo, avança para o próximo match.
       if (sel && filter().toLowerCase() === sel.name.toLowerCase()) {
@@ -370,8 +470,21 @@ export default function FileTree(props: FileTreeProps) {
         (e.currentTarget as HTMLInputElement).blur();
         return;
       }
+      const pq = pathQuery();
+      // Still listing the folder the path points at: the rows on screen belong
+      // to the previous one.
+      if (pq && pathEntries.loading) return;
+      if (pq && !pq.leaf) {
+        // "C:\some\folder\" — the folder itself, not a row inside it.
+        if (!pathEntries.error) navigateTo(pq.dir);
+        return;
+      }
       const sel = list[selectedIndex()];
-      if (sel) activateEntry(sel, e.metaKey || e.ctrlKey ? "tab" : "split");
+      if (!sel) return;
+      // A file reached by path opens and the tree follows it to its folder, so
+      // the listing shows where it came from.
+      if (pq && !sel.isDirectory) navigateTo(pq.dir);
+      activateEntry(sel, e.metaKey || e.ctrlKey ? "tab" : "split");
       return;
     }
   }
@@ -460,7 +573,7 @@ export default function FileTree(props: FileTreeProps) {
           <div class="file-tree-search-field">
             <input
               type="text"
-              placeholder="Filter…  (fav-1, fav-2, … + Enter to cd)"
+              placeholder="Filter or path…  (fav-1, fav-2, … + Enter to cd)"
               value={filter()}
               onInput={(e) => {
                 setFilter(e.currentTarget.value);
@@ -558,10 +671,10 @@ export default function FileTree(props: FileTreeProps) {
           </Show>
 
           <Show
-            when={!drivesView() && entries.error}
+            when={!pathQuery() && !drivesView() && entries.error}
             fallback={
               <Show
-                when={!loading()}
+                when={pathQuery() || !loading()}
                 fallback={<div class="file-tree-loading">Loading...</div>}
               >
                 <For each={filteredEntries()}>

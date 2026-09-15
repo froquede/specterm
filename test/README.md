@@ -1,6 +1,6 @@
 # E2E test suite
 
-Four Playwright-driven end-to-end suites. Each builds the app, launches the
+Five Playwright-driven end-to-end suites. Each builds the app, launches the
 **real** Electron binary, and drives the actual UI (clicks, keyboard, settings),
 asserting on observable behavior.
 
@@ -34,6 +34,28 @@ asserting on observable behavior.
   `~/.claude`. The transcript it plants deliberately names a node the screen
   does not, so the check can only pass if that path actually ran; with identical
   text in both it would go green over dead code.
+
+- **`e2e-links.mjs`** — click-to-copy for paths and URLs in output, and the
+  modifier-click that opens them. The matching is a pure function tested in
+  `path-links.mjs`; this covers what only a real app can show: that a hovered
+  span maps back to the right cells, that a soft-wrapped path copies whole, that
+  a row redrawn under a motionless pointer becomes clickable, that a click still
+  copies in a pane whose program has grabbed the mouse, and that `Ctrl+click` on
+  a markdown file opens it as a pane of this window rather than a tab or a second
+  copy of the app. The clipboard is read from the main process — the same one the
+  app writes to, with nothing stubbed.
+
+  Opening is driven with two files only: one that exists and that Specterm shows
+  itself, and one that doesn't. Anything the OS would hand to another
+  application is deliberately not clicked — a green suite must not be able to
+  launch a PDF reader on the machine running it. The mouse-tracking case is last
+  on purpose: it leaves a program owning the mouse, and every keystroke typed
+  after it arrives mixed with mouse reports.
+
+`run-all.mjs` also runs the two suites that need no app at all — `paste.mjs` and
+`path-links.mjs`, pure functions imported straight from `src/lib` with node
+stripping the types. They cost milliseconds and they are where the guessing in
+those two files is pinned down, case by case.
 
 Two traps `e2e-session.mjs` documents in its header and exists to stay out of,
 because both produce a green run that proves nothing:
@@ -70,10 +92,11 @@ because both produce a green run that proves nothing:
 ## Run
 
 ```bash
-npm run test:e2e:all        # vite build + all three suites, in parallel
+npm run test:e2e:all        # vite build + every suite, in parallel
 npm run test:e2e            # vite build + node test/e2e.mjs
 npm run test:e2e:session    # vite build + node test/e2e-session.mjs
 npm run test:e2e:windows    # vite build + node test/e2e-windows.mjs
+npm run test:e2e:links      # vite build + node test/e2e-links.mjs
 npm run test:perf           # vite build + node test/perf-boot.mjs
 npm run test:open-paths     # node test/open-paths.mjs  (milliseconds)
 ```
@@ -128,10 +151,10 @@ minute-granularity one doesn't, that a debounced toast withholds itself and then
 appears, that a shell kept running while nothing was watching it. Those aren't
 slack.
 
-`test/run-all.mjs` (`npm run test:e2e:all`) runs the three suites at once. They
+`test/run-all.mjs` (`npm run test:e2e:all`) runs the suites at once. They
 are independent — each launches its own Electron on its own throwaway
 `--user-data-dir`, which is what Electron's single-instance lock keys on — so
-the cost is the longest suite rather than the sum of all three. Each suite's
+the cost is the longest suite rather than the sum of them. Each suite's
 output is buffered and printed in one block when it finishes, since three of
 them narrating into the same terminal is unreadable.
 

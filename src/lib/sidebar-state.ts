@@ -15,7 +15,7 @@ import type { SidebarView } from "../types";
 
 const STORAGE_KEY = "specterm.sidebar";
 
-const VALID: readonly (SidebarView | null)[] = ["files", "settings", null];
+const VALID: readonly (SidebarView | null)[] = ["files", "github", "settings", null];
 
 /** What the sidebar should show on this window's first paint. */
 export function loadSidebarView(): SidebarView | null {

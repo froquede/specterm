@@ -24,6 +24,25 @@ const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
 const { filePathsFromArgv } = require("./open-paths.cjs");
 
+// Runs `cmd` and resolves with trimmed stdout, or rejects with the error
+// (stdout/stderr attached) on a non-zero exit, spawn failure, or timeout.
+// Every git/gh call in the GitHub panel IPC below goes through this — args
+// are always passed as an array, never interpolated into a shell string, so
+// there is nothing here for a hostile "owner/repo" to inject into.
+function runCmd(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    execFile(cmd, args, { timeout: 15000, ...opts }, (err, stdout, stderr) => {
+      if (err) {
+        err.stdout = stdout;
+        err.stderr = stderr;
+        reject(err);
+      } else {
+        resolve(stdout.trim());
+      }
+    });
+  });
+}
+
 // Linux sandbox fallback for the AppImage build. Chromium needs either a
 // setuid-root chrome-sandbox helper OR working unprivileged user namespaces.
 // The .deb ships a setuid-root helper (see build/linux/after-install.tpl), but
@@ -957,6 +976,12 @@ function createWindow(opts = {}) {
     reapUnparkedPtys(wcId);
 
     windowLayouts.delete(wcId);
+    // Its screens go with its layout: a window that closed without parking is
+    // no longer part of the saved session, so its scrollback would only sit in
+    // this process and be rewritten on every later save. A parked window keeps
+    // its entry (its layout lives on in parkedLayouts), and so does every window
+    // closing on the way out of a Quit — those are the session being saved.
+    if (!parking && !quitting) screensByWindow.delete(wcId);
     pendingDrops.delete(wcId);
     // Nothing to keep lit, and nothing to put out later either.
     if (dragTarget === win) clearDragTarget();
@@ -1329,8 +1354,10 @@ async function scanProcessTable() {
   }
 
   if (process.platform === "win32") {
-    // No /proc and no `ps`; one CIM query is the cheap equivalent. Only the
-    // close confirmation uses this — the session providers stay off Windows.
+    // No /proc and no `ps`; one CIM query is the cheap equivalent (under a
+    // second on a desktop's table). It carries the command line too, since
+    // Windows has no per-pid file to read it from later. Tab-separated: an
+    // image name can hold spaces, a tab it can't.
     try {
       const out = await new Promise((resolve, reject) => {
         execFile(
@@ -1340,18 +1367,25 @@ async function scanProcessTable() {
             "-NonInteractive",
             "-Command",
             "Get-CimInstance Win32_Process | ForEach-Object " +
-              '{ "$($_.ProcessId) $($_.ParentProcessId) $($_.Name)" }',
+              '{ "$($_.ProcessId)`t$($_.ParentProcessId)`t$($_.Name)`t$($_.CommandLine)" }',
           ],
+          // A wedged WMI repository never answers; without a timeout this
+          // scan would pin the shared in-flight promise, and every caller
+          // after it, until restart. execFile kills the child when it fires.
+          { windowsHide: true, maxBuffer: 16 * 1024 * 1024, timeout: 10_000 },
           (err, stdout) => (err ? reject(err) : resolve(stdout))
         );
       });
-      for (const line of out.split("\n")) {
-        const m = /^\s*(\d+)\s+(\d+)\s+(.*)$/.exec(line);
-        if (!m) continue;
-        table.set(Number(m[1]), {
-          pid: Number(m[1]),
-          ppid: Number(m[2]),
-          comm: m[3].trim(),
+      for (const line of out.split(/\r?\n/)) {
+        const [pid, ppid, name, ...cmd] = line.split("\t");
+        if (!/^\d+$/.test(pid ?? "") || !/^\d+$/.test(ppid ?? "")) continue;
+        table.set(Number(pid), {
+          pid: Number(pid),
+          ppid: Number(ppid),
+          // The image name as Windows reports it (`claude.exe`) — the close
+          // confirmation lists and filters these. pty-descendants trims it.
+          comm: (name ?? "").trim(),
+          args: cmd.join("\t").trim() || null,
         });
       }
     } catch (_) {
@@ -1366,11 +1400,38 @@ async function scanProcessTable() {
   return table;
 }
 
+// One scan for everyone who asks at about the same moment. Every window runs its
+// own session poll, and on Windows each scan is a whole PowerShell start — so a
+// few windows booting together used to launch a few PowerShells together, and the
+// load alone was enough to reorder the exit-time writes the session restore
+// depends on. Concurrent callers share the scan in flight; a caller right behind
+// them gets its answer, which is at most this old.
+const PROCESS_TABLE_TTL_MS = 1000;
+let processTableInFlight = null;
+let processTableCached = null;
+let processTableAt = 0;
+
+function sharedProcessTable() {
+  if (processTableCached && Date.now() - processTableAt < PROCESS_TABLE_TTL_MS) {
+    return Promise.resolve(processTableCached);
+  }
+  processTableInFlight ??= scanProcessTable()
+    .then((table) => {
+      processTableCached = table;
+      processTableAt = Date.now();
+      return table;
+    })
+    .finally(() => {
+      processTableInFlight = null;
+    });
+  return processTableInFlight;
+}
+
 // pid -> [child, ...]. The shape descendantsOf walks on the platforms that need
 // an index; empty on Linux, which reads the kernel's per-pid child lists.
 async function childProcessIndex() {
   const children = new Map();
-  for (const proc of (await scanProcessTable()).values()) {
+  for (const proc of (await sharedProcessTable()).values()) {
     const siblings = children.get(proc.ppid);
     if (siblings) siblings.push(proc);
     else children.set(proc.ppid, [proc]);
@@ -1436,20 +1497,41 @@ async function processArgs(pid) {
   return null;
 }
 
+// A Windows command line in the shape providers read on the other platforms:
+// the program's bare name first, then its arguments, space-joined and unquoted.
+// Windows quotes the image path (and sometimes every argument —
+// `"claude.exe" "--chrome-native-host"`), which would otherwise hide a flag
+// from a provider comparing tokens.
+function windowsArgs(commandLine) {
+  if (!commandLine) return null;
+  const tokens = commandLine.match(/"[^"]*"|\S+/g) ?? [];
+  return tokens
+    .map((token, i) => {
+      const bare = token.replace(/^"|"$/g, "");
+      return i === 0 ? windowsComm(path.win32.basename(bare)) : bare;
+    })
+    .join(" ");
+}
+
+// `claude.exe` → `claude`: the name providers match on everywhere else.
+const windowsComm = (name) => name.replace(/\.exe$/i, "");
+
 // Descendants of each pty's shell, breadth-first, as { [ptyId]: [proc, ...] }.
 // The shell itself is excluded — a provider is looking for what's *running in*
 // the pane, and the shell is the pane.
+//
+// Windows answers without `cwd`: another process's working directory lives in
+// its PEB, which nothing short of native code reads. Providers fall back to the
+// pane's own directory, which the PowerShell prompt hook keeps current.
 ipcMain.handle("pty-descendants", async (_event, ids) => {
   const result = {};
   if (!Array.isArray(ids) || ids.length === 0) return result;
 
-  if (process.platform === "win32") return result;
-
-  // macOS builds its pid -> children index once for every pane; Linux doesn't
-  // need one (descendantsOf walks the kernel's lists directly).
+  // macOS and Windows build their pid -> children index once for every pane;
+  // Linux doesn't need one (descendantsOf walks the kernel's lists directly).
   let children = new Map();
-  if (process.platform === "darwin") {
-    const table = await scanProcessTable();
+  if (process.platform === "darwin" || process.platform === "win32") {
+    const table = await sharedProcessTable();
     if (table.size === 0) return result;
     for (const proc of table.values()) {
       const siblings = children.get(proc.ppid);
@@ -1469,6 +1551,17 @@ ipcMain.handle("pty-descendants", async (_event, ids) => {
     // processes, so the sequencing costs nothing measurable.
     const procs = [];
     for (const p of found) {
+      if (process.platform === "win32") {
+        // Everything already came with the table; there is nothing to read.
+        procs.push({
+          pid: p.pid,
+          ppid: p.ppid,
+          comm: windowsComm(p.comm),
+          args: windowsArgs(p.args),
+          cwd: null,
+        });
+        continue;
+      }
       procs.push({
         pid: p.pid,
         ppid: p.ppid,
@@ -1565,6 +1658,157 @@ ipcMain.handle("get-hostname", () => {
   return os.hostname();
 });
 
+// === GitHub panel IPC ===
+//
+// git-remote-info needs only `git`, already required for anything specterm
+// does with a repo. gh-status/gh-repo-snapshot need the `gh` CLI, which the
+// user installs and authenticates outside the app — see runCmd above for why
+// none of this is a shell-injection risk.
+
+ipcMain.handle("git-remote-info", async (_event, cwd) => {
+  try {
+    const [remoteUrl, branch, root] = await Promise.all([
+      runCmd("git", ["-C", cwd, "remote", "get-url", "origin"]),
+      runCmd("git", ["-C", cwd, "branch", "--show-current"]).catch(() => ""),
+      runCmd("git", ["-C", cwd, "rev-parse", "--show-toplevel"]),
+    ]);
+    return { remoteUrl, branch, root };
+  } catch (_) {
+    // Not a git repo, or no `origin` remote — nothing to detect.
+    return null;
+  }
+});
+
+// Raw `git status --porcelain=v1` output for the working tree at `cwd`. No
+// parsing here on purpose — that logic lives in src/lib/git-status.ts, where
+// it's plain testable TS instead of duplicated across this file and a future
+// Tauri command.
+//
+// `--untracked-files=all` matters: without it, a new directory with no
+// tracked files in it collapses to one "?? somedir/" line instead of listing
+// what's actually inside — which the panel would otherwise render as a
+// clickable "file" that can't be opened, since it's a directory.
+//
+// Deliberately NOT routed through runCmd: its `stdout.trim()` strips the
+// leading space off the first line's status column (e.g. " M file" →
+// "M file"), which throws off every fixed-offset slice in parseGitStatus by
+// one character — silently mis-parsing only the first changed file. Trim
+// the trailing newline only; parseGitStatus already skips blank lines, so
+// there's nothing else here to clean up.
+ipcMain.handle("git-status-raw", (_event, cwd) => {
+  return new Promise((resolve) => {
+    execFile(
+      "git",
+      ["-C", cwd, "status", "--porcelain=v1", "--untracked-files=all"],
+      { timeout: 15000 },
+      (err, stdout) => {
+        // Not a git repo, or the command failed for some other reason.
+        resolve(err ? null : stdout.replace(/\n$/, ""));
+      }
+    );
+  });
+});
+
+ipcMain.handle("gh-status", async () => {
+  try {
+    await runCmd("gh", ["--version"]);
+  } catch (_) {
+    return { installed: false, authenticated: false };
+  }
+  try {
+    // Writes its human-readable report to stderr; exit 0 means at least one
+    // host is authenticated, which is all the panel needs to know.
+    await runCmd("gh", ["auth", "status"]);
+    return { installed: true, authenticated: true };
+  } catch (_) {
+    return { installed: true, authenticated: false };
+  }
+});
+
+// gh's statusCheckRollup is an array of check-run/status-context objects.
+// Rolled up to one of three states: any real failure wins, anything still
+// running or unreported counts as pending, and an empty/all-success array is
+// success. No PR carries this field at all when the branch has no checks
+// configured, hence the two guards up front.
+function summarizeChecks(rollup) {
+  if (!Array.isArray(rollup) || rollup.length === 0) return null;
+  const bad = ["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED"];
+  const pending = ["PENDING", "QUEUED", "IN_PROGRESS", "REQUESTED", "WAITING"];
+  let sawPending = false;
+  for (const check of rollup) {
+    const state = String(check.conclusion || check.state || check.status || "").toUpperCase();
+    if (bad.includes(state)) return "failure";
+    if (pending.includes(state) || !state) sawPending = true;
+  }
+  return sawPending ? "pending" : "success";
+}
+
+ipcMain.handle("gh-repo-snapshot", async (_event, owner, repo, branch) => {
+  const nwo = `${owner}/${repo}`;
+
+  const [repoOut, prOut, issueOut, runOut] = await Promise.all([
+    runCmd("gh", [
+      "repo", "view", nwo, "--json",
+      "name,description,stargazerCount,forkCount,primaryLanguage,pushedAt,url",
+    ]),
+    runCmd("gh", [
+      "pr", "list", "-R", nwo, "--state", "open", "--json",
+      "number,title,author,isDraft,reviewDecision,statusCheckRollup,url",
+      "--limit", "20",
+    ]),
+    runCmd("gh", [
+      "issue", "list", "-R", nwo, "--state", "open", "--json",
+      "number,title,author,labels,url",
+      "--limit", "20",
+    ]),
+    branch
+      ? runCmd("gh", [
+          "run", "list", "-R", nwo, "--branch", branch, "--limit", "1", "--json",
+          "status,conclusion,workflowName,url",
+        ]).catch(() => "[]")
+      : Promise.resolve("[]"),
+  ]);
+
+  const repoJson = JSON.parse(repoOut);
+  const prs = JSON.parse(prOut);
+  const issues = JSON.parse(issueOut);
+  const runs = JSON.parse(runOut);
+
+  return {
+    name: repoJson.name,
+    description: repoJson.description || null,
+    stars: repoJson.stargazerCount ?? 0,
+    forks: repoJson.forkCount ?? 0,
+    language: repoJson.primaryLanguage?.name ?? null,
+    pushedAt: repoJson.pushedAt,
+    url: repoJson.url,
+    openPRs: prs.map((pr) => ({
+      number: pr.number,
+      title: pr.title,
+      author: pr.author?.login ?? "unknown",
+      isDraft: !!pr.isDraft,
+      reviewDecision: pr.reviewDecision || null,
+      checksStatus: summarizeChecks(pr.statusCheckRollup),
+      url: pr.url,
+    })),
+    openIssues: issues.map((issue) => ({
+      number: issue.number,
+      title: issue.title,
+      author: issue.author?.login ?? "unknown",
+      labels: (issue.labels || []).map((l) => l.name),
+      url: issue.url,
+    })),
+    branchRun: runs[0]
+      ? {
+          status: runs[0].status,
+          conclusion: runs[0].conclusion || null,
+          workflowName: runs[0].workflowName,
+          url: runs[0].url,
+        }
+      : null,
+  };
+});
+
 ipcMain.handle("read-text-file", async (_event, filePath) => {
   return fs.promises.readFile(filePath, "utf-8");
 });
@@ -1645,6 +1889,99 @@ ipcMain.handle("reveal-in-file-manager", async (_event, targetPath, isDirectory)
   } else {
     shell.showItemInFolder(targetPath);
   }
+});
+
+// Is this path there, and what is it? Asked before a modifier-click decides
+// where to send it: a file Specterm can display opens in a pane, a directory
+// goes to the file manager, and anything else is handed to the OS. Terminal
+// output outlives the files it names, so "not there" is a real answer and the
+// pane says so rather than opening nothing.
+// A click on terminal output is a click on text anyone could have printed — a
+// README, a git log, an agent quoting an issue — so what these two handlers do
+// with a path is decided here, not by the renderer that asked.
+//
+// A UNC path is never touched. On Windows even stat'ing `\\host\share\x`
+// opens an SMB connection to that host, which can hand it the user's NTLM hash
+// before anything is opened at all.
+function isNetworkSharePath(targetPath) {
+  return process.platform === "win32" && /^[\\/]{2}/.test(targetPath);
+}
+
+// Types the OS runs rather than displays when asked to open them. Ctrl+click
+// reveals these in the file manager instead: the user still gets to the file,
+// but running it takes a second, deliberate action on something they can see.
+// Listed for every platform, since output often quotes a machine that isn't
+// this one and revealing costs nothing.
+const RUNS_WHEN_OPENED = new Set([
+  // Windows (ShellExecute runs these)
+  ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js",
+  ".jse", ".wsf", ".wsh", ".ws", ".hta", ".msc", ".msi", ".msp", ".mst",
+  ".scr", ".cpl", ".pif", ".lnk", ".url", ".reg", ".inf", ".scf", ".jar",
+  ".appref-ms", ".application", ".appx", ".msix", ".settingcontent-ms",
+  // macOS (a .app is a directory, so the extension is the only tell)
+  ".app", ".command", ".tool", ".terminal", ".workflow", ".action", ".pkg",
+  ".mpkg", ".scpt", ".applescript", ".fileloc", ".webloc", ".inetloc",
+  ".prefpane",
+  // Linux
+  ".desktop", ".appimage", ".run", ".sh",
+]);
+
+function runsWhenOpened(targetPath, stats) {
+  if (RUNS_WHEN_OPENED.has(path.extname(targetPath).toLowerCase())) return true;
+  // An extensionless binary or script with its exec bit set: Finder hands it
+  // to Terminal.app, which runs it. Windows reports no exec bits at all.
+  return (
+    !stats.isDirectory() &&
+    process.platform !== "win32" &&
+    (stats.mode & 0o111) !== 0
+  );
+}
+
+ipcMain.handle("stat-path", async (_event, targetPath) => {
+  if (typeof targetPath !== "string" || !targetPath || isNetworkSharePath(targetPath)) {
+    return { exists: false, isDirectory: false };
+  }
+  try {
+    const stats = await fs.promises.stat(targetPath);
+    return { exists: true, isDirectory: stats.isDirectory() };
+  } catch {
+    return { exists: false, isDirectory: false };
+  }
+});
+
+// Open a path with the OS's default application for its type — what a modifier-
+// click on a path in terminal output asks for (see src/lib/terminal-links.ts).
+// A directory opens in the file manager instead, which is the same thing one
+// level up.
+//
+// A path is stat'd before it is opened. Terminal output is full of paths that
+// were true when they were printed and aren't any more, and `shell.openPath`
+// answers a missing one with an error string the user never sees; reporting the
+// miss lets the pane say so.
+ipcMain.handle("open-path-default-app", async (_event, targetPath) => {
+  if (typeof targetPath !== "string" || !targetPath) {
+    return { ok: false, reason: "missing" };
+  }
+  if (isNetworkSharePath(targetPath)) return { ok: false, reason: "refused" };
+  let stats;
+  try {
+    stats = await fs.promises.stat(targetPath);
+  } catch {
+    return { ok: false, reason: "missing" };
+  }
+  const isDirectory = stats.isDirectory();
+  if (runsWhenOpened(targetPath, stats)) {
+    shell.showItemInFolder(targetPath);
+    return { ok: true, revealed: true };
+  }
+  const err = await shell.openPath(targetPath);
+  if (err) {
+    // No application claimed it. Showing it in the file manager is the next
+    // most useful answer, and is what a double-click with no handler does.
+    if (!isDirectory) shell.showItemInFolder(targetPath);
+    return { ok: false, reason: "refused" };
+  }
+  return { ok: true };
 });
 
 // Hand a link to the OS default browser. The renderer asks for this explicitly
@@ -2104,11 +2441,57 @@ async function writeScreensToDisk(screens) {
   }
 }
 
+// Each window sends only its own panes' screens, but the file is the whole
+// session's. Writing whichever map arrived last used to drop every other window's
+// screens — and two windows unloading together raced each other onto the same
+// temp file, which is how a restart could come back holding a corrupt file. So
+// the maps are kept per window and merged, and the writes run one at a time.
+//
+// Pane ids are unique across windows, so the merge never has to choose. A window
+// that has since parked keeps its entry: a detached window is still part of the
+// saved session. One that closed for good drops it (see the window's `closed`
+// handler). Insertion order puts a reattached window after the one it came
+// from, so where both hold the same pane the newer screen wins.
+const screensByWindow = new Map();
+let screensWrite = Promise.resolve();
+let screensDirty = false;
+
+function mergedScreens() {
+  return screensByWindow.size ? Object.assign({}, ...screensByWindow.values()) : null;
+}
+
 // Fired by a window on its way out, which is why it is `on` and not `handle`:
 // there is no renderer left to receive a reply, and this process is still here to
 // finish the job.
-ipcMain.on("session:write-screens-async", (_event, screens) => {
-  void writeScreensToDisk(screens);
+ipcMain.on("session:write-screens-async", (event, screens) => {
+  if (!screens || typeof screens !== "object") {
+    // A clear is for the whole session, as it always was.
+    screensByWindow.clear();
+  } else {
+    screensByWindow.set(event.sender.id, screens);
+  }
+  screensDirty = true;
+  const snapshot = mergedScreens();
+  screensWrite = screensWrite.then(() => writeScreensToDisk(snapshot));
+});
+
+// The queue above is asynchronous and a quitting process doesn't wait for it. By
+// the time `will-quit` fires every window has closed, so every screen it sent has
+// arrived: write the final merge synchronously so the last word is on disk.
+app.on("will-quit", () => {
+  if (!screensDirty) return;
+  try {
+    const merged = mergedScreens();
+    if (!merged) {
+      fs.rmSync(screensPath(), { force: true });
+      return;
+    }
+    const body = JSON.stringify({ version: 1, screens: merged });
+    if (body.length > MAX_SCREEN_FILE_BYTES) return;
+    fs.writeFileSync(screensPath(), body, "utf8");
+  } catch (err) {
+    console.warn("[session] final screens write failed:", err?.message ?? err);
+  }
 });
 
 ipcMain.handle("session:read-screens", async () => {
@@ -2178,9 +2561,34 @@ ipcMain.handle("detach-ptys", (event, ids) => {
 ipcMain.handle("park-session", (event, payload) => {
   const win = windowOf(event);
   const tabs = payload?.tabs;
-  // Whatever this window detached is now owned by the session about to be parked,
-  // so it is no longer at risk of being reaped as an orphan.
+  // Whatever this window detached and the payload carries is now owned by the
+  // session about to be parked. Whatever it detached and the payload *doesn't*
+  // carry has no route back: the renderer answers with an empty list when its
+  // detach throws after the release, and a tab can fail to serialize. Those used
+  // to be forgotten here while still running — shells with no window and nothing
+  // left to reap them. They die now, the same as when the renderer never answers.
+  const claimed = detachedButUnparked.get(event.sender.id);
   detachedButUnparked.delete(event.sender.id);
+  if (claimed?.size) {
+    const carried = new Set();
+    const walk = (node) => {
+      if (!node) return;
+      if (node.type === "leaf") {
+        if (node.pane?.kind === "terminal" && Number.isInteger(node.pane.ptyId)) {
+          carried.add(node.pane.ptyId);
+        }
+        return;
+      }
+      walk(node.first);
+      walk(node.second);
+    };
+    for (const tab of Array.isArray(tabs) ? tabs : []) walk(tab?.root);
+    const orphans = [...claimed].filter((id) => !carried.has(id));
+    if (orphans.length) {
+      detachedButUnparked.set(event.sender.id, new Set(orphans));
+      reapUnparkedPtys(event.sender.id);
+    }
+  }
   if (Array.isArray(tabs) && tabs.length) {
     const bounds = win && !win.isDestroyed() ? win.getBounds() : undefined;
     const layout = windowLayouts.get(event.sender.id);

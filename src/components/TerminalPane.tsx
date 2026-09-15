@@ -10,7 +10,7 @@ interface TerminalPaneProps {
   cwd?: string;
   onTitle?: (title: string) => void;
   onExit?: () => void;
-  onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+  onOpenFile?: (path: string, mode: "split" | "tab") => void;
 }
 
 export default function TerminalPane(props: TerminalPaneProps) {
@@ -21,7 +21,7 @@ export default function TerminalPane(props: TerminalPaneProps) {
       initialCwd: props.cwd,
       onTitle: props.onTitle,
       onExit: props.onExit,
-      onOpenMarkdown: props.onOpenMarkdown,
+      onOpenFile: props.onOpenFile,
     });
   });
 

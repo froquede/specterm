@@ -7,7 +7,10 @@ const { execFileSync, execSync } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
 
-const SRC = path.resolve(__dirname, '..', 'build-output', 'mac-arm64', 'Specterm.app');
+// electron-builder writes the arm64 app to mac-arm64/ and the x64 one to mac/.
+// Install the one that matches this machine.
+const OUT_DIR = process.arch === 'arm64' ? 'mac-arm64' : 'mac';
+const SRC = path.resolve(__dirname, '..', 'build-output', OUT_DIR, 'Specterm.app');
 const DEST = '/Applications/Specterm.app';
 
 if (!fs.existsSync(SRC)) {

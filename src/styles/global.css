@@ -468,7 +468,7 @@ body,
   background: var(--bg-hover);
 }
 
-/* Pressed-in state for the toggles (settings). Stroke icons have no filled
+/* Pressed-in state for the toggles (sidebar, settings). Stroke icons have no filled
    variant to switch to the way the old gear did, so the button carries the
    state instead — which is also how a toggle is supposed to read. */
 .tab-icon-btn.active {
@@ -1799,4 +1799,67 @@ body.resizing-sidebar .xterm {
   font-size: 11px;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* The "Copied" flash a click on a path or a link raises (lib/terminal-links).
+   It sits on <body> at the pointer, above everything, and never takes a click
+   of its own — it is a receipt, not a control. Anchored bottom-centre on the
+   cursor so it reads as belonging to what was just clicked, and it rises a few
+   pixels as it fades in, which is what makes a click that copied look different
+   from one that did nothing. */
+.copy-flash {
+  position: fixed;
+  z-index: 400;
+  transform: translate(-50%, -100%);
+  max-width: 60vw;
+  padding: 4px 9px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-chrome);
+  color: var(--fg);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+.copy-flash.is-visible {
+  opacity: 1;
+  transform: translate(-50%, calc(-100% - 8px));
+}
+/* The click asked to open something and it wasn't there, or nothing claimed it.
+   Same box, said in the colour the app uses for trouble. */
+.copy-flash.is-problem {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+/* Clicked something on the top row: there is nothing but window chrome above
+   the pointer, so the flash hangs below it and falls instead of rising. */
+.copy-flash.is-below {
+  transform: translate(-50%, 0);
+}
+.copy-flash.is-below.is-visible {
+  transform: translate(-50%, 8px);
+}
+
+/* Hover underline for a clickable path or URL in terminal output
+   (lib/terminal-links). Drawn as boxes over the screen rather than by the
+   renderer: the WebGL renderer owns its canvas, and a soft-wrapped path needs
+   one box per row it covers. Never takes a click of its own — the layer below
+   is what the pointer is really on. */
+.term-link-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 5;
+}
+.term-link-underline {
+  position: absolute;
+  border-bottom: 1px solid var(--accent);
+  box-sizing: border-box;
 }

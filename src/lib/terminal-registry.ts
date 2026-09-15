@@ -3,7 +3,6 @@ import { Terminal } from "@xterm/xterm";
 import type { ITheme, IBuffer } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import {
@@ -31,6 +30,7 @@ import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
+import { installLinkLayer } from "./terminal-links";
 import { preparePaste } from "./paste";
 import { publishStoreChange, registerStoreSync } from "./store-sync";
 import { cancelPendingRestore, takePendingRestore } from "./session-restore";
@@ -217,6 +217,10 @@ export interface TerminalInstance {
   // Tears down the paste bridge (see installPasteBridge). Bound to the current
   // container for the same reason, and re-installed alongside the selection one.
   detachPaste: (() => void) | null;
+  // Tears down the click-to-copy link layer (see lib/terminal-links). Container-
+  // bound like the two above, and installed before the selection bridge so its
+  // capture-phase listeners see a press first.
+  detachLinks: (() => void) | null;
   disposed: boolean;
   // Last OSC title reported by the shell (e.g. Claude Code's `/rename`). Stored
   // on the instance so it survives pane remounts (split/drag) and so a fresh
@@ -224,6 +228,10 @@ export interface TerminalInstance {
   // pane's callback, re-wired on every attach.
   title: string;
   onTitle: ((title: string) => void) | null;
+  // Open a file in a pane of this window — the markdown OSC's handler, and what
+  // a modifier-click on a path Specterm can display uses. Re-pointed on every
+  // attach, since it belongs to the pane mounting now.
+  onOpenFile: ((path: string, mode: "split" | "tab") => void) | null;
   // Set on a pane revived from a saved session, and cleared by the first title
   // the new shell reports. See the onTitleChange handler for why that first
   // report is swallowed rather than applied.
@@ -768,6 +776,13 @@ function foldInput(
   tracked: boolean,
   data: string
 ): { buffer: string; tracked: boolean } {
+  // Focus in/out and mouse reports travel the same channel as typing but never
+  // touch the prompt line. A shell that asks for focus events (ConPTY does on
+  // Windows) sends one on the very click that focuses the pane, and treating it
+  // as an unknown key left every line typed after that click untracked.
+  if (data === "\x1b[I" || data === "\x1b[O" || MOUSE_REPORT.test(data)) {
+    return { buffer, tracked };
+  }
   // Backspace / DEL — drop the last char.
   if (data === "\x7f" || data === "\x08") {
     return { buffer: buffer.slice(0, -1), tracked };
@@ -895,7 +910,7 @@ export async function createTerminalInstance(
   opts?: {
     onTitle?: (title: string) => void;
     onExit?: () => void;
-    onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+    onOpenFile?: (path: string, mode: "split" | "tab") => void;
     // Directory this terminal should open in — the live cwd of the pane it was
     // split from. Blank for the boot terminal, which uses the startup path.
     initialCwd?: string;
@@ -920,15 +935,13 @@ export async function createTerminalInstance(
   term.loadAddon(fitAddon);
   const searchAddon = new SearchAddon();
   term.loadAddon(searchAddon);
-  term.loadAddon(new WebLinksAddon((event, uri) => {
-    event.preventDefault();
-    window.getSelection()?.removeAllRanges();
-    window.open(uri, '_blank');
-  }));
 
-  if (opts?.onOpenMarkdown) {
+  // The OSC that says "show me this file". Read off the instance rather than
+  // off `opts`, because the callback belongs to whichever pane is mounted now —
+  // a split or a cross-tab drag hands the terminal to a different one.
+  if (opts?.onOpenFile) {
     registerOscHandler(term, ({ path, mode }) => {
-      opts.onOpenMarkdown!(path, mode);
+      instance.onOpenFile?.(path, mode);
     });
   }
 
@@ -943,9 +956,11 @@ export async function createTerminalInstance(
     resizeObserver: null,
     detachSelection: null,
     detachPaste: null,
+    detachLinks: null,
     disposed: false,
     title: "Terminal",
     onTitle: opts?.onTitle ?? null,
+    onOpenFile: opts?.onOpenFile ?? null,
     // Where this terminal will spawn. The pane carries the directory it should
     // inherit (the pane it was split from); blank falls back to the configured
     // startup path, then to home main-side.
@@ -1026,7 +1041,7 @@ export async function createTerminalInstance(
 interface AttachOptions {
   onTitle?: (title: string) => void;
   onExit?: () => void;
-  onOpenMarkdown?: (path: string, mode: "split" | "tab") => void;
+  onOpenFile?: (path: string, mode: "split" | "tab") => void;
   initialCwd?: string;
 }
 
@@ -1119,10 +1134,15 @@ async function attachTerminalInner(
     instance.onTitle = opts.onTitle;
     opts.onTitle(instance.title);
   }
+  if (opts?.onOpenFile) instance.onOpenFile = opts.onOpenFile;
 
   // If already attached to this container, just re-fit. detachTerminal may have
   // torn the selection bridge down in between, so put it back.
   if (instance.container === container) {
+    instance.detachLinks ??= installLinkLayer(term, container, {
+      cwd: () => instance.cwd,
+      openFile: (file) => instance.onOpenFile?.(file, "split"),
+    });
     instance.detachSelection ??= installClickVsDragSelection(term, container);
     instance.detachPaste ??= installPasteBridge(container, instance, paneId);
     safeFit(term, fitAddon);
@@ -1142,6 +1162,11 @@ async function attachTerminalInner(
 
     // The selection bridge is bound to the container element, so it moves with
     // the terminal on a split/drag remount.
+    instance.detachLinks?.();
+    instance.detachLinks = installLinkLayer(term, container, {
+      cwd: () => instance.cwd,
+      openFile: (file) => instance.onOpenFile?.(file, "split"),
+    });
     instance.detachSelection?.();
     instance.detachSelection = installClickVsDragSelection(term, container);
     instance.detachPaste?.();
@@ -1164,6 +1189,10 @@ async function attachTerminalInner(
 
   // A plain drag selects text even when the program running in the pane has
   // grabbed the mouse (Claude Code, vim, htop); a plain click still reaches it.
+  instance.detachLinks = installLinkLayer(term, container, {
+      cwd: () => instance.cwd,
+      openFile: (file) => instance.onOpenFile?.(file, "split"),
+    });
   instance.detachSelection = installClickVsDragSelection(term, container);
   instance.detachPaste = installPasteBridge(container, instance, paneId);
 
@@ -1197,6 +1226,13 @@ async function attachTerminalInner(
       } catch {
         // container detached mid-recovery — nothing to rebuild onto
       }
+      // Re-opening builds a fresh .xterm-screen, and the link layer's underline
+      // overlay lived in the old one. Put it back on the new screen.
+      instance.detachLinks?.();
+      instance.detachLinks = installLinkLayer(term, instance.container, {
+        cwd: () => instance.cwd,
+        openFile: (file) => instance.onOpenFile?.(file, "split"),
+      });
       mountWebgl();
       try {
         term.refresh(0, term.rows - 1);
@@ -1372,6 +1408,12 @@ async function attachTerminalInner(
       if (screen) {
         term.write(screen);
         term.write(REVIVED_MARKER);
+        // ConPTY opens every session by clearing the screen (ESC[2J). That
+        // erases the visible rows but leaves scrollback alone, so without this
+        // the replayed screen was wiped the moment the new shell said anything
+        // and only what had already scrolled off survived. Scrolling the replay
+        // up out of the viewport hands ConPTY a blank screen to clear.
+        if (os === "windows") term.write("\r\n".repeat(term.rows));
       }
     } catch {
       // No screen to be had — the pane just opens on a fresh prompt.
@@ -1530,6 +1572,8 @@ export function detachTerminal(paneId: string) {
   // Just disconnect the resize observer — don't kill anything
   instance.resizeObserver?.disconnect();
   instance.resizeObserver = null;
+  instance.detachLinks?.();
+  instance.detachLinks = null;
   instance.detachSelection?.();
   instance.detachSelection = null;
   instance.detachPaste?.();
@@ -1557,6 +1601,8 @@ export function releaseTerminal(paneId: string) {
 
   instance.disposed = true;
   instance.resizeObserver?.disconnect();
+  instance.detachLinks?.();
+  instance.detachLinks = null;
   instance.detachSelection?.();
   instance.detachSelection = null;
   instance.detachPaste?.();
@@ -1588,6 +1634,8 @@ export function destroyTerminal(paneId: string) {
 
   instance.disposed = true;
   instance.resizeObserver?.disconnect();
+  instance.detachLinks?.();
+  instance.detachLinks = null;
   instance.detachSelection?.();
   instance.detachSelection = null;
   instance.detachPaste?.();

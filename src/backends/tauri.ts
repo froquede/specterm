@@ -17,6 +17,9 @@ import type {
   UpdaterEvent,
   TransferTab,
   WindowInit,
+  GitRemoteInfo,
+  GhStatus,
+  GithubRepoSnapshot,
 } from "./types";
 
 interface PtyOutput {
@@ -62,7 +65,7 @@ export class TauriBackend implements Backend {
   }
 
   // Process inspection has no Tauri command yet. Empty answers are a supported
-  // outcome everywhere (Windows reports nothing either), so panes here restore
+  // outcome everywhere (the Electron host can fail to look, too), so panes here restore
   // as plain shells rather than resumed sessions.
   async ptyDescendants(
     _ids: number[]
@@ -161,6 +164,30 @@ export class TauriBackend implements Backend {
     await open(url);
   }
 
+  async statPath(path: string): Promise<{ exists: boolean; isDirectory: boolean }> {
+    try {
+      const { stat } = await import("@tauri-apps/plugin-fs");
+      const info = await stat(path);
+      return { exists: true, isDirectory: info.isDirectory };
+    } catch {
+      return { exists: false, isDirectory: false };
+    }
+  }
+
+  async openPathInDefaultApp(
+    path: string
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused"; revealed?: boolean }> {
+    // The shell plugin hands the path to the OS and tells us nothing about what
+    // happened to it, so a rejection here is all we can report.
+    try {
+      const { open } = await import("@tauri-apps/plugin-shell");
+      await open(path);
+      return { ok: true };
+    } catch {
+      return { ok: false, reason: "missing" };
+    }
+  }
+
   async onFsChange(cb: () => void): Promise<UnlistenFn> {
     return listen("fs-change", () => cb());
   }
@@ -184,6 +211,30 @@ export class TauriBackend implements Backend {
 
   async clipboardWriteText(text: string): Promise<void> {
     return navigator.clipboard.writeText(text);
+  }
+
+  // No Tauri commands for git/gh yet — Electron is the shipping target for
+  // this feature (same reasoning as listDrives/notifyWaiting above). A
+  // "not installed" answer keeps the panel's empty state truthful rather
+  // than silently hanging.
+  async gitRemoteInfo(_cwd: string): Promise<GitRemoteInfo | null> {
+    return null;
+  }
+
+  async gitStatusRaw(_cwd: string): Promise<string | null> {
+    return null;
+  }
+
+  async ghStatus(): Promise<GhStatus> {
+    return { installed: false, authenticated: false };
+  }
+
+  async ghRepoSnapshot(
+    _owner: string,
+    _repo: string,
+    _branch?: string
+  ): Promise<GithubRepoSnapshot> {
+    throw new Error("GitHub data is not available on this backend");
   }
 
   async getHomePath(): Promise<string> {
