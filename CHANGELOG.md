@@ -19,10 +19,15 @@
   the one you clicked in, in this window: not a tab, not a second copy of the
   app, not somebody else's editor. A URL goes to the browser, a directory to the
   file manager, and a file Specterm has no viewer for (a PDF, a spreadsheet) to
-  whatever application owns its type. The path is made real first — the `:12:5`
-  a compiler appended comes off, a `~` expands, and a relative path is resolved
-  against the directory that pane's shell is actually in. Output outlives the files it names, so a path that isn't
-  there any more says so at the pointer instead of opening nothing.
+  whatever application owns its type. Anything the OS would *run* rather than
+  show — an `.exe`, a `.app`, a `.desktop` file, a script with its exec bit — is
+  revealed in the file manager instead, and a Windows network-share path isn't
+  touched at all: output is text anyone could have printed, and a click on it
+  shouldn't be able to launch a program. The path is made real first — the
+  `:12:5` a compiler appended comes off, a `~` expands, and a relative path is
+  resolved against the directory that pane's shell is actually in. Output
+  outlives the files it names, so a path that isn't there any more says so at
+  the pointer instead of opening nothing.
 
   What counts as a path is deliberately reluctant, because a wrong guess
   underlines prose on every screen of output: absolute, `~`, `./` and `../`

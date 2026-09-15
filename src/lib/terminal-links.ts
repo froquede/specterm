@@ -46,6 +46,13 @@ const MAX_WRAP_ROWS = 8;
 // hovered line. A busy TUI renders far faster than a hand can move.
 const REFRESH_THROTTLE_MS = 80;
 
+// How much of the logical line around the hovered character is handed to the
+// matcher. findPathLinks retries its patterns from every position of an
+// unbroken run, so a soft-wrapped JWT or hex dump costs quadratically — ~50ms
+// for 3,400 characters, on every refresh. A path longer than this on either
+// side of the pointer is not one anybody clicks.
+const MATCH_WINDOW = 256;
+
 interface MappedLine {
   // The logical line as a string, soft wraps stitched back together.
   text: string;
@@ -113,10 +120,15 @@ function targetAt(term: Terminal, col: number, row: number): HoverTarget | null 
   const mapped = mapLogicalLine(term, row);
   if (!mapped) return null;
 
-  for (const match of findPathLinks(mapped.text)) {
+  const hovered = mapped.cells.findIndex((c) => c.y === row && c.x === col);
+  if (hovered === -1) return null;
+  const from = Math.max(0, hovered - MATCH_WINDOW);
+  const text = mapped.text.slice(from, hovered + MATCH_WINDOW + 1);
+
+  for (const match of findPathLinks(text)) {
     let hit = false;
     const segments: { y: number; x0: number; x1: number }[] = [];
-    for (let i = match.start; i < match.end; i++) {
+    for (let i = from + match.start; i < from + match.end; i++) {
       const cell = mapped.cells[i];
       if (!cell) continue;
       if (cell.y === row && cell.x === col) hit = true;
@@ -190,6 +202,10 @@ export function installLinkLayer(
   screen.appendChild(overlay);
 
   let pointer: { x: number; y: number } | null = null;
+  // The cell the pointer was last seen over. Mousemove fires per pixel, and the
+  // answer can only change when the cell does — a redraw under a still pointer
+  // is scheduleRefresh's job, not this one's.
+  let pointerCell: { col: number; row: number } | null = null;
   let target: HoverTarget | null = null;
   let pressed: { col: number; row: number; target: HoverTarget } | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -254,7 +270,9 @@ export function installLinkLayer(
   // REFRESH_THROTTLE_MS. A link appearing under a still pointer a frame or two
   // late is invisible; the pointer's own moves are never throttled.
   function scheduleRefresh(): void {
-    if (timer !== undefined) return;
+    // Nothing hovered and nothing drawn: a pane printing output with the
+    // pointer elsewhere has no question to re-ask, so it arms no timer.
+    if (timer !== undefined || (!pointer && !target)) return;
     const wait = Math.max(0, REFRESH_THROTTLE_MS - (Date.now() - lastRefresh));
     timer = setTimeout(() => {
       timer = undefined;
@@ -267,11 +285,17 @@ export function installLinkLayer(
     // (lib/mouse-selection); the real one already came through here.
     if (!event.isTrusted) return;
     pointer = { x: event.clientX, y: event.clientY };
+    const cell = cellAt(event.clientX, event.clientY);
+    if (cell && pointerCell && cell.col === pointerCell.col && cell.row === pointerCell.row) {
+      return;
+    }
+    pointerCell = cell;
     refresh();
   };
 
   const onLeave = () => {
     pointer = null;
+    pointerCell = null;
     pressed = null;
     if (target) {
       target = null;
@@ -391,7 +415,15 @@ async function openTarget(
   const backend = await getBackend();
 
   if (hit.kind === "url") {
-    await backend.openExternal(withScheme(hit.text));
+    const url = withScheme(hit.text);
+    // The host only hands web and mail links to the OS (see open-external in
+    // electron/main.cjs); saying "Opening" for a file:// or ssh:// it drops
+    // would be a lie.
+    if (!/^(https?|mailto):/i.test(url)) {
+      flash(event, `Won't open ${forFlash(hit.text)}`, "problem");
+      return;
+    }
+    await backend.openExternal(url);
     flash(event, `Opening ${forFlash(hit.text)}`);
     return;
   }
@@ -403,6 +435,13 @@ async function openTarget(
   });
   if (!resolved) {
     flash(event, `Nowhere to look for ${forFlash(hit.text)}`, "problem");
+    return;
+  }
+
+  // Not even stat'd: on Windows that alone connects to the host (see
+  // isNetworkSharePath in electron/main.cjs).
+  if (os === "windows" && /^[\\/]{2}/.test(resolved)) {
+    flash(event, `Won't open a network path: ${forFlash(resolved)}`, "problem");
     return;
   }
 
@@ -423,7 +462,9 @@ async function openTarget(
   // Everything else belongs to the OS: a PDF to whatever reads PDFs, a
   // directory to the file manager.
   const result = await backend.openPathInDefaultApp(resolved);
-  if (result.ok) {
+  if (result.revealed) {
+    flash(event, `Shown in folder: ${forFlash(resolved)}`);
+  } else if (result.ok) {
     flash(event, `Opening ${forFlash(resolved)}`);
   } else if (result.reason === "missing") {
     flash(event, `Not here any more: ${forFlash(resolved)}`, "problem");

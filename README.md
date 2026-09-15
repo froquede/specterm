@@ -89,7 +89,8 @@ hover; clicking copies. Copy rather than open, because the path is nearly always
 on its way into the next command — `Ctrl/⌘+click` opens instead: a file Specterm
 can show (markdown, an image, any text) in a pane split off the one you clicked
 in, a URL in the browser, a directory in the file manager, and everything else in
-whatever application owns its type. `~` is expanded and a relative path is
+whatever application owns its type — except anything the OS would run, which is
+revealed in the file manager instead. `~` is expanded and a relative path is
 resolved against that pane's directory. It works in panes running Claude Code,
 vim or lazygit too — the click copies on its way through and still reaches the
 program. What counts as a path is deliberately reluctant, so `24/7` and `and/or`

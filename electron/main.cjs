@@ -1652,8 +1652,51 @@ ipcMain.handle("reveal-in-file-manager", async (_event, targetPath, isDirectory)
 // goes to the file manager, and anything else is handed to the OS. Terminal
 // output outlives the files it names, so "not there" is a real answer and the
 // pane says so rather than opening nothing.
+// A click on terminal output is a click on text anyone could have printed — a
+// README, a git log, an agent quoting an issue — so what these two handlers do
+// with a path is decided here, not by the renderer that asked.
+//
+// A UNC path is never touched. On Windows even stat'ing `\\host\share\x`
+// opens an SMB connection to that host, which can hand it the user's NTLM hash
+// before anything is opened at all.
+function isNetworkSharePath(targetPath) {
+  return process.platform === "win32" && /^[\\/]{2}/.test(targetPath);
+}
+
+// Types the OS runs rather than displays when asked to open them. Ctrl+click
+// reveals these in the file manager instead: the user still gets to the file,
+// but running it takes a second, deliberate action on something they can see.
+// Listed for every platform, since output often quotes a machine that isn't
+// this one and revealing costs nothing.
+const RUNS_WHEN_OPENED = new Set([
+  // Windows (ShellExecute runs these)
+  ".exe", ".com", ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js",
+  ".jse", ".wsf", ".wsh", ".ws", ".hta", ".msc", ".msi", ".msp", ".mst",
+  ".scr", ".cpl", ".pif", ".lnk", ".url", ".reg", ".inf", ".scf", ".jar",
+  ".appref-ms", ".application", ".appx", ".msix", ".settingcontent-ms",
+  // macOS (a .app is a directory, so the extension is the only tell)
+  ".app", ".command", ".tool", ".terminal", ".workflow", ".action", ".pkg",
+  ".mpkg", ".scpt", ".applescript", ".fileloc", ".webloc", ".inetloc",
+  ".prefpane",
+  // Linux
+  ".desktop", ".appimage", ".run", ".sh",
+]);
+
+function runsWhenOpened(targetPath, stats) {
+  if (RUNS_WHEN_OPENED.has(path.extname(targetPath).toLowerCase())) return true;
+  // An extensionless binary or script with its exec bit set: Finder hands it
+  // to Terminal.app, which runs it. Windows reports no exec bits at all.
+  return (
+    !stats.isDirectory() &&
+    process.platform !== "win32" &&
+    (stats.mode & 0o111) !== 0
+  );
+}
+
 ipcMain.handle("stat-path", async (_event, targetPath) => {
-  if (typeof targetPath !== "string" || !targetPath) return { exists: false, isDirectory: false };
+  if (typeof targetPath !== "string" || !targetPath || isNetworkSharePath(targetPath)) {
+    return { exists: false, isDirectory: false };
+  }
   try {
     const stats = await fs.promises.stat(targetPath);
     return { exists: true, isDirectory: stats.isDirectory() };
@@ -1675,11 +1718,17 @@ ipcMain.handle("open-path-default-app", async (_event, targetPath) => {
   if (typeof targetPath !== "string" || !targetPath) {
     return { ok: false, reason: "missing" };
   }
-  let isDirectory;
+  if (isNetworkSharePath(targetPath)) return { ok: false, reason: "refused" };
+  let stats;
   try {
-    isDirectory = (await fs.promises.stat(targetPath)).isDirectory();
+    stats = await fs.promises.stat(targetPath);
   } catch {
     return { ok: false, reason: "missing" };
+  }
+  const isDirectory = stats.isDirectory();
+  if (runsWhenOpened(targetPath, stats)) {
+    shell.showItemInFolder(targetPath);
+    return { ok: true, revealed: true };
   }
   const err = await shell.openPath(targetPath);
   if (err) {

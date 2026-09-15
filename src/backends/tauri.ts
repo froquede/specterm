@@ -173,7 +173,7 @@ export class TauriBackend implements Backend {
 
   async openPathInDefaultApp(
     path: string
-  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }> {
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused"; revealed?: boolean }> {
     // The shell plugin hands the path to the OS and tells us nothing about what
     // happened to it, so a rejection here is all we can report.
     try {

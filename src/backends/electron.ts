@@ -39,7 +39,7 @@ interface SpectermAPI {
   openExternal(url: string): Promise<void>;
   openPathInDefaultApp(
     path: string
-  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }>;
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused"; revealed?: boolean }>;
   statPath(path: string): Promise<{ exists: boolean; isDirectory: boolean }>;
   clipboardHasImage(): Promise<boolean>;
   clipboardReadText(): Promise<string>;
@@ -200,7 +200,7 @@ export class ElectronBackend implements Backend {
 
   async openPathInDefaultApp(
     path: string
-  ): Promise<{ ok: boolean; reason?: "missing" | "refused" }> {
+  ): Promise<{ ok: boolean; reason?: "missing" | "refused"; revealed?: boolean }> {
     return this.api.openPathInDefaultApp(path);
   }
 
