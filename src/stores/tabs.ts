@@ -32,6 +32,7 @@ import {
   getTerminalInstance,
   getTerminalCwd,
   registerRevival,
+  onSnapshotInputChange,
 } from "../lib/terminal-registry";
 import { detachPtys, releasePty } from "../lib/pty";
 import type { TransferTab } from "../backends/types";
@@ -261,6 +262,9 @@ function update(fn: (s: AppState) => AppState) {
   // version of this the user could feel.
   scheduleSessionSave();
 }
+
+// A cd or a detected session changes what should be saved without a store write.
+onSnapshotInputChange(scheduleSessionSave);
 
 function scheduleSessionSave() {
   // Nothing reads the snapshot when restore is off, so don't build one. This is the

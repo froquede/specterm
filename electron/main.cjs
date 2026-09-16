@@ -555,9 +555,14 @@ function reattachSession() {
     if (i !== -1) parkedLayouts.splice(i, 1);
   }
   const win = parked
-    ? createWindow({ tabs: parked.tabs, bounds: parked.bounds })
+    ? createWindow({
+        tabs: parked.tabs,
+        bounds: parked.bounds,
+        maximized: parked.maximized,
+      })
     : createWindow();
   updateTray();
+  if (parked) scheduleSessionWrite();
   raise(win);
   return win;
 }
@@ -780,6 +785,12 @@ function createWindow(opts = {}) {
 
   windows.add(win);
 
+  // A window that was maximized comes back maximized, over the normal bounds it
+  // had underneath — restoring the maximized rectangle as plain bounds leaves a
+  // screen-sized window that un-maximizes to itself (and on Windows sits 8px off
+  // every edge). Skipped for background windows: maximize() would show it.
+  if (opts.maximized && !BACKGROUND_WINDOWS) win.maximize();
+
   if (BACKGROUND_WINDOWS) {
     // ready-to-show rather than straight away: the window has painted by then,
     // so it appears complete instead of as a white rectangle that fills in.
@@ -889,6 +900,18 @@ function createWindow(opts = {}) {
     if (!win.isDestroyed()) win.flashFrame(false);
   });
 
+  // Windows shutdown, restart or sign-out. The OS ends the process without
+  // `before-quit` ever firing, so this is the last moment the session can be
+  // written — every window is still open and its layout still current. Marking
+  // the app as quitting also keeps the close handler from parking or putting a
+  // confirmation dialog in front of the shutdown.
+  win.on("session-end", () => {
+    if (quitting) return;
+    quitting = true;
+    quitConfirmed = true;
+    writeSessionFile();
+  });
+
   // --- closing a window ----------------------------------------------------
   //
   // Two things can stop a close, in this order: a confirmation (the shells are
@@ -945,7 +968,26 @@ function createWindow(opts = {}) {
     //
     // `parking` makes it a one-shot: the destroy below re-enters this handler, and
     // a second interception would deadlock the window shut.
-    if (!parks || parking) return;
+    if (!parks) {
+      // The last window closing without parking is how the app quits on Windows
+      // and Linux (window-all-closed follows). By the time before-quit writes the
+      // session this window is gone and there would be nothing left to save — the
+      // file would be deleted and the next launch would open blank. Snapshot it now.
+      // Not on macOS: there the app outlives its last window, so this close is not
+      // a quit, and the flag below would stay set for the rest of the process —
+      // every window closed after it would keep its screens in screensByWindow.
+      if (
+        !isMac &&
+        !quitting &&
+        detachedSessions.length === 0 &&
+        openWindows().every((w) => w === win)
+      ) {
+        writeSessionFile();
+        sessionSavedOnLastClose = true;
+      }
+      return;
+    }
+    if (parking) return;
     event.preventDefault();
     parking = true;
     win.webContents.send("detach-window");
@@ -980,8 +1022,15 @@ function createWindow(opts = {}) {
     // no longer part of the saved session, so its scrollback would only sit in
     // this process and be rewritten on every later save. A parked window keeps
     // its entry (its layout lives on in parkedLayouts), and so does every window
-    // closing on the way out of a Quit — those are the session being saved.
-    if (!parking && !quitting) screensByWindow.delete(wcId);
+    // closing on the way out of a Quit — those are the session being saved. So
+    // does the last window when its close was saved as the session (see the
+    // close handler).
+    if (!parking && !quitting && !sessionSavedOnLastClose) {
+      screensByWindow.delete(wcId);
+    }
+    // A window closed for good drops out of the saved session. Not during a quit:
+    // before-quit already wrote the session with every window still in it.
+    if (!quitting) scheduleSessionWrite();
     pendingDrops.delete(wcId);
     // Nothing to keep lit, and nothing to put out later either.
     if (dragTarget === win) clearDragTarget();
@@ -2278,6 +2327,35 @@ function saveSessionPrefs() {
   }
 }
 
+// Where a window is, in the form that restores it faithfully: the normal
+// (un-maximized) rectangle, plus whether it sat maximized over it.
+function windowPlacement(win) {
+  const maximized = win.isMaximized();
+  return { bounds: maximized ? win.getNormalBounds() : win.getBounds(), maximized };
+}
+
+// The session file used to be written only in `before-quit`. Anything that ends
+// the process without it — a crash, a kill, Windows shutting down with every
+// window already parked in the tray — left the file from the last clean quit, so
+// the next launch restored something long out of date. Writing it shortly after
+// every change keeps the file within a couple of seconds of the truth instead.
+const SESSION_WRITE_DEBOUNCE_MS = 1500;
+let sessionWriteTimer = null;
+
+// Set when the last window closed without parking and the session was written for
+// it; tells before-quit not to overwrite that with the empty set left behind.
+let sessionSavedOnLastClose = false;
+
+function scheduleSessionWrite() {
+  if (quitting || sessionWriteTimer) return;
+  sessionWriteTimer = setTimeout(() => {
+    sessionWriteTimer = null;
+    if (quitting) return;
+    writeSessionFile({ keepIfEmpty: true });
+  }, SESSION_WRITE_DEBOUNCE_MS);
+  sessionWriteTimer.unref?.();
+}
+
 // Every window worth reopening: the ones still on screen, and the ones that were
 // detached into the background. Both are things the user hadn't finished with.
 function collectSessionWindows() {
@@ -2290,7 +2368,7 @@ function collectSessionWindows() {
       activeTabIndex: layout.activeTabIndex ?? 0,
       // Read now rather than from the layout: the window may have been moved or
       // resized since its last store write, and neither touches the tab state.
-      bounds: win.getBounds(),
+      ...windowPlacement(win),
     });
   }
   for (const parked of parkedLayouts) {
@@ -2304,11 +2382,16 @@ function collectSessionWindows() {
 // and the process is about to stop — an async write has nobody left to finish it —
 // and it costs nothing here: this is the main process, not the thread drawing a
 // terminal, and the payload is kilobytes.
-function writeSessionFile() {
+//
+// `keepIfEmpty` is for writes that are not the final word: an empty result there
+// means the windows are already on their way out, not that the user closed them all.
+function writeSessionFile({ keepIfEmpty = false } = {}) {
+  clearTimeout(sessionWriteTimer);
+  sessionWriteTimer = null;
   try {
     const windowsOut = collectSessionWindows();
     if (!windowsOut.length) {
-      fs.rmSync(sessionPath(), { force: true });
+      if (!keepIfEmpty) fs.rmSync(sessionPath(), { force: true });
       return;
     }
     fs.writeFileSync(
@@ -2350,6 +2433,7 @@ function restoreSessionWindows() {
     createWindow({
       restore: { tabs: w.tabs, activeTabIndex: w.activeTabIndex ?? 0 },
       bounds: sanitizeBounds(w.bounds),
+      maximized: w.maximized === true,
     });
     opened++;
   }
@@ -2397,6 +2481,7 @@ ipcMain.on("session:layout", (event, payload) => {
     tabs: payload.tabs,
     activeTabIndex: payload.activeTabIndex ?? 0,
   });
+  scheduleSessionWrite();
 });
 
 ipcMain.on("session:prefs", (_event, prefs) => {
@@ -2590,29 +2675,32 @@ ipcMain.handle("park-session", (event, payload) => {
     }
   }
   if (Array.isArray(tabs) && tabs.length) {
-    const bounds = win && !win.isDestroyed() ? win.getBounds() : undefined;
+    const { bounds, maximized } =
+      win && !win.isDestroyed() ? windowPlacement(win) : {};
     const layout = windowLayouts.get(event.sender.id);
+    // The layout this window last reported, carried alongside the live PTYs. It
+    // is what makes a detached window part of the *saved* session too: if this
+    // process dies before anyone reattaches, the shells go, but the next launch
+    // still reopens the window with its tabs and directories.
+    //
+    // One object, referenced from both lists. reattachSession finds it in
+    // parkedLayouts by identity; two separate literals never matched, so every
+    // detach-and-reattach left a stale copy behind and the next launch reopened
+    // one extra window per cycle.
+    const savedLayout = layout?.tabs?.length
+      ? { tabs: layout.tabs, activeTabIndex: layout.activeTabIndex ?? 0, bounds, maximized }
+      : null;
     detachedSessions.push({
       tabs,
       // Reattach where it was. A session that comes back in a different corner of
       // the screen than it left reads as a new window, not the one you closed.
       bounds,
-      // The layout this window last reported, carried alongside the live PTYs. It
-      // is what makes a detached window part of the *saved* session too: if this
-      // process dies before anyone reattaches, the shells go, but the next launch
-      // still reopens the window with its tabs and directories.
-      layout: layout?.tabs?.length
-        ? { tabs: layout.tabs, activeTabIndex: layout.activeTabIndex ?? 0, bounds }
-        : null,
+      maximized,
+      layout: savedLayout,
     });
-    if (layout?.tabs?.length) {
-      parkedLayouts.push({
-        tabs: layout.tabs,
-        activeTabIndex: layout.activeTabIndex ?? 0,
-        bounds,
-      });
-    }
+    if (savedLayout) parkedLayouts.push(savedLayout);
     updateTray();
+    scheduleSessionWrite();
   }
   if (win && !win.isDestroyed()) win.destroy();
 });
@@ -3391,7 +3479,7 @@ app.on("before-quit", () => {
   quitting = true;
   // Before anything is torn down: the windows are still open, so their bounds are
   // still readable, and the layouts they pushed are still current.
-  writeSessionFile();
+  writeSessionFile({ keepIfEmpty: sessionSavedOnLastClose });
   killDetachedPtys();
   updateTray();
 });
