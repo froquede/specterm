@@ -859,6 +859,20 @@ const [cwdEpoch, setCwdEpoch] = createSignal(0);
 
 function bumpCwdEpoch(): void {
   setCwdEpoch((n) => n + 1);
+  snapshotInputListener?.();
+}
+
+// A session snapshot reads each pane's directory and running session straight
+// off this registry, and neither goes through the tab store — so without this, a
+// `cd` or a newly detected Claude session reached the saved session only when
+// something *else* wrote the store, or in the window's final capture on the way
+// out. That capture runs after the host has already written the session file on
+// quit, so a session detected in an otherwise idle window was never saved at all.
+// stores/tabs.ts registers its (debounced) save here.
+let snapshotInputListener: (() => void) | null = null;
+
+export function onSnapshotInputChange(fn: (() => void) | null): void {
+  snapshotInputListener = fn;
 }
 
 /**
@@ -889,7 +903,9 @@ export function paneRunsFullscreenApp(paneId: string): boolean {
 /** Record (or clear) the resumable session a provider found in a pane. */
 export function setSessionMeta(paneId: string, meta: SessionMeta | undefined) {
   const instance = instances.get(paneId);
-  if (instance) instance.sessionMeta = meta;
+  if (!instance || instance.sessionMeta === meta) return;
+  instance.sessionMeta = meta;
+  snapshotInputListener?.();
 }
 
 /** Every live terminal pane, for the pollers that inspect running processes. */
