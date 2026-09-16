@@ -973,7 +973,11 @@ function createWindow(opts = {}) {
       // and Linux (window-all-closed follows). By the time before-quit writes the
       // session this window is gone and there would be nothing left to save — the
       // file would be deleted and the next launch would open blank. Snapshot it now.
+      // Not on macOS: there the app outlives its last window, so this close is not
+      // a quit, and the flag below would stay set for the rest of the process —
+      // every window closed after it would keep its screens in screensByWindow.
       if (
+        !isMac &&
         !quitting &&
         detachedSessions.length === 0 &&
         openWindows().every((w) => w === win)
