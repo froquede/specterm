@@ -448,6 +448,15 @@ try {
       sessionFile.present && sessionFile.windows >= 1,
       JSON.stringify(sessionFile)
     );
+    // Part 1 detached and reattached windows twice, and quit with one window open
+    // and one session still parked: exactly two windows are owed. A reattached
+    // session used to leave its parked copy in the saved session, so every
+    // detach/reattach cycle reopened one more window on the next launch.
+    check(
+      "a reattached session is not saved twice",
+      sessionFile.windows === 2,
+      JSON.stringify(sessionFile)
+    );
     check(
       "nothing is left in the localStorage key the layout used to live in",
       diag.legacySessionKey === false,
