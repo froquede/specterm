@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.22.1 — 2026-09-16
+
+### Fixed
+- **A relaunch no longer opens more windows than you had.** Detaching a window
+  and reattaching it left a stale copy of it in the saved session, so each
+  cycle added one extra window to the next launch, and the restart after an
+  update opened all of them. A reattached session now leaves the saved session
+  when it gets its window back.
+- **The session is saved when Windows shuts down, and after a crash.** It was
+  only written on a normal quit, and Windows ends the app on shutdown, restart
+  or sign-out without one. It is now rewritten a moment after every layout
+  change, park, reattach and close, and once more when Windows ends the
+  session.
+- **Closing the last window no longer throws the session away** on Windows and
+  Linux when background sessions are off. It is saved as that window closes, so
+  the next launch reopens it.
+- **Claude Code sessions are offered for resume on Windows.** A session found
+  in an otherwise idle window never reached the saved session, because nothing
+  wrote the layout after it was detected. It is now saved as soon as it is
+  found, and so is a pane's new directory after a `cd`.
+- **Maximized windows come back maximized**, over the size they had before
+  being maximized.
+
 ## 0.22.0 — 2026-09-15
 
 ### Added
