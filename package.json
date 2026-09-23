@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.22.1",
+  "version": "0.23.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
@@ -97,11 +97,17 @@
       "target": [
         {
           "target": "dmg",
-          "arch": ["arm64", "x64"]
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         },
         {
           "target": "zip",
-          "arch": ["arm64", "x64"]
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
       "category": "public.app-category.developer-tools",

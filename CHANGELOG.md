@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.23.0 — 2026-09-23
+
+### Added
+- **Double-click a divider to even out the panes along it.** Dragging three
+  columns back to equal widths by eye never quite lands, and a row that started
+  at 80/20 stayed lopsided until you fought it back. A double-click on a divider
+  now gives every pane along it an equal share: two panes become 50/50, three a
+  third each, for columns and rows alike. A pane split the other way inside the
+  row counts as one slot and keeps its own proportions. The targeting matches a
+  drag: a plain double-click covers the whole snapped divider line, and Alt
+  narrows it to the one split you clicked.
+
+### Fixed
+- The `path-links` and `e2e-links` test suites run on Windows again. They built
+  module paths in a way Windows rejects; they now go through file URLs, as the
+  `paste` suite already did.
+
 ## 0.22.1 — 2026-09-16
 
 ### Fixed
