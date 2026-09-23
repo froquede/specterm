@@ -9,13 +9,14 @@
 // node, so path-links.ts must stay erasable TypeScript.
 //
 // Run: node --experimental-strip-types test/path-links.mjs
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import path from "node:path";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
+// A URL, not a bare path: on Windows the ESM loader reads "C:" as a scheme.
 const { findPathLinks, resolveMatchedPath, opensInSpecterm } = await import(
-  path.join(root, "src", "lib", "path-links.ts")
+  pathToFileURL(path.join(root, "src", "lib", "path-links.ts")).href
 );
 
 let passed = 0;
