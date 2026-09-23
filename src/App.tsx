@@ -765,6 +765,7 @@ export default function App() {
                 tabId={tab().id}
                 onFocusPane={(id) => store.setActivePaneId(id)}
                 onResizeSplit={(entries) => store.resizeSplits(entries)}
+                onEqualizeSplits={(splitIds) => store.equalizeSplits(splitIds)}
                 onToggleDirection={(splitId) =>
                   store.toggleSplitDirection(splitId)
                 }

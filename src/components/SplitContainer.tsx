@@ -10,6 +10,7 @@ interface SplitContainerProps {
   tabId: string;
   onFocusPane: (id: PaneId) => void;
   onResizeSplit: (entries: ResizeEntry[]) => void;
+  onEqualizeSplits?: (splitIds: string[]) => void;
   onToggleDirection?: (splitId: string) => void;
   onDropPane?: (
     sourceId: PaneId,
@@ -100,6 +101,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 tabId={props.tabId}
                 onFocusPane={props.onFocusPane}
                 onResizeSplit={props.onResizeSplit}
+                onEqualizeSplits={props.onEqualizeSplits}
                 onToggleDirection={props.onToggleDirection}
                 onDropPane={props.onDropPane}
                 onDropPaneToTab={props.onDropPaneToTab}
@@ -114,6 +116,7 @@ export default function SplitContainer(props: SplitContainerProps) {
               direction={split().direction}
               splitId={split().id}
               onResize={props.onResizeSplit}
+              onEqualize={props.onEqualizeSplits}
               onToggleDirection={() => props.onToggleDirection?.(split().id)}
             />
             <div
@@ -129,6 +132,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 tabId={props.tabId}
                 onFocusPane={props.onFocusPane}
                 onResizeSplit={props.onResizeSplit}
+                onEqualizeSplits={props.onEqualizeSplits}
                 onToggleDirection={props.onToggleDirection}
                 onDropPane={props.onDropPane}
                 onDropPaneToTab={props.onDropPaneToTab}
