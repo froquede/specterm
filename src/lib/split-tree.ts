@@ -77,6 +77,54 @@ export function resizeSplit(
   };
 }
 
+/**
+ * Even out the panes along each target split's divider. A row of N panes is
+ * stored as a chain of nested same-direction splits, so each target first walks
+ * up to the top of its chain, then every split in that chain gets the ratio
+ * that hands each pane 1/N of the space. A nested split of the other direction
+ * counts as a single slot and keeps its own ratio.
+ */
+export function equalizeSplits(root: SplitNode, splitIds: string[]): SplitNode {
+  const targets = new Set(splitIds);
+  const chainRoots = new Set<string>();
+  // `chainTop` is the highest ancestor reachable through same-direction splits.
+  const findRoots = (node: SplitNode, chainTop: SplitNode | null) => {
+    if (node.type === "leaf") return;
+    const top = chainTop ?? node;
+    if (targets.has(node.id)) chainRoots.add(top.id);
+    const next = (child: SplitNode) =>
+      child.type === "split" && child.direction === node.direction ? top : null;
+    findRoots(node.first, next(node.first));
+    findRoots(node.second, next(node.second));
+  };
+  findRoots(root, null);
+  if (chainRoots.size === 0) return root;
+
+  const slots = (node: SplitNode, dir: "h" | "v"): number =>
+    node.type === "split" && node.direction === dir
+      ? slots(node.first, dir) + slots(node.second, dir)
+      : 1;
+
+  const equalize = (node: SplitNode, dir: "h" | "v"): SplitNode => {
+    if (node.type === "leaf" || node.direction !== dir) return rec(node);
+    const a = slots(node.first, dir);
+    const b = slots(node.second, dir);
+    return {
+      ...node,
+      ratio: a / (a + b),
+      first: equalize(node.first, dir),
+      second: equalize(node.second, dir),
+    };
+  };
+
+  const rec = (node: SplitNode): SplitNode => {
+    if (node.type === "leaf") return node;
+    if (chainRoots.has(node.id)) return equalize(node, node.direction);
+    return { ...node, first: rec(node.first), second: rec(node.second) };
+  };
+  return rec(root);
+}
+
 export function findPane(
   root: SplitNode,
   paneId: PaneId

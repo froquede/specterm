@@ -805,6 +805,55 @@ try {
     skip("Alt-drag resizes only the grabbed row", "grid did not form");
   }
 
+  // 6e2) Double-click a divider → every pane along it gets an equal share. Three
+  // columns are stored as a nested chain of splits, so equalizing just the
+  // clicked split would give 50/25/25; each must land on a third instead.
+  const paneWidths = () =>
+    win.evaluate(() =>
+      Array.from(document.querySelectorAll("[data-pane-id]"))
+        .map((p) => p.getBoundingClientRect())
+        .sort((a, b) => a.left - b.left)
+        .map((r) => r.width)
+    );
+
+  await newTab(win);
+  let r3 = await paneRects();
+  await focusPaneAt(r3[0].cx, r3[0].cy);
+  await splitPane(win, SPLIT_SIDE);
+  r3 = await paneRects();
+  const rightmost = r3.reduce((a, b) => (a.cx > b.cx ? a : b));
+  await focusPaneAt(rightmost.cx, rightmost.cy);
+  await splitPane(win, SPLIT_SIDE);
+
+  const c0 = await vHandles();
+  const colsOk = c0.length === 2 && (await paneWidths()).length === 3;
+  check("two side splits yield three columns", colsOk, JSON.stringify(c0));
+
+  if (colsOk) {
+    // Skew the layout: drag the left divider well to the right.
+    const leftDiv = c0.reduce((a, b) => (a.x < b.x ? a : b));
+    await win.mouse.move(leftDiv.x, leftDiv.top + 12);
+    await win.mouse.down();
+    await win.mouse.move(leftDiv.x + 150, leftDiv.top + 12, { steps: 12 });
+    await win.mouse.up();
+    await win.waitForTimeout(300);
+    const skewed = await paneWidths();
+
+    // Double-click the right divider (near its top — the flip button is mid-span).
+    const rightDiv = (await vHandles()).reduce((a, b) => (a.x > b.x ? a : b));
+    await win.mouse.dblclick(rightDiv.x, rightDiv.top + 12);
+    await win.waitForTimeout(300);
+    const even = await paneWidths();
+    const spread = Math.max(...even) - Math.min(...even);
+    check(
+      "double-clicking a divider splits the columns evenly",
+      Math.max(...skewed) - Math.min(...skewed) > 60 && spread < 12,
+      `skewed=${JSON.stringify(skewed.map(Math.round))} → ${JSON.stringify(even.map(Math.round))}`
+    );
+  } else {
+    skip("double-clicking a divider splits the columns evenly", "columns did not form");
+  }
+
   // 6f) Clipboard reliability. Copy must reach the *OS* clipboard (read here from
   // the Electron main process — the ground truth an external app would see), and
   // paste must pull from it into the active pane. Regression guard for the

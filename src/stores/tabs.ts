@@ -23,6 +23,7 @@ import {
   findPaneInDirection,
   setSplitDirection,
   toggleSplitDirection,
+  equalizeSplits,
   type DropEdge,
   type FocusDirection,
 } from "../lib/split-tree";
@@ -1122,6 +1123,24 @@ export function useTabStore() {
 
       const ratios = new Map(entries.map((e) => [e.splitId, e.ratio]));
       const newRoot = resizeSplitsInTree(s.tabs[idx].root, ratios);
+
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) =>
+          i === idx ? { ...t, root: newRoot } : t
+        ),
+      }));
+    },
+
+    // Double-click on a divider: give every pane along it an equal share.
+    equalizeSplits(splitIds: string[]) {
+      if (splitIds.length === 0) return;
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const newRoot = equalizeSplits(s.tabs[idx].root, splitIds);
+      if (newRoot === s.tabs[idx].root) return;
 
       update(() => ({
         ...s,

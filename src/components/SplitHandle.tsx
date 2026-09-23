@@ -12,6 +12,9 @@ interface SplitHandleProps {
   // handle sitting on the same "snapped" divider line (so a full row/column
   // resizes together); Alt-drag narrows it to this single split.
   onResize: (entries: ResizeEntry[]) => void;
+  // Double-click evens out the panes along the divider — the same snapped line
+  // a drag would move, or just this split with Alt.
+  onEqualize?: (splitIds: string[]) => void;
   onToggleDirection?: () => void;
 }
 
@@ -119,17 +122,25 @@ export default function SplitHandle(props: SplitHandleProps) {
     handleRef.addEventListener("pointercancel", onPointerUp);
   }
 
+  function onDblClick(e: MouseEvent) {
+    e.preventDefault();
+    const group = e.altKey ? [{ el: handleRef, splitId: props.splitId }] : gatherGroup();
+    props.onEqualize?.(group.map((g) => g.splitId));
+  }
+
   return (
     <div
       ref={handleRef}
       class={`split-handle split-handle-${props.direction}`}
       data-split-id={props.splitId}
       onPointerDown={onPointerDown}
+      onDblClick={onDblClick}
     >
       <button
         class="split-flip"
         title="Toggle split direction"
         onPointerDown={(e) => e.stopPropagation()}
+        onDblClick={(e) => e.stopPropagation()}
         onClick={(e) => {
           e.stopPropagation();
           props.onToggleDirection?.();

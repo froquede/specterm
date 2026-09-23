@@ -16,8 +16,9 @@ import { launchOptions } from "./launch.mjs";
 import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
-const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-links-"));
 const app = await electron.launch(launchOptions(root, userDataDir));
 const win = await app.firstWindow();
