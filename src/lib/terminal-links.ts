@@ -32,7 +32,8 @@
 // guessing can be tested directly.
 
 import type { Terminal } from "@xterm/xterm";
-import { findPathLinks, opensInSpecterm, resolveMatchedPath } from "./path-links";
+import { findPathLinks, lineSuffixOf, opensInSpecterm, resolveMatchedPath } from "./path-links";
+import { homeDir, locatePath, type LocateContext } from "./path-locate";
 import { clipboardWriteText } from "./pty";
 import { getBackend } from "../backends";
 import { os } from "./platform";
@@ -184,6 +185,9 @@ export function installLinkLayer(
     // The pane's working directory, read at click time. A relative path in
     // output only means something relative to where the shell currently is.
     cwd: () => string;
+    // The pane's Claude Code session id, when it has one — where a relative
+    // path an agent printed can be traced back to the full one it wrote.
+    sessionId: () => string | undefined;
     // Open a file in a pane of this window, split off the active one.
     openFile: (path: string) => void;
   }
@@ -339,7 +343,7 @@ export function installLinkLayer(
       void openTarget(event, hit, opts);
       return;
     }
-    void copyTerminalLink(event, hit.text);
+    void copyTarget(event, hit, opts);
   }
 
   // Capture phase, so these run before the selection bridge decides what to do
@@ -381,15 +385,32 @@ export async function copyTerminalLink(event: MouseEvent, text: string): Promise
   flash(event, `Copied ${forFlash(text)}`);
 }
 
-// The user's home directory, for expanding a leading `~`. Asked for once and
-// kept: it can't change while the app is running, and a click shouldn't wait on
-// a round trip to find out what it already knows.
-let homePath: Promise<string> | null = null;
-function home(): Promise<string> {
-  homePath ??= getBackend()
-    .then((backend) => backend.getHomePath())
-    .catch(() => "");
-  return homePath;
+type LinkOpts = {
+  cwd: () => string;
+  sessionId: () => string | undefined;
+  openFile: (path: string) => void;
+};
+
+function locateContext(opts: LinkOpts): LocateContext {
+  return { cwd: opts.cwd(), sessionId: opts.sessionId(), windows: os === "windows" };
+}
+
+/**
+ * Plain click: copy the link — and for a path, the full path.
+ *
+ * What is printed is often relative to somewhere other than where you are
+ * pasting it, so the clipboard gets the absolute path it stands for (keeping a
+ * compiler's `:12:5`). When it can't be found, the text goes as printed: a
+ * wrong full path is worse than a partial one.
+ */
+async function copyTarget(event: MouseEvent, hit: HoverTarget, opts: LinkOpts): Promise<void> {
+  window.getSelection()?.removeAllRanges();
+  let text = hit.text;
+  if (hit.kind === "path") {
+    const full = await locatePath(hit.text, locateContext(opts)).catch(() => null);
+    if (full) text = full + lineSuffixOf(hit.text);
+  }
+  await copyTerminalLink(event, text);
 }
 
 /** A bare `www.example.com` is a URL the moment someone clicks it. */
@@ -402,14 +423,14 @@ function withScheme(url: string): string {
  *
  * A URL goes to the browser. A path goes to whatever application owns its type,
  * which means it first has to become a real path — the `:12:5` a compiler
- * appended comes off, a `~` is expanded, and a relative path is resolved
- * against the pane's directory. Terminal output is full of paths that were true
+ * appended comes off, a `~` is expanded, and a relative path is looked for
+ * from the pane's directory outwards. Terminal output is full of paths that were true
  * when they were printed, so a miss is reported rather than swallowed.
  */
 async function openTarget(
   event: MouseEvent,
   hit: HoverTarget,
-  opts: { cwd: () => string; openFile: (path: string) => void }
+  opts: LinkOpts
 ): Promise<void> {
   window.getSelection()?.removeAllRanges();
   const backend = await getBackend();
@@ -428,11 +449,12 @@ async function openTarget(
     return;
   }
 
-  const resolved = resolveMatchedPath(hit.text, {
-    cwd: opts.cwd(),
-    home: await home(),
-    windows: os === "windows",
-  });
+  // Looked for, not just joined onto the pane's directory (lib/path-locate.ts).
+  // Not found anywhere, the plain join is what gets reported missing.
+  const ctx = locateContext(opts);
+  const resolved =
+    (await locatePath(hit.text, ctx).catch(() => null)) ??
+    resolveMatchedPath(hit.text, { cwd: ctx.cwd, home: await homeDir(), windows: ctx.windows });
   if (!resolved) {
     flash(event, `Nowhere to look for ${forFlash(hit.text)}`, "problem");
     return;
@@ -487,9 +509,12 @@ const FLASH_FADE_MS = 160;
 const FLASH_GAP_PX = 8;
 const FLASH_EDGE_GAP_PX = 8;
 
-/** Shorten a long path for the flash, keeping the end — the part you recognise. */
+/**
+ * Shorten a long path for the flash. The end is the part you recognise; the
+ * start is what says a relative path was copied as a full one.
+ */
 function forFlash(text: string): string {
-  return text.length > 44 ? `…${text.slice(-43)}` : text;
+  return text.length > 44 ? `${text.slice(0, 14)}…${text.slice(-29)}` : text;
 }
 
 function flash(event: MouseEvent, message: string, tone?: "problem"): void {

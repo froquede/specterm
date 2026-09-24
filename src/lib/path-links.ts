@@ -246,6 +246,77 @@ export function resolveMatchedPath(text: string, ctx: PathContext): string | nul
   return joinPath(ctx.cwd, path.replace(/^\.[\\/]+/, ""), ctx.windows);
 }
 
+/** The `:12:5` a compiler appended to `text`, or "" when there is none. */
+export function lineSuffixOf(text: string): string {
+  return text.match(LINE_SUFFIX)?.[0] ?? "";
+}
+
+/**
+ * True for a match that means nothing without knowing where it was printed
+ * from — `src/a.ts`, `./run.sh` — as opposed to one rooted at a drive, `/` or
+ * `~`, which says where it is on its own.
+ */
+export function isRelativeMatch(text: string, windows: boolean): boolean {
+  const path = text.replace(LINE_SUFFIX, "");
+  if (!path || path === "~" || path.startsWith("~/") || path.startsWith("~\\")) return false;
+  // Rooted at a separator: absolute somewhere, even when not on this host.
+  if (/^[\\/]/.test(path)) return false;
+  return !isAbsolutePath(path, windows);
+}
+
+// Characters that end a path when walking left from a match in the haystack:
+// whatever quotes it, or puts it inside something else.
+const PATH_STOP = /[\s"'`<>|(){}[\],;=]/;
+
+/**
+ * Absolute paths in `haystack` that end in the relative path `relative`, newest
+ * (last) first.
+ *
+ * The haystack is a stretch of a Claude Code transcript. An agent names the
+ * file it wrote relative to wherever it happens to be thinking from
+ * ("ux-specs/nf/handoff.html"), which is often neither the pane's directory nor
+ * anything under it — but the tool call that wrote the file carried the full
+ * path, and that is still in the transcript. The transcript is JSON, so a
+ * Windows separator arrives escaped (`\\`) and is matched as such.
+ */
+export function absolutePathsEndingWith(
+  haystack: string,
+  relative: string,
+  windows: boolean
+): string[] {
+  const rel = relative.replace(LINE_SUFFIX, "").replace(/^\.[\\/]+/, "");
+  const parts = rel.split(/[\\/]+/).filter(Boolean);
+  // A `..` climbs out of somewhere we don't know; no suffix can stand for it.
+  if (!haystack || !parts.length || parts.includes("..")) return [];
+
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const tail = new RegExp(
+    parts.map(escape).join("(?:/|\\\\{1,2})"),
+    // Windows filesystems ignore case, and so does the way people type them.
+    windows ? "gi" : "g"
+  );
+
+  const found: string[] = [];
+  for (let m = tail.exec(haystack); m; m = tail.exec(haystack)) {
+    const end = m.index + m[0].length;
+    // The match has to be the whole last segment: not "a.html" inside
+    // "a.html.bak". A JSON escape (`\n`, `\"`) right after it still ends it.
+    const next = haystack[end];
+    if (next && !PATH_STOP.test(next) && !(next === "\\" && /[nrt"]/.test(haystack[end + 1] ?? ""))) {
+      continue;
+    }
+    // …and the whole first segment: a separator right before it.
+    if (!/[\\/]/.test(haystack[m.index - 1] ?? "")) continue;
+    let start = m.index - 1;
+    while (start > 0 && !PATH_STOP.test(haystack[start - 1])) start--;
+    let path = haystack.slice(start, end).replace(/\\\\/g, "\\").replace(/\\\//g, "/");
+    if (windows) path = path.replace(/\//g, "\\");
+    if (!isAbsolutePath(path, windows)) continue;
+    found.push(path);
+  }
+  return [...new Set(found.reverse())];
+}
+
 /** True when `path` needs no directory to be understood. */
 export function isAbsolutePath(path: string, windows: boolean): boolean {
   if (windows) return /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\");

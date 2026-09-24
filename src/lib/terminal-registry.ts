@@ -1157,6 +1157,7 @@ async function attachTerminalInner(
   if (instance.container === container) {
     instance.detachLinks ??= installLinkLayer(term, container, {
       cwd: () => instance.cwd,
+      sessionId: () => instance.sessionMeta?.id,
       openFile: (file) => instance.onOpenFile?.(file, "split"),
     });
     instance.detachSelection ??= installClickVsDragSelection(term, container);
@@ -1181,6 +1182,7 @@ async function attachTerminalInner(
     instance.detachLinks?.();
     instance.detachLinks = installLinkLayer(term, container, {
       cwd: () => instance.cwd,
+      sessionId: () => instance.sessionMeta?.id,
       openFile: (file) => instance.onOpenFile?.(file, "split"),
     });
     instance.detachSelection?.();
@@ -1207,6 +1209,7 @@ async function attachTerminalInner(
   // grabbed the mouse (Claude Code, vim, htop); a plain click still reaches it.
   instance.detachLinks = installLinkLayer(term, container, {
       cwd: () => instance.cwd,
+      sessionId: () => instance.sessionMeta?.id,
       openFile: (file) => instance.onOpenFile?.(file, "split"),
     });
   instance.detachSelection = installClickVsDragSelection(term, container);
@@ -1247,6 +1250,7 @@ async function attachTerminalInner(
       instance.detachLinks?.();
       instance.detachLinks = installLinkLayer(term, instance.container, {
         cwd: () => instance.cwd,
+        sessionId: () => instance.sessionMeta?.id,
         openFile: (file) => instance.onOpenFile?.(file, "split"),
       });
       mountWebgl();

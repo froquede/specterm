@@ -180,7 +180,9 @@ async function heuristicFromTranscripts(cwd: string): Promise<string | null> {
  * `detect` uses, which is right except when two sessions share a directory.
  *
  * Read by lib/terminal-diagrams.ts, which wants the *text Claude actually
- * wrote* rather than the reflowed copy on screen. Nothing else should need it:
+ * wrote* rather than the reflowed copy on screen, and by lib/path-locate.ts,
+ * which wants the full path behind a relative one Claude printed. Nothing else
+ * should need it:
  * a transcript is a record of a conversation, and this app has no business
  * reading one for any purpose beyond recovering something it already displayed.
  */
