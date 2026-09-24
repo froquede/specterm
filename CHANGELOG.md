@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.24.0 — 2026-09-24
+
+### Added
+- **A new look.** The panes and the sidebar are rounded cards on a darker
+  frame, and the gaps between them are the dividers. Tabs and the tab bar's
+  buttons are rounded too, and terminal text no longer runs into the pane's
+  edge. Every divider carries three faint grip dots that brighten on hover.
+  They stay clear of any divider that ends on them, and the flip button sits
+  just past them.
+- **Settings → Layout → Chrome style.** Modern is the new look; Classic is
+  the original flat layout. Modern also takes a gap between panes (2–16px,
+  which is also how thick the dividers are to grab) and a corner roundness
+  (0–16px).
+- **An update dot on the settings button.** When an update is found,
+  downloading or ready to install, the gear gets a small dot, and its tooltip
+  names the version.
+
+### Changed
+- **One notification dot everywhere.** A tab or pane that is waiting on you
+  shows a dot in its close button's place, so it never pushes the title
+  around; the × comes back when you point at it. The settings button's update
+  dot is the same mark.
+- **Titles drop the status symbols programs put in front of them.** Claude
+  Code prefixes its title with `✳`, `·` and spinner frames; tabs and panes now
+  show just the name, and the dot carries the state.
+- **Icons and text line up.** The pane grip is redrawn on whole pixels and
+  lines up with the terminal's first column, the tab bar's icons render at
+  whole-pixel sizes, and the file tree's rows, header and filter no longer sit
+  between pixels.
+
+### Fixed
+- **A terminal in a background tab no longer renames the tab you're on.** A
+  pane kept reporting its title after its tab went to the background, and
+  every report landed on whichever tab was on screen, so a Claude Code session
+  in one tab kept overwriting another tab's name. Titles now go to the pane's
+  own tab, and only that tab's focused pane names it.
+
 ## 0.23.0 — 2026-09-23
 
 ### Added
