@@ -15,7 +15,14 @@ import path from "node:path";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, "..");
 // A URL, not a bare path: on Windows the ESM loader reads "C:" as a scheme.
-const { findPathLinks, resolveMatchedPath, opensInSpecterm } = await import(
+const {
+  findPathLinks,
+  resolveMatchedPath,
+  opensInSpecterm,
+  absolutePathsEndingWith,
+  isRelativeMatch,
+  lineSuffixOf,
+} = await import(
   pathToFileURL(path.join(root, "src", "lib", "path-links.ts")).href
 );
 
@@ -151,6 +158,67 @@ eqList("fraction", "3/4 done", []);
   eqPath("windows drive is absolute", resolveMatchedPath("C:\\Users\\u\\a.txt", win), "C:\\Users\\u\\a.txt");
   eqPath("windows relative joins with a backslash", resolveMatchedPath("src\\a.ts", win), "C:\\work\\src\\a.ts");
   eqPath("unc is absolute", resolveMatchedPath("\\\\server\\share\\a.txt", win), "\\\\server\\share\\a.txt");
+}
+
+// --- the full path behind a relative one ---------------------------------
+// An agent prints a path relative to wherever it was working; the transcript
+// (JSON) still holds the tool call that wrote the file with its full path.
+{
+  const eq = (name, got, want) => {
+    const ok = JSON.stringify(got) === JSON.stringify(want);
+    check(name, ok, ok ? "" : `got ${JSON.stringify(got)} want ${JSON.stringify(want)}`);
+  };
+  const rel = "specs/web/handoff_v1.html";
+
+  const bs = (p) => p.replaceAll("/", "\\");
+  const full = "C:/Users/u/design-docs/specs/web/handoff_v1.html";
+
+  // As it sits in the .jsonl: every backslash doubled by JSON.
+  const winJson = JSON.stringify({ name: "Write", input: { file_path: bs(full), content: "x" } });
+  eq("windows JSON escapes", absolutePathsEndingWith(winJson, rel, true), [bs(full)]);
+  eq(
+    "windows forward slashes normalised",
+    absolutePathsEndingWith(`"file_path":"${full}"`, rel, true),
+    [bs(full)]
+  );
+  eq(
+    "windows ignores case",
+    absolutePathsEndingWith('"C:/u/Specs/web/handoff_v1.html"', rel, true),
+    [bs("C:/u/Specs/web/handoff_v1.html")]
+  );
+
+  const posixJson =
+    JSON.stringify({ file_path: "/home/u/old/specs/web/handoff_v1.html" }) +
+    JSON.stringify({ command: "open /home/u/design-docs/specs/web/handoff_v1.html\n" });
+  eq("newest first, JSON newline ends it", absolutePathsEndingWith(posixJson, rel, false), [
+    "/home/u/design-docs/specs/web/handoff_v1.html",
+    "/home/u/old/specs/web/handoff_v1.html",
+  ]);
+  eq(
+    "longer last segment is not a match",
+    absolutePathsEndingWith('"/home/u/specs/web/handoff_v1.html.bak"', rel, false),
+    []
+  );
+  eq(
+    "partial first segment is not a match",
+    absolutePathsEndingWith('"/home/u/old-specs/web/handoff_v1.html"', rel, false),
+    []
+  );
+  eq(
+    "relative mention is not an answer",
+    absolutePathsEndingWith('"see design-docs/specs/web/handoff_v1.html"', rel, false),
+    []
+  );
+  eq("line suffix ignored", absolutePathsEndingWith('"/p/src/a.ts"', "src/a.ts:12:5", false), ["/p/src/a.ts"]);
+  eq("dot-dot never matches", absolutePathsEndingWith('"/p/pkg/a.ts"', "../pkg/a.ts", false), []);
+
+  eq("relative match", isRelativeMatch("src/a.ts:3", false), true);
+  eq("absolute match", isRelativeMatch("/etc/hosts", false), false);
+  eq("home match", isRelativeMatch("~/a.md", false), false);
+  eq("posix root on windows is not searched", isRelativeMatch("/tmp/a.txt", true), false);
+  eq("windows drive match", isRelativeMatch(bs("C:/a/b.txt"), true), false);
+  eq("line suffix", lineSuffixOf("src/a.ts:12:5"), ":12:5");
+  eq("no line suffix", lineSuffixOf("src/a.ts"), "");
 }
 
 // --- what opens in a pane, and what the OS gets --------------------------
