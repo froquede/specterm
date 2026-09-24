@@ -16,6 +16,8 @@ interface SplitHandleProps {
   // a drag would move, or just this split with Alt.
   onEqualize?: (splitIds: string[]) => void;
   onToggleDirection?: () => void;
+  // Where along the handle its grip dots go (0–1); see gripPosition.
+  gripAt?: number;
 }
 
 // How close two handles' shared line must be (in px) to count as aligned, and
@@ -133,6 +135,7 @@ export default function SplitHandle(props: SplitHandleProps) {
       ref={handleRef}
       class={`split-handle split-handle-${props.direction}`}
       data-split-id={props.splitId}
+      style={{ "--grip-at": `${(props.gripAt ?? 0.5) * 100}%` }}
       onPointerDown={onPointerDown}
       onDblClick={onDblClick}
     >

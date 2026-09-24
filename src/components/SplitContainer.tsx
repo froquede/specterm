@@ -1,6 +1,6 @@
 import { Show } from "solid-js";
 import type { SplitNode, PaneId } from "../types";
-import type { DropEdge } from "../lib/split-tree";
+import { gripPosition, type DropEdge } from "../lib/split-tree";
 import Pane from "./Pane";
 import SplitHandle, { type ResizeEntry } from "./SplitHandle";
 
@@ -118,6 +118,7 @@ export default function SplitContainer(props: SplitContainerProps) {
               onResize={props.onResizeSplit}
               onEqualize={props.onEqualizeSplits}
               onToggleDirection={() => props.onToggleDirection?.(split().id)}
+              gripAt={gripPosition(split().direction, [split().first, split().second])}
             />
             <div
               style={{

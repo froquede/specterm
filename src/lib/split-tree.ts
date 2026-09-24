@@ -409,3 +409,29 @@ export function moveLeaf(
   if (pruned === null) return root; // source was the only pane
   return insertBeside(pruned, targetId, source, edge);
 }
+
+/**
+ * Where along a divider to draw its grip dots, as a fraction of its length: the
+ * middle of the longest stretch that no perpendicular divider runs into.
+ *
+ * `sides` are the nodes on either side of the divider. A side that is itself
+ * split the other way has a divider ending on this one, at that split's ratio.
+ * Drawn at the plain midpoint, the dots of a | divider beside an evenly
+ * stacked pair land right in the T where the two dividers meet.
+ */
+export function gripPosition(direction: "h" | "v", sides: SplitNode[]): number {
+  const cuts = sides.flatMap((n) =>
+    n.type === "split" && n.direction !== direction ? [n.ratio] : []
+  );
+  const points = [0, ...cuts, 1].sort((a, b) => a - b);
+  let at = 0.5;
+  let longest = -1;
+  for (let i = 0; i < points.length - 1; i++) {
+    const length = points[i + 1] - points[i];
+    if (length > longest + 1e-6) {
+      longest = length;
+      at = (points[i] + points[i + 1]) / 2;
+    }
+  }
+  return at;
+}

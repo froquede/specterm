@@ -24,6 +24,7 @@ import {
   initSettings,
   tabBarEdge,
   tabBarAutoHide,
+  chromeStyle,
   claudeAttentionMode,
   desktopNotifications,
 } from "./stores/settings";
@@ -690,6 +691,7 @@ export default function App() {
       class="app"
       data-tab-edge={tabBarEdge()}
       data-tab-autohide={tabBarAutoHide() ? "true" : "false"}
+      data-chrome={chromeStyle()}
     >
       {/* Only ever present when the tab bar has been moved off the top edge —
           see TitleStrip, which decides for itself and renders nothing
@@ -754,7 +756,7 @@ export default function App() {
           </Suspense>
         </Show>
         <Show when={store.state.sidebarView !== null}>
-          <SidebarResizeHandle />
+          <SidebarResizeHandle root={store.activeTab?.root} />
         </Show>
         <div class="app-content" data-split-root>
           <Show when={store.activeTab}>

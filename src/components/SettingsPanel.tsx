@@ -56,6 +56,20 @@ import {
   setTabBarAutoHide,
   sidebarWidth,
   SIDEBAR_WIDTH_DEFAULT,
+  chromeStyle,
+  setChromeStyle,
+  type ChromeStyle,
+  CHROME_STYLE_DEFAULT,
+  paneGap,
+  setPaneGap,
+  PANE_GAP_MIN,
+  PANE_GAP_MAX,
+  PANE_GAP_DEFAULT,
+  cornerRadius,
+  setCornerRadius,
+  CORNER_RADIUS_MIN,
+  CORNER_RADIUS_MAX,
+  CORNER_RADIUS_DEFAULT,
   resetChromeLayout,
 } from "../stores/settings";
 import { getBackend } from "../backends";
@@ -402,6 +416,9 @@ export default function SettingsPanel(props: SettingsPanelProps) {
       tabBarCorner(),
       tabBarHeight(),
       tabBarAutoHide(),
+      chromeStyle(),
+      paneGap(),
+      cornerRadius(),
       sidebarWidth(),
     ])
   );
@@ -518,6 +535,9 @@ export default function SettingsPanel(props: SettingsPanelProps) {
     tabBarCorner() !== TAB_BAR_CORNER_DEFAULT ||
     tabBarHeight() !== TAB_BAR_HEIGHT_DEFAULT ||
     sidebarWidth() !== SIDEBAR_WIDTH_DEFAULT ||
+    chromeStyle() !== CHROME_STYLE_DEFAULT ||
+    paneGap() !== PANE_GAP_DEFAULT ||
+    cornerRadius() !== CORNER_RADIUS_DEFAULT ||
     tabBarAutoHide();
   const activeIsCustom = () => !activeTheme().builtin && !activeTheme().id.startsWith("gallery-");
 
@@ -881,6 +901,74 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               puts it back too.
             </p>
           </div>
+
+          <div class="settings-section">
+            <div class="settings-row">
+              <label class="settings-label" for="chrome-style">
+                Chrome style
+              </label>
+              <SelectField>
+                <select
+                  id="chrome-style"
+                  class="settings-select"
+                  value={chromeStyle()}
+                  onChange={(e) =>
+                    setChromeStyle(e.currentTarget.value as ChromeStyle)
+                  }
+                >
+                  <option value="modern">Modern</option>
+                  <option value="classic">Classic</option>
+                </select>
+              </SelectField>
+            </div>
+            <p class="settings-hint">
+              Modern floats the panes and sidebar as rounded cards, with the gaps
+              between them as the dividers. Classic is the original flat layout.
+            </p>
+          </div>
+
+          <Show when={chromeStyle() === "modern"}>
+            <div class="settings-section">
+              <div class="settings-row">
+                <label class="settings-label" for="pane-gap">
+                  Gap between panes
+                </label>
+                <span class="settings-value">{paneGap()}px</span>
+              </div>
+              <input
+                id="pane-gap"
+                class="settings-slider"
+                type="range"
+                min={PANE_GAP_MIN}
+                max={PANE_GAP_MAX}
+                step={1}
+                value={paneGap()}
+                onInput={(e) => setPaneGap(Number(e.currentTarget.value))}
+              />
+              <p class="settings-hint">
+                Also how thick the dividers are to grab.
+              </p>
+            </div>
+
+            <div class="settings-section">
+              <div class="settings-row">
+                <label class="settings-label" for="corner-radius">
+                  Corner roundness
+                </label>
+                <span class="settings-value">{cornerRadius()}px</span>
+              </div>
+              <input
+                id="corner-radius"
+                class="settings-slider"
+                type="range"
+                min={CORNER_RADIUS_MIN}
+                max={CORNER_RADIUS_MAX}
+                step={1}
+                value={cornerRadius()}
+                onInput={(e) => setCornerRadius(Number(e.currentTarget.value))}
+              />
+            </div>
+          </Show>
 
           <div class="settings-section">
             <div class="settings-row">

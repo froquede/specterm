@@ -10,7 +10,7 @@ body,
   width: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--bg);
+  background: var(--bg-frame);
   color: var(--fg);
   font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
 }
@@ -28,7 +28,7 @@ body,
   flex-direction: column;
   width: 100%;
   height: 100%;
-  background: var(--bg);
+  background: var(--bg-frame);
   position: relative;
 }
 
@@ -41,6 +41,18 @@ body,
   display: flex;
   flex: 1;
   overflow: hidden;
+  /* The frame shows around the cards on every side but the tab bar's, which is
+     frame already. */
+  padding: 0 var(--gutter) var(--gutter);
+}
+
+.app[data-tab-edge="bottom"] .app-body {
+  padding: var(--gutter) var(--gutter) 0;
+}
+
+/* An auto-hidden bar leaves the flow, so no side of the body has it any more. */
+.app[data-tab-autohide="true"] .app-body {
+  padding: var(--gutter);
 }
 
 /* The top edge when the tab bar isn't there to hold it: window controls, and a
@@ -52,8 +64,7 @@ body,
   align-items: stretch;
   height: var(--title-strip-height);
   flex-shrink: 0;
-  background: var(--bg-chrome);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-frame);
   -webkit-app-region: drag;
 }
 
@@ -78,16 +89,9 @@ body,
   align-items: center;
   height: var(--tab-bar-height);
   flex-shrink: 0;
-  background: var(--bg-chrome);
-  border-bottom: 1px solid var(--border);
+  background: var(--bg-frame);
   user-select: none;
   -webkit-app-region: drag;
-}
-
-/* The separating border belongs on whichever side faces the panes. */
-.app[data-tab-edge="bottom"] .tab-bar {
-  border-bottom: none;
-  border-top: 1px solid var(--border);
 }
 
 /* macOS uses a hiddenInset titlebar, so the traffic lights overlap the tab
@@ -102,8 +106,25 @@ body,
   flex-shrink: 0;
 }
 
+/* Every chip in the bar (tab, icon button) is --tab-chip tall, which leaves
+   --tab-chip-inset above and below it. The icon cluster keeps the same inset
+   from the window's side edge — its chips carry 2px margins, hence the -2px —
+   so the corner reads as one even margin rather than 5px down and 2px in. */
+.tab-bar[data-side="left"] .tab-actions {
+  padding-left: calc(var(--tab-chip-inset) - 2px);
+}
+
+.tab-bar[data-side="right"] .tab-actions {
+  padding-right: calc(var(--tab-chip-inset) - 2px);
+}
+
 .tab-list {
   display: flex;
+  align-items: center;
+  /* 4px between tabs, and 2px here plus a neighbouring chip's 2px margin is the
+     same 4px on the outside. */
+  gap: 4px;
+  padding: 0 2px;
   flex: 0 1 auto;
   overflow-x: auto;
   -webkit-app-region: no-drag;
@@ -233,12 +254,12 @@ body,
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
-  height: var(--tab-bar-height);
+  padding: 0 8px 0 12px;
+  height: var(--tab-chip);
   font-size: 12px;
   color: var(--fg-muted);
   cursor: pointer;
-  border-right: 1px solid var(--border);
+  border-radius: var(--radius-sm);
   white-space: nowrap;
   transition: color 0.2s ease, background 0.2s ease;
 }
@@ -254,10 +275,12 @@ body,
   background: var(--bg-hover);
 }
 
+/* The active tab takes the cards' colour and outline: it reads as the top of
+   the content it shows. */
 .tab.active {
   color: var(--fg);
   background: var(--bg);
-  border-bottom: 2px solid var(--accent);
+  box-shadow: inset 0 0 0 1px var(--card-border);
 }
 
 /* A dragged pane is hovering this chip — releasing detaches the pane into this
@@ -279,7 +302,6 @@ body,
 .tab-ghost {
   color: var(--fg);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
-  border-right: none;
   outline: 1px dashed var(--accent);
   outline-offset: -3px;
   pointer-events: none;
@@ -334,12 +356,6 @@ body,
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }
 
-/* The accent marker sits on the edge facing the panes. */
-.app[data-tab-edge="bottom"] .tab.active {
-  border-bottom: none;
-  border-top: 2px solid var(--accent);
-}
-
 .tab-title {
   max-width: 150px;
   overflow: hidden;
@@ -357,8 +373,8 @@ body,
 .tab-attention,
 .pane-attention {
   flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--fg-muted);
 }
@@ -435,9 +451,11 @@ body,
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  width: var(--tab-bar-height);
-  height: var(--tab-bar-height);
+  width: var(--tab-chip);
+  height: var(--tab-chip);
+  margin: 0 2px;
   border: none;
+  border-radius: var(--radius-sm);
   background: none;
   color: var(--fg-muted);
   cursor: pointer;
@@ -452,15 +470,15 @@ body,
    Overrides the width/height attributes the icon renders with. */
 .tab-icon-btn svg,
 .tab-close svg {
-  width: clamp(11px, calc(var(--tab-bar-height) * 0.42), 18px);
-  height: clamp(11px, calc(var(--tab-bar-height) * 0.42), 18px);
+  width: var(--tab-icon);
+  height: var(--tab-icon);
 }
 
 /* The close × rides inside a tab, so it steps down from the row's icon size
    rather than matching it. */
 .tab-close svg {
-  width: clamp(10px, calc(var(--tab-bar-height) * 0.34), 14px);
-  height: clamp(10px, calc(var(--tab-bar-height) * 0.34), 14px);
+  width: var(--tab-close-icon);
+  height: var(--tab-close-icon);
 }
 
 .tab-icon-btn:hover {
@@ -498,7 +516,8 @@ body,
   /* Match the old modal's --bg (not chrome): the fields/dividers below draw on
      --bg-chrome / --border, so the body must stay --bg or they lose contrast. */
   background: var(--bg);
-  border-right: 1px solid var(--border);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   color: var(--fg);
   overflow: hidden;
   flex-shrink: 0;
@@ -1189,10 +1208,11 @@ body,
 }
 
 /* Split handle */
+/* The handle is the gap between two cards: frame-coloured, with an accent line
+   drawn down its middle on hover. */
 .split-handle {
   flex-shrink: 0;
-  background: var(--bg-hover);
-  transition: background 0.2s ease;
+  background: transparent;
   z-index: 10;
   position: relative;
   display: flex;
@@ -1200,22 +1220,59 @@ body,
   justify-content: center;
 }
 
-.split-handle:hover {
-  background: var(--accent);
+/* Three dots on each divider mark it as something to grab: barely there at
+   rest, clear under the pointer. They sit at --grip-at along the divider, which
+   the component sets to keep them clear of any divider ending on this one (see
+   gripPosition). Drawn as a mask over a theme colour, so they follow the
+   palette; each dot is 2px on a 4px pitch, and the offset is rounded, so all
+   three land on whole pixels. */
+.split-handle::before,
+.sidebar-resize-handle::before {
+  content: "";
+  position: absolute;
+  background: var(--fg-muted);
+  opacity: 0.25;
+  -webkit-mask: var(--dots-v) center / contain no-repeat;
+  mask: var(--dots-v) center / contain no-repeat;
+  pointer-events: none;
+  transition: opacity 0.15s ease;
+}
+
+.split-handle:hover::before,
+.sidebar-resize-handle:hover::before,
+.sidebar-resize-handle.dragging::before {
+  opacity: 1;
 }
 
 .split-handle-h {
-  width: 4px;
+  width: var(--gutter);
   cursor: col-resize;
 }
 
 .split-handle-v {
-  height: 4px;
+  height: var(--gutter);
   cursor: row-resize;
 }
 
-/* Flip-direction button, floating centered on the split handle (which is only
-   4px thick) and revealed on hover. */
+.split-handle-h::before,
+.sidebar-resize-handle::before {
+  top: round(calc(var(--grip-at, 50%) - 5px), 1px);
+  left: calc(50% - 1px);
+  width: 2px;
+  height: 10px;
+}
+
+.split-handle-v::before {
+  left: round(calc(var(--grip-at, 50%) - 5px), 1px);
+  top: calc(50% - 1px);
+  width: 10px;
+  height: 2px;
+  -webkit-mask-image: var(--dots-h);
+  mask-image: var(--dots-h);
+}
+
+/* Flip-direction button, revealed on hover. It sits just past the divider's
+   grip dots rather than on top of them, so hovering shows both. */
 .split-flip {
   position: absolute;
   width: 20px;
@@ -1244,7 +1301,12 @@ body,
   color: var(--accent-fg);
 }
 
+.split-handle-h .split-flip {
+  top: round(calc(var(--grip-at, 50%) + 10px), 1px);
+}
+
 .split-handle-v .split-flip {
+  left: round(calc(var(--grip-at, 50%) + 10px), 1px);
   transform: rotate(90deg);
 }
 
@@ -1293,6 +1355,30 @@ body,
      macOS's traffic lights. */
   --title-strip-height: 30px;
   --unfocused-split-fill: var(--unfocused-fill);
+
+  /* The frame the panes and sidebar float on. Derived rather than a palette
+     entry, so all 325 schemes get one; --frame-shade comes from the theme's
+     light/dark type (lib/theme.ts). */
+  --frame-shade: 30%;
+  --bg-frame: color-mix(in srgb, var(--bg), #000 var(--frame-shade));
+  /* Space between cards — which is also the split and sidebar handles' width —
+     and how round their corners are. */
+  --gutter: 6px;
+  --radius: 8px;
+  /* Tabs and icon buttons follow the cards' roundness, up to a point: a 16px
+     radius on a 26px chip would turn it into a lozenge. */
+  --radius-sm: min(var(--radius), 6px);
+  --dots-v: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='2' height='10'%3E%3Ccircle cx='1' cy='1' r='1'/%3E%3Ccircle cx='1' cy='5' r='1'/%3E%3Ccircle cx='1' cy='9' r='1'/%3E%3C/svg%3E");
+  --dots-h: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='2'%3E%3Ccircle cx='1' cy='1' r='1'/%3E%3Ccircle cx='5' cy='1' r='1'/%3E%3Ccircle cx='9' cy='1' r='1'/%3E%3C/svg%3E");
+  /* Tab-bar chips and the icons in them. Every size here is rounded to an even
+     number of pixels: an even icon in an even chip centres on a whole pixel,
+     where the raw proportions (15.12px in a 26px chip at the default height)
+     put its edges between pixels and blur them. */
+  --tab-chip: round(down, calc(var(--tab-bar-height) - 10px), 2px);
+  --tab-chip-inset: calc((var(--tab-bar-height) - var(--tab-chip)) / 2);
+  --tab-icon: round(clamp(12px, calc(var(--tab-bar-height) * 0.42), 18px), 2px);
+  --tab-close-icon: round(clamp(10px, calc(var(--tab-bar-height) * 0.34), 14px), 2px);
+  --card-border: color-mix(in srgb, var(--border) 70%, transparent);
 }
 
 .pane {
@@ -1304,18 +1390,37 @@ body,
   /* Positioning context for the ::after overlays (active-pane border and
      unfocused-split dimming), so they anchor to this pane, not .app-content. */
   position: relative;
+  /* A card on the frame. It paints --bg itself now that .app is the frame:
+     xterm's canvas is transparent and relied on .app for its background. */
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* Breathing room between the text and the card's edge. On .xterm rather than
+   the container: FitAddon subtracts .xterm's padding when it sizes the grid,
+   and everything that maps a pointer to a cell measures .xterm-screen, which
+   the padding moves along with the text. */
+.pane-content .xterm {
+  padding: 4px 0 0 8px;
 }
 
 /* Per-pane title-bar: shows the pane label and doubles as the drag handle for
    reordering / swapping panes. */
 .pane-titlebar {
-  flex: 0 0 26px;
+  /* 26px of bar plus its 1px rule, so the row the icons centre in is even. */
+  flex: 0 0 27px;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 6px;
+  /* The grip's first dot lines up with the first glyph of terminal text below
+     it: .xterm's 8px padding plus the glyph's 1px side bearing. The × sits 3px
+     in from its button, and 3px here puts its ink as far from the right edge as
+     the grip's is from the left. */
+  padding: 0 3px 0 9px;
   background: var(--bg-chrome);
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
   color: var(--fg-muted);
   font-size: 12px;
   cursor: grab;
@@ -1555,7 +1660,7 @@ body,
 }
 
 ::-webkit-scrollbar-track {
-  background: var(--bg);
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
@@ -1628,18 +1733,10 @@ body,
    so it's easy to catch without a visible 6px gutter. */
 .sidebar-resize-handle {
   flex: 0 0 auto;
-  width: 6px;
-  margin-left: -3px;
-  margin-right: -3px;
+  position: relative;
+  width: var(--gutter);
   z-index: 10;
   cursor: col-resize;
-  background: transparent;
-  transition: background 0.15s ease;
-}
-
-.sidebar-resize-handle:hover,
-.sidebar-resize-handle.dragging {
-  background: var(--accent);
 }
 
 /* While dragging, the pointer owns the gesture: don't let it select text or
@@ -1862,4 +1959,119 @@ body.resizing-sidebar .xterm {
   position: absolute;
   border-bottom: 1px solid var(--accent);
   box-sizing: border-box;
+}
+
+/* --- Classic chrome ---------------------------------------------------------
+   The flat layout specterm had before the cards (Settings → Layout → Chrome
+   style): tab bar and title strip on --bg-chrome with a rule under them, tabs
+   the full height of the bar with an accent underline, panes edge to edge with
+   a 4px handle between them. Everything is an override of the modern rules
+   above, scoped to one attribute, so the two can't drift into a third look.
+   Kept at the end of the file: several of these tie on specificity with the
+   rules they replace and win on order. */
+.app[data-chrome="classic"] {
+  --bg-frame: var(--bg);
+}
+
+.app[data-chrome="classic"] .title-strip,
+.app[data-chrome="classic"] .tab-bar {
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+}
+
+.app[data-chrome="classic"][data-tab-edge="bottom"] .tab-bar {
+  border-bottom: none;
+  border-top: 1px solid var(--border);
+}
+
+.app[data-chrome="classic"] .app-body {
+  padding: 0;
+}
+
+.app[data-chrome="classic"] .tab-actions,
+.app[data-chrome="classic"] .tab-list {
+  gap: 0;
+  padding: 0;
+}
+
+.app[data-chrome="classic"] .tab {
+  height: var(--tab-bar-height);
+  padding: 0 12px;
+  border-radius: 0;
+  border-right: 1px solid var(--border);
+}
+
+.app[data-chrome="classic"] .tab.active {
+  box-shadow: none;
+  border-bottom: 2px solid var(--accent);
+}
+
+.app[data-chrome="classic"][data-tab-edge="bottom"] .tab.active {
+  border-bottom: none;
+  border-top: 2px solid var(--accent);
+}
+
+.app[data-chrome="classic"] .tab-icon-btn {
+  width: var(--tab-bar-height);
+  height: var(--tab-bar-height);
+  margin: 0;
+  border-radius: 0;
+}
+
+.app[data-chrome="classic"] .pane {
+  border: none;
+  border-radius: 0;
+}
+
+.app[data-chrome="classic"] .pane-titlebar {
+  padding: 0 6px;
+  border-bottom-color: var(--border);
+}
+
+.app[data-chrome="classic"] .pane-content .xterm {
+  padding: 0;
+}
+
+.app[data-chrome="classic"] .file-tree,
+.app[data-chrome="classic"] .settings-sidebar,
+.app[data-chrome="classic"] .github-panel {
+  border: none;
+  border-right: 1px solid var(--border);
+  border-radius: 0;
+}
+
+.app[data-chrome="classic"] .split-handle {
+  background: var(--bg-hover);
+  transition: background 0.2s ease;
+}
+
+.app[data-chrome="classic"] .split-handle:hover,
+.app[data-chrome="classic"] .sidebar-resize-handle:hover,
+.app[data-chrome="classic"] .sidebar-resize-handle.dragging {
+  background: var(--accent);
+}
+
+.app[data-chrome="classic"] .split-handle-h {
+  width: 4px;
+}
+
+.app[data-chrome="classic"] .split-handle-v {
+  height: 4px;
+}
+
+.app[data-chrome="classic"] .split-handle::before,
+.app[data-chrome="classic"] .sidebar-resize-handle::before {
+  content: none;
+}
+
+/* The old handle overlapped its neighbours so a thin line could still be a
+   6px target. */
+.app[data-chrome="classic"] .sidebar-resize-handle {
+  margin: 0 -3px;
+  transition: background 0.15s ease;
+}
+
+.app[data-chrome="classic"] .split-flip {
+  top: auto;
+  left: auto;
 }

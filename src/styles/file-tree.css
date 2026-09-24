@@ -6,7 +6,8 @@
   /* Match the settings sidebar: body on --bg so fields/strips (drawn on
      --bg-chrome) and --border dividers keep their contrast. */
   background: var(--bg);
-  border-right: 1px solid var(--border);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
   overflow: hidden;
   flex-shrink: 0;
 }
@@ -18,7 +19,12 @@
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
-  padding: 8px 12px;
+  /* A fixed height rather than padding around the text: the text's natural
+     line height is fractional, and padding around it left the header — and
+     every icon in it — straddling a pixel boundary. 30px above the rule keeps
+     the 14px icons on whole pixels. */
+  height: 31px;
+  padding: 0 12px;
   font-size: 11px;
   color: var(--fg-muted);
   border-bottom: 1px solid var(--border);
@@ -136,6 +142,10 @@
   border-radius: 4px;
   padding: 4px 8px;
   font-size: 12px;
+  /* Pinned (not "normal", which is fractional for the mono fonts) so the field
+     is a whole 24px and everything below it starts on a pixel. The ghost text
+     overlay repeats it, so the two lines of text stay on top of each other. */
+  line-height: 14px;
   font-family: inherit;
   color: var(--fg);
   outline: none;
@@ -152,7 +162,7 @@
   padding: 4px 8px;
   font-size: 12px;
   font-family: inherit;
-  line-height: normal;
+  line-height: 14px;
   white-space: pre;
   overflow: hidden;
   pointer-events: none;
@@ -313,7 +323,10 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 12px;
+  /* Fixed, and even, for the same reason as the header: 3px of padding around
+     a fractional line height put every row after the first between pixels. */
+  height: 20px;
+  padding: 0 12px;
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;

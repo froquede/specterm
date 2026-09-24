@@ -26,6 +26,10 @@ import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
 // - tabBarCorner anchors the tab bar to one of the window's four corners: which
 //   edge it sits on (top/bottom) and which side the tabs and action icons hug.
 // - tabBarHeight and sidebarWidth size the two chrome surfaces.
+// - chromeStyle picks between the card layout ("modern": panes and sidebar as
+//   rounded cards on a darker frame, the gaps between them as the dividers) and
+//   the original flat one ("classic"). paneGap and cornerRadius tune the cards
+//   and are ignored by classic.
 // - tabBarAutoHide collapses the tab bar to a sliver that expands on hover, for
 //   people who want the terminal to fill the window.
 
@@ -54,6 +58,20 @@ export const TAB_BAR_CORNER_DEFAULT: TabBarCorner = "top-left";
 export const TAB_BAR_HEIGHT_DEFAULT = 36;
 export const TAB_BAR_HEIGHT_MIN = 24;
 export const TAB_BAR_HEIGHT_MAX = 56;
+
+export const CHROME_STYLES = ["modern", "classic"] as const;
+export type ChromeStyle = (typeof CHROME_STYLES)[number];
+export const CHROME_STYLE_DEFAULT: ChromeStyle = "modern";
+
+// The gap is also the split handles' thickness, so it can't reach 0 — there
+// would be nothing left to grab.
+export const PANE_GAP_DEFAULT = 6;
+export const PANE_GAP_MIN = 2;
+export const PANE_GAP_MAX = 16;
+
+export const CORNER_RADIUS_DEFAULT = 8;
+export const CORNER_RADIUS_MIN = 0;
+export const CORNER_RADIUS_MAX = 16;
 
 // --- Session restore -------------------------------------------------------
 // What happens to a restored terminal that had a resumable session in it (see
@@ -139,6 +157,12 @@ const clampTabBarHeight = clampTo(
   TAB_BAR_HEIGHT_MAX,
   TAB_BAR_HEIGHT_DEFAULT
 );
+const clampPaneGap = clampTo(PANE_GAP_MIN, PANE_GAP_MAX, PANE_GAP_DEFAULT);
+const clampCornerRadius = clampTo(
+  CORNER_RADIUS_MIN,
+  CORNER_RADIUS_MAX,
+  CORNER_RADIUS_DEFAULT
+);
 const clampSidebarWidth = clampTo(
   SIDEBAR_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
@@ -153,6 +177,9 @@ interface Persisted {
   tabBarCorner: TabBarCorner;
   tabBarHeight: number;
   tabBarAutoHide: boolean;
+  chromeStyle: ChromeStyle;
+  paneGap: number;
+  cornerRadius: number;
   sidebarWidth: number;
   restoreLastSession: boolean;
   sessionRestoreMode: SessionRestoreMode;
@@ -173,6 +200,9 @@ const DEFAULTS: Persisted = {
   tabBarCorner: TAB_BAR_CORNER_DEFAULT,
   tabBarHeight: TAB_BAR_HEIGHT_DEFAULT,
   tabBarAutoHide: false,
+  chromeStyle: CHROME_STYLE_DEFAULT,
+  paneGap: PANE_GAP_DEFAULT,
+  cornerRadius: CORNER_RADIUS_DEFAULT,
   sidebarWidth: SIDEBAR_WIDTH_DEFAULT,
   restoreLastSession: true,
   backgroundSessions: true,
@@ -223,6 +253,17 @@ function load(): Persisted {
         typeof p.tabBarAutoHide === "boolean"
           ? p.tabBarAutoHide
           : DEFAULTS.tabBarAutoHide,
+      chromeStyle: CHROME_STYLES.includes(p.chromeStyle)
+        ? p.chromeStyle
+        : DEFAULTS.chromeStyle,
+      // Whole pixels only: a fractional gap puts every card after it between
+      // pixels.
+      paneGap: num(p.paneGap, (v) => Math.round(clampPaneGap(v)), DEFAULTS.paneGap),
+      cornerRadius: num(
+        p.cornerRadius,
+        (v) => Math.round(clampCornerRadius(v)),
+        DEFAULTS.cornerRadius
+      ),
       sidebarWidth: num(
         p.sidebarWidth,
         clampSidebarWidth,
@@ -287,6 +328,11 @@ const [tabBarHeight, setTabBarHeightSignal] = createSignal(initial.tabBarHeight)
 const [tabBarAutoHide, setTabBarAutoHideSignal] = createSignal(
   initial.tabBarAutoHide
 );
+const [chromeStyle, setChromeStyleSignal] = createSignal<ChromeStyle>(
+  initial.chromeStyle
+);
+const [paneGap, setPaneGapSignal] = createSignal(initial.paneGap);
+const [cornerRadius, setCornerRadiusSignal] = createSignal(initial.cornerRadius);
 const [sidebarWidth, setSidebarWidthSignal] = createSignal(initial.sidebarWidth);
 const [restoreLastSession, setRestoreLastSessionSignal] = createSignal(
   initial.restoreLastSession
@@ -318,6 +364,9 @@ export {
   tabBarCorner,
   tabBarHeight,
   tabBarAutoHide,
+  chromeStyle,
+  paneGap,
+  cornerRadius,
   sidebarWidth,
   restoreLastSession,
   backgroundSessions,
@@ -345,6 +394,8 @@ function applyCssVars() {
   root.setProperty("--unfocused-split-opacity", String(unfocusedOpacity()));
   root.setProperty("--tab-bar-height", `${tabBarHeight()}px`);
   root.setProperty("--sidebar-width", `${sidebarWidth()}px`);
+  root.setProperty("--gutter", `${paneGap()}px`);
+  root.setProperty("--radius", `${cornerRadius()}px`);
 }
 
 // Window opacity is a native window property, not a CSS variable, so it goes
@@ -371,6 +422,9 @@ function persist() {
         tabBarCorner: tabBarCorner(),
         tabBarHeight: tabBarHeight(),
         tabBarAutoHide: tabBarAutoHide(),
+        chromeStyle: chromeStyle(),
+        paneGap: paneGap(),
+        cornerRadius: cornerRadius(),
         sidebarWidth: sidebarWidth(),
         restoreLastSession: restoreLastSession(),
         backgroundSessions: backgroundSessions(),
@@ -431,6 +485,23 @@ export function setTabBarAutoHide(v: boolean) {
   persist();
 }
 
+export function setChromeStyle(v: ChromeStyle) {
+  setChromeStyleSignal(CHROME_STYLES.includes(v) ? v : CHROME_STYLE_DEFAULT);
+  persist();
+}
+
+export function setPaneGap(v: number) {
+  setPaneGapSignal(Math.round(clampPaneGap(v)));
+  applyCssVars();
+  persist();
+}
+
+export function setCornerRadius(v: number) {
+  setCornerRadiusSignal(Math.round(clampCornerRadius(v)));
+  applyCssVars();
+  persist();
+}
+
 export function setSidebarWidth(v: number) {
   setSidebarWidthSignal(clampSidebarWidth(v));
   applyCssVars();
@@ -441,6 +512,9 @@ export function resetChromeLayout() {
   setTabBarCornerSignal(TAB_BAR_CORNER_DEFAULT);
   setTabBarHeightSignal(TAB_BAR_HEIGHT_DEFAULT);
   setTabBarAutoHideSignal(false);
+  setChromeStyleSignal(CHROME_STYLE_DEFAULT);
+  setPaneGapSignal(PANE_GAP_DEFAULT);
+  setCornerRadiusSignal(CORNER_RADIUS_DEFAULT);
   setSidebarWidthSignal(SIDEBAR_WIDTH_DEFAULT);
   applyCssVars();
   persist();
@@ -473,6 +547,9 @@ function reloadFromStorage() {
   setTabBarCornerSignal(p.tabBarCorner);
   setTabBarHeightSignal(p.tabBarHeight);
   setTabBarAutoHideSignal(p.tabBarAutoHide);
+  setChromeStyleSignal(p.chromeStyle);
+  setPaneGapSignal(p.paneGap);
+  setCornerRadiusSignal(p.cornerRadius);
   setSidebarWidthSignal(p.sidebarWidth);
   setRestoreLastSessionSignal(p.restoreLastSession);
   setBackgroundSessionsSignal(p.backgroundSessions);

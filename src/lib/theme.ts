@@ -338,6 +338,10 @@ export function themeToCssVars(theme: Theme): Record<string, string> {
     "--accent": ui.accent,
     "--accent-fg": ui.accentFg,
     "--danger": ui.danger,
+    // How far --bg is darkened to paint the window frame the panes float on
+    // (see --bg-frame). A dark theme needs a deep step to read at all; the same
+    // step on a light one turns the frame muddy grey.
+    "--frame-shade": theme.type === "dark" ? "30%" : "6%",
     // ANSI colors the chrome borrows for content (markdown, git status, icons).
     "--ansi-red": ansi.red,
     "--ansi-green": ansi.green,

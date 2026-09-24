@@ -562,7 +562,7 @@ export default function FileTree(props: FileTreeProps) {
                       toggleFavorite(fav.path);
                     }}
                   >
-                    <IconX size={11} stroke-width={2.25} />
+                    <IconX size={12} stroke-width={2.25} />
                   </button>
                 </div>
               )}
@@ -657,14 +657,14 @@ export default function FileTree(props: FileTreeProps) {
             title="Refresh"
             aria-label="Refresh"
           >
-            <IconRefresh size={13} stroke-width={ICON_STROKE} />
+            <IconRefresh size={14} stroke-width={ICON_STROKE} />
           </button>
         </div>
         <div class="file-tree-content" ref={listEl}>
           <Show when={!drivesView() && currentPath() && !filter()}>
             <div class="file-tree-entry file-tree-dir" onClick={navigateUp}>
               <span class="file-tree-icon">
-                <IconLevelUp size={13} stroke-width={ICON_STROKE} />
+                <IconLevelUp size={14} stroke-width={ICON_STROKE} />
               </span>
               ..
             </div>
@@ -703,7 +703,7 @@ export default function FileTree(props: FileTreeProps) {
                         title={entry.path}
                       >
                         <span class="file-tree-icon">
-                          <Icon size={13} stroke-width={ICON_STROKE} />
+                          <Icon size={14} stroke-width={ICON_STROKE} />
                         </span>
                         <span class="file-tree-name">{entry.name}</span>
                         <Show when={entry.isDirectory}>

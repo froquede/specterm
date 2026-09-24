@@ -1,4 +1,6 @@
 import { onCleanup } from "solid-js";
+import { gripPosition } from "../lib/split-tree";
+import type { SplitNode } from "../types";
 import {
   sidebarWidth,
   setSidebarWidth,
@@ -12,7 +14,9 @@ import {
 //
 // Pointer capture (rather than window listeners) keeps the drag alive when the
 // pointer outruns the strip or leaves the window mid-drag.
-export default function SidebarResizeHandle() {
+// `root` is the active tab's layout, beside which this strip runs full height:
+// its grip dots keep out of the way of a divider ending on it (gripPosition).
+export default function SidebarResizeHandle(props: { root?: SplitNode }) {
   let startX = 0;
   let startWidth = 0;
 
@@ -60,6 +64,9 @@ export default function SidebarResizeHandle() {
       onPointerUp={endDrag}
       onPointerCancel={endDrag}
       onDblClick={() => setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)}
+      style={{
+        "--grip-at": `${(props.root ? gripPosition("h", [props.root]) : 0.5) * 100}%`,
+      }}
     />
   );
 }

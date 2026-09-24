@@ -26,7 +26,7 @@ import {
   isRootEdgeDrop,
 } from "../stores/pane-drag";
 import { tearingOff, trackTearOff, endTearOff } from "../stores/tear-off";
-import { IconGrip, IconX, ICON_STROKE } from "../lib/icons";
+import { IconX } from "../lib/icons";
 
 interface PaneProps {
   id: PaneId;
@@ -199,7 +199,18 @@ export default function Pane(props: PaneProps) {
         onPointerDown={onBarPointerDown}
       >
         <span class="pane-grip">
-          <IconGrip size={13} stroke-width={ICON_STROKE} />
+          {/* Drawn here rather than taken from Lucide: its grip puts the dots
+              7 units apart on a 24-unit grid, which lands them between pixels
+              at any size this bar can hold, so the six dots render at
+              different weights. These sit on whole pixels at 1x. */}
+          <svg width="6" height="10" viewBox="0 0 6 10" fill="currentColor" aria-hidden="true">
+            <circle cx="1" cy="1" r="1" />
+            <circle cx="5" cy="1" r="1" />
+            <circle cx="1" cy="5" r="1" />
+            <circle cx="5" cy="5" r="1" />
+            <circle cx="1" cy="9" r="1" />
+            <circle cx="5" cy="9" r="1" />
+          </svg>
         </span>
         {/* Which pane in a split is the one waiting. The tab chip only says
             that something in the tab is; this says where. */}

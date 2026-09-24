@@ -39,7 +39,6 @@ export { default as IconX } from "lucide-solid/icons/x";
 export { default as IconMinus } from "lucide-solid/icons/minus";
 export { default as IconSquare } from "lucide-solid/icons/square";
 export { default as IconRestore } from "lucide-solid/icons/copy";
-export { default as IconGrip } from "lucide-solid/icons/grip-vertical";
 export { default as IconSplitToggle } from "lucide-solid/icons/move-horizontal";
 export { default as IconChevronUp } from "lucide-solid/icons/chevron-up";
 export { default as IconChevronDown } from "lucide-solid/icons/chevron-down";
