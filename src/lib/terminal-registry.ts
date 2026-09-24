@@ -1046,12 +1046,26 @@ export async function createTerminalInstance(
       instance.titleRestored = false;
       return;
     }
-    instance.title = title;
-    instance.onTitle?.(title);
+    const clean = stripStatusGlyphs(title);
+    instance.title = clean;
+    instance.onTitle?.(clean);
   });
 
   // Spawn PTY (deferred until attached to DOM)
   return instance;
+}
+
+// Programs that animate their title put their state in its first character:
+// Claude Code cycles `·✢✳✶✻✽` and braille spinner frames ahead of the name. As a
+// tab or pane title that reads as noise, and it restarts the text's position on
+// every frame. The pane's state is the attention dot's job (stores/attention),
+// so the title keeps only the name. A title that is nothing but symbols is left
+// as it is rather than blanked.
+const STATUS_GLYPHS = /^[\p{So}\u00B7\u2022\s]+/u;
+
+export function stripStatusGlyphs(title: string): string {
+  const stripped = title.replace(STATUS_GLYPHS, "");
+  return stripped || title;
 }
 
 interface AttachOptions {

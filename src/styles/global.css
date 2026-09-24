@@ -125,6 +125,9 @@ body,
      same 4px on the outside. */
   gap: 4px;
   padding: 0 2px;
+  /* Full bar height, not the chips' height: the list scrolls sideways, which
+     clips it on both axes, and an attention dot sits a little above its chip. */
+  align-self: stretch;
   flex: 0 1 auto;
   overflow-x: auto;
   -webkit-app-region: no-drag;
@@ -362,21 +365,63 @@ body,
   text-overflow: ellipsis;
 }
 
-/* Something in this tab (or, in .pane-attention's case, this pane) has stopped
-   and is waiting on the user — see stores/attention.ts. A dot rather than a
-   glyph so it reads at a glance from across the tab bar, and it sits ahead of
-   the title so it lines up in a column down a row of tabs.
+/* The app's one notification mark: a dot on the corner of whatever leads to
+   the thing that wants you. A tab or pane that has stopped and is waiting
+   (stores/attention.ts) gets one; so does the settings button when an update
+   is ready (.tab-icon-badge). Same size, shape and ring everywhere; only where
+   it sits and its colour change.
 
-   Colour carries the urgency: the accent for a blocking permission prompt, the
-   muted foreground for a turn that merely ended. Only the blocking one pulses,
-   so a screen full of finished sessions stays still. */
+   Absolutely positioned, so it never takes room from a title or shifts it as
+   it comes and goes. The ring, in the colour behind it, cuts the dot out of
+   whatever edge it overlaps.
+
+   Colour carries the urgency: the accent for a blocking permission prompt or
+   an update, the muted foreground for a turn that merely ended. Only the
+   blocking one pulses, so a screen full of finished sessions stays still. */
 .tab-attention,
-.pane-attention {
-  flex: 0 0 auto;
+.pane-attention,
+.tab-icon-badge {
+  position: absolute;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--fg-muted);
+  box-shadow: 0 0 0 2px var(--bg-frame);
+  pointer-events: none;
+}
+
+/* On a tab or a pane it takes the close button's place, centred on it, and
+   the × comes back under the pointer (the convention editors use for unsaved
+   files). That slot is already kept clear of the title, and on an inactive tab
+   it is empty until hovered, so the dot reads as part of the tab it's in
+   rather than floating between two of them. Nothing to cut out of there, so no
+   ring. */
+.tab-attention,
+.pane-attention {
+  top: calc(50% - 4px);
+  box-shadow: none;
+}
+
+/* The × is 18px wide against the tab's 8px right padding: centre at 17px. */
+.tab-attention {
+  right: 13px;
+}
+
+/* 18px × against the title bar's 3px right padding: centre at 12px. */
+.pane-attention {
+  right: 8px;
+}
+
+.tab:has(.tab-attention):not(:hover) .tab-close,
+.pane-titlebar:has(.pane-attention):not(:hover) .pane-close-btn {
+  opacity: 0;
+}
+
+/* And the other way round under the pointer. `visibility`, not opacity: the
+   permission dot's pulse animates opacity and would override it. */
+.tab:hover .tab-attention,
+.pane-titlebar:hover .pane-attention {
+  visibility: hidden;
 }
 
 .tab-attention[data-kind="permission"],
@@ -484,6 +529,27 @@ body,
 .tab-icon-btn:hover {
   color: var(--fg);
   background: var(--bg-hover);
+}
+
+/* The notification dot (see .tab-attention) on an icon button, on the glyph's
+   top-right corner. */
+.tab-icon-btn {
+  position: relative;
+}
+
+.tab-icon-badge {
+  top: calc(50% - var(--tab-icon) / 2 - 2px);
+  right: calc(50% - var(--tab-icon) / 2 - 2px);
+  background: var(--accent);
+}
+
+.tab-icon-btn:hover .tab-icon-badge,
+.tab-icon-btn.active .tab-icon-badge {
+  box-shadow: 0 0 0 2px var(--bg-hover);
+}
+
+.app[data-chrome="classic"] .tab-icon-btn:not(:hover):not(.active) .tab-icon-badge {
+  box-shadow: 0 0 0 2px var(--bg-chrome);
 }
 
 /* Pressed-in state for the toggles (sidebar, settings). Stroke icons have no filled
@@ -1427,6 +1493,7 @@ body,
   user-select: none;
   touch-action: none;
   z-index: 35;
+  position: relative;
   transition: color 0.1s ease, background 0.1s ease;
 }
 
@@ -2074,4 +2141,14 @@ body.resizing-sidebar .xterm {
 .app[data-chrome="classic"] .split-flip {
   top: auto;
   left: auto;
+}
+
+/* Classic tabs and title bars have their original padding (12px and 6px), so
+   the close button's centre — where the dot goes — moves with it. */
+.app[data-chrome="classic"] .tab-attention {
+  right: 17px;
+}
+
+.app[data-chrome="classic"] .pane-attention {
+  right: 11px;
 }

@@ -789,7 +789,7 @@ export default function App() {
                   requestAnimationFrame(() => focusPaneReliably(sourceId));
                 }}
                 onTearOffPane={(sourceId) => void tearOff("pane", sourceId)}
-                onTitle={(title) => store.updateTabTitle(tab().id, title)}
+                onTitle={(paneId, title) => store.updatePaneTitle(paneId, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenFile={handleOpenFile}
               />

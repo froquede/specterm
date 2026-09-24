@@ -35,6 +35,7 @@ import {
   type AttentionKind,
 } from "../stores/attention";
 import { collectLeaves } from "../lib/split-tree";
+import { updaterPhase, updaterVersion } from "../stores/updater";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -142,6 +143,12 @@ function TabTitleInput(props: {
 }
 
 export default function TabBar(props: TabBarProps) {
+  // Found, downloading or downloaded but not yet installed: anything short of
+  // "you're on the latest" is worth the dot.
+  const updatePending = () => {
+    const phase = updaterPhase();
+    return phase === "available" || phase === "downloading" || phase === "downloaded";
+  };
   // Set right before a completed drag's reorder call, so the click event that
   // follows pointerup doesn't also re-select a tab out from under the drag.
   let suppressClick = false;
@@ -327,9 +334,19 @@ export default function TabBar(props: TabBarProps) {
           classList={{ active: props.settingsOpen }}
           onClick={props.onOpenSettings}
           aria-pressed={props.settingsOpen}
-          title={`${props.settingsOpen ? "Hide" : "Open"} settings (${settingsKey()})`}
+          title={
+            updatePending()
+              ? `Update available${updaterVersion() ? ` (v${updaterVersion()})` : ""} · ${props.settingsOpen ? "hide" : "open"} settings (${settingsKey()})`
+              : `${props.settingsOpen ? "Hide" : "Open"} settings (${settingsKey()})`
+          }
         >
           <IconSettings size={ICON_SIZE} stroke-width={ICON_STROKE} />
+          {/* The same dot a waiting pane gets, for the one other thing worth a
+              glance: an update is there to install. It sits on the button that
+              leads to it, and says nothing louder until someone looks. */}
+          <Show when={updatePending()}>
+            <span class="tab-icon-badge" />
+          </Show>
         </button>
         <button
           class="tab-icon-btn tab-github"

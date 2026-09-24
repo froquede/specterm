@@ -488,7 +488,9 @@ function resizeSplitsInTree(
   };
 }
 
-let titleDebounce: number | null = null;
+// One pending title per pane: a program that retitles itself on every spinner
+// frame must not cancel the title another tab is about to take.
+const titleDebounce = new Map<PaneId, number>();
 
 export function useTabStore() {
   return {
@@ -1302,21 +1304,31 @@ export function useTabStore() {
       }));
     },
 
-    updateTabTitle(tabId: string, title: string) {
-      if (titleDebounce) clearTimeout(titleDebounce);
-      titleDebounce = window.setTimeout(() => {
-        const s = state();
-        const tab = s.tabs.find((t) => t.id === tabId);
-        // A manually renamed tab is locked against shell-driven OSC titles
-        // (tmux rename-window behavior) until the user clears the rename.
-        if (!tab || tab.manualTitle) return;
-        update(() => ({
-          ...s,
-          tabs: s.tabs.map((t) =>
-            t.id === tabId ? { ...t, title } : t
-          ),
-        }));
-      }, 100);
+    // A pane's program set its title. It goes to the tab that pane is in —
+    // looked up now, not taken from whichever tab is on screen: a terminal in a
+    // background tab keeps retitling itself (Claude Code does on every spinner
+    // frame), and routing by the visible tab wrote those titles onto the wrong
+    // one. Only the tab's focused pane names it, so a split doesn't flip the
+    // tab's name back and forth between its panes.
+    updatePaneTitle(paneId: PaneId, title: string) {
+      const pending = titleDebounce.get(paneId);
+      if (pending) clearTimeout(pending);
+      titleDebounce.set(
+        paneId,
+        window.setTimeout(() => {
+          titleDebounce.delete(paneId);
+          const s = state();
+          const tab = s.tabs.find((t) => findLeafNode(t.root, paneId));
+          // A manually renamed tab is locked against shell-driven OSC titles
+          // (tmux rename-window behavior) until the user clears the rename.
+          if (!tab || tab.manualTitle || tab.activePaneId !== paneId) return;
+          if (tab.title === title) return;
+          update(() => ({
+            ...s,
+            tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, title } : t)),
+          }));
+        }, 100)
+      );
     },
 
     // Open the inline rename editor for a tab (defaults to the active tab —

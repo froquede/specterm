@@ -21,7 +21,7 @@ interface SplitContainerProps {
   onDropPaneToTab?: (sourceId: PaneId, tabId: string) => void;
   onDropPaneToNewTab?: (sourceId: PaneId) => void;
   onTearOffPane?: (sourceId: PaneId) => void;
-  onTitle?: (title: string) => void;
+  onTitle?: (paneId: PaneId, title: string) => void;
   onClosePane?: (id: PaneId) => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
 }

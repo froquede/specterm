@@ -1,4 +1,4 @@
-import { Show, createSignal, onCleanup } from "solid-js";
+import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
 import type { PaneType, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
@@ -33,7 +33,7 @@ interface PaneProps {
   pane: PaneType;
   isActive: boolean;
   onFocus: () => void;
-  onTitle?: (title: string) => void;
+  onTitle?: (paneId: PaneId, title: string) => void;
   onClose?: () => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
   onDrop?: (
@@ -61,6 +61,20 @@ export default function Pane(props: PaneProps) {
   // render — freezing new tabs, splits, the sidebar toggle and resize refits.
   const paneId = props.id;
   const [termTitle, setTermTitle] = createSignal("Terminal");
+  const [hasTermTitle, setHasTermTitle] = createSignal(false);
+
+  // Focus moving to this pane hands it the tab's name: only a tab's focused
+  // pane sets the tab title (tabs.updatePaneTitle), so without this the tab
+  // would keep the previous pane's name until this program next retitled.
+  createEffect(
+    on(
+      () => props.isActive,
+      (active) => {
+        if (active && hasTermTitle()) props.onTitle?.(paneId, termTitle());
+      },
+      { defer: true }
+    )
+  );
 
   // Label shown in the title-bar: the shell-reported title for terminals, the
   // file name for markdown and text panes.
@@ -248,7 +262,8 @@ export default function Pane(props: PaneProps) {
             }
             onTitle={(t) => {
               setTermTitle(t);
-              props.onTitle?.(t);
+              setHasTermTitle(true);
+              props.onTitle?.(paneId, t);
             }}
             onExit={props.onClose}
             onOpenFile={props.onOpenFile}
