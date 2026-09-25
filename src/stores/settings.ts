@@ -132,6 +132,13 @@ export const CLOCK_FORMAT_DEFAULT = "HH:mm";
 // Long enough for any sensible format, short enough that a paste accident can't
 // push a novel into the tab bar.
 export const CLOCK_FORMAT_MAX = 64;
+// Battery level next to the clock, for when fullscreen has taken the OS panel
+// (and its battery indicator) away. Rides on the clock: it only shows while the
+// clock does, and only on a machine that actually reports a battery.
+export const CLOCK_BATTERY_DEFAULT = false;
+// An offline marker next to the clock, for the same reason: fullscreen hides the
+// OS network icon too. Shown only while the machine has no network at all.
+export const CLOCK_OFFLINE_DEFAULT = false;
 
 export const SIDEBAR_WIDTH_DEFAULT = 250;
 // The settings panel shares the slot, and its controls stop being usable below
@@ -189,6 +196,8 @@ interface Persisted {
   desktopNotifications: boolean;
   clockEnabled: boolean;
   clockFormat: string;
+  clockBattery: boolean;
+  clockOffline: boolean;
   githubWatchlist: string[];
 }
 
@@ -212,6 +221,8 @@ const DEFAULTS: Persisted = {
   desktopNotifications: DESKTOP_NOTIFICATIONS_DEFAULT,
   clockEnabled: false,
   clockFormat: CLOCK_FORMAT_DEFAULT,
+  clockBattery: CLOCK_BATTERY_DEFAULT,
+  clockOffline: CLOCK_OFFLINE_DEFAULT,
   githubWatchlist: [],
 };
 
@@ -301,6 +312,14 @@ function load(): Persisted {
         typeof p.clockFormat === "string"
           ? p.clockFormat.slice(0, CLOCK_FORMAT_MAX)
           : DEFAULTS.clockFormat,
+      clockBattery:
+        typeof p.clockBattery === "boolean"
+          ? p.clockBattery
+          : DEFAULTS.clockBattery,
+      clockOffline:
+        typeof p.clockOffline === "boolean"
+          ? p.clockOffline
+          : DEFAULTS.clockOffline,
       githubWatchlist: Array.isArray(p.githubWatchlist)
         ? p.githubWatchlist.filter((v: unknown) => typeof v === "string")
         : DEFAULTS.githubWatchlist,
@@ -352,6 +371,8 @@ const [desktopNotifications, setDesktopNotificationsSignal] = createSignal(
 );
 const [clockEnabled, setClockEnabledSignal] = createSignal(initial.clockEnabled);
 const [clockFormat, setClockFormatSignal] = createSignal(initial.clockFormat);
+const [clockBattery, setClockBatterySignal] = createSignal(initial.clockBattery);
+const [clockOffline, setClockOfflineSignal] = createSignal(initial.clockOffline);
 const [githubWatchlist, setGithubWatchlistSignal] = createSignal(
   initial.githubWatchlist
 );
@@ -376,6 +397,8 @@ export {
   desktopNotifications,
   clockEnabled,
   clockFormat,
+  clockBattery,
+  clockOffline,
   githubWatchlist,
 };
 
@@ -434,6 +457,8 @@ function persist() {
         desktopNotifications: desktopNotifications(),
         clockEnabled: clockEnabled(),
         clockFormat: clockFormat(),
+        clockBattery: clockBattery(),
+        clockOffline: clockOffline(),
         githubWatchlist: githubWatchlist(),
       } satisfies Persisted)
     );
@@ -560,6 +585,8 @@ function reloadFromStorage() {
   setDesktopNotificationsSignal(p.desktopNotifications);
   setClockEnabledSignal(p.clockEnabled);
   setClockFormatSignal(p.clockFormat);
+  setClockBatterySignal(p.clockBattery);
+  setClockOfflineSignal(p.clockOffline);
   setGithubWatchlistSignal(p.githubWatchlist);
   applyCssVars();
   applyWindowOpacity();
@@ -646,6 +673,16 @@ export function setClockEnabled(v: boolean) {
 export function setClockFormat(v: string) {
   const trimmed = v.slice(0, CLOCK_FORMAT_MAX);
   setClockFormatSignal(trimmed.trim() === "" ? CLOCK_FORMAT_DEFAULT : trimmed);
+  persist();
+}
+
+export function setClockBattery(v: boolean) {
+  setClockBatterySignal(v);
+  persist();
+}
+
+export function setClockOffline(v: boolean) {
+  setClockOfflineSignal(v);
   persist();
 }
 

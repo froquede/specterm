@@ -1,6 +1,8 @@
-import { createEffect, createSignal, onCleanup } from "solid-js";
-import { clockFormat } from "../stores/settings";
+import { createEffect, createSignal, onCleanup, Show } from "solid-js";
+import { clockBattery, clockFormat, clockOffline } from "../stores/settings";
 import { formatClock, msUntilNextChange } from "../lib/clock-format";
+import Battery from "./Battery";
+import Offline from "./Offline";
 
 // The tab-bar clock.
 //
@@ -57,6 +59,12 @@ export default function Clock() {
   // they change, which would otherwise jiggle the whole bar every minute.
   return (
     <div class="tab-clock" title="Clock — change the format in Settings">
+      <Show when={clockOffline()}>
+        <Offline />
+      </Show>
+      <Show when={clockBattery()}>
+        <Battery />
+      </Show>
       {text()}
     </div>
   );

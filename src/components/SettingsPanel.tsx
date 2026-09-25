@@ -28,6 +28,10 @@ import {
   setClockEnabled,
   clockFormat,
   setClockFormat,
+  clockBattery,
+  setClockBattery,
+  clockOffline,
+  setClockOffline,
   CLOCK_FORMAT_MAX,
   restoreLastSession,
   setRestoreLastSession,
@@ -1063,6 +1067,38 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 <code>YYYY</code> <code>ddd</code> <code>h</code> <code>a</code>.
                 Wrap literal text in brackets: <code>[at] HH:mm</code>. Seconds
                 make it tick every second instead of every minute.
+              </p>
+              <div class="settings-row">
+                <label class="settings-label" for="clock-battery">
+                  Battery level beside the clock
+                </label>
+                <input
+                  id="clock-battery"
+                  type="checkbox"
+                  class="settings-checkbox"
+                  checked={clockBattery()}
+                  onChange={(e) => setClockBattery(e.currentTarget.checked)}
+                />
+              </div>
+              <p class="settings-hint">
+                Handy in fullscreen, where the system panel is hidden. Shown only
+                on machines that report a battery, and in red at 15% or less.
+              </p>
+              <div class="settings-row">
+                <label class="settings-label" for="clock-offline">
+                  Offline indicator beside the clock
+                </label>
+                <input
+                  id="clock-offline"
+                  type="checkbox"
+                  class="settings-checkbox"
+                  checked={clockOffline()}
+                  onChange={(e) => setClockOffline(e.currentTarget.checked)}
+                />
+              </div>
+              <p class="settings-hint">
+                Appears only while there is no network connection at all. Wi-Fi
+                that is connected but has no internet doesn't count.
               </p>
             </Show>
           </div>
