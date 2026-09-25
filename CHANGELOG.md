@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.24.1 — 2026-09-25
+
+### Added
+- **Battery level beside the clock.** Settings → Layout, under the clock:
+  an optional battery icon and percentage, for when fullscreen hides the
+  system panel. The icon shows the level, switches to a charging glyph while
+  plugged in, and turns red at 15% or less. It only appears on machines that
+  report a battery. Off by default.
+- **Offline indicator beside the clock.** Also optional and off by default: a
+  Wi-Fi-off icon that shows only while there is no network connection at all.
+  Wi-Fi that is connected but has no internet doesn't count.
+
 ## 0.24.0 — 2026-09-24
 
 ### Added
