@@ -137,6 +137,11 @@ async function findRelative(
     if (await attempt(candidate)) return candidate;
   }
 
+  // A bare `App.tsx:12:5` names no directory to recognise it by: above or
+  // below, the first file that happens to share its name would be copied as if
+  // it were the one printed. Better copied as printed.
+  if (!/[\\/]/.test(rel)) return null;
+
   let dir: string | null = ctx.cwd;
   for (let i = 0; i < MAX_ANCESTORS && dir; i++) {
     dir = parentOf(dir);
