@@ -49,7 +49,7 @@ function fakeScreen(bytes) {
   while (s.length < bytes) {
     s +=
       `\x1b[38;5;${s.length % 255}m` +
-      "nexfar@host:~/dev$ some command output line with colour\r\n";
+      "user@host:~/dev$ some command output line with colour\r\n";
   }
   return s.slice(0, bytes);
 }

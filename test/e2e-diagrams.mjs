@@ -68,8 +68,8 @@ const transcriptSource = rendered
   .slice(0, 21)
   .map((l) => l.replace(/^ {2}/, ""))
   .join("\n")
-  .replace(/hospitalar\n· navarromed/, "hospitalar · navarromed")
-  .replace("grupodimebras", PROOF);
+  .replace(/quebec_romeo_west\n· sierra/, "quebec_romeo_west · sierra")
+  .replace("tangoproof", PROOF);
 
 const fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-dg-home-"));
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-dg-"));
@@ -170,13 +170,13 @@ try {
     );
     check(
       "the prose after a fence-less block is not drawn as part of it",
-      drawn && !/O ponto exato/.test(svg.text),
+      drawn && !/The exact point/.test(svg.text),
       svg.text.slice(0, 120)
     );
     check(
       "the source comes from the transcript, not from the wrapped screen copy",
-      svg.text.includes(PROOF) && !svg.text.includes("grupodimebras"),
-      `proof=${svg.text.includes(PROOF)} scraped=${svg.text.includes("grupodimebras")}`
+      svg.text.includes(PROOF) && !svg.text.includes("tangoproof"),
+      `proof=${svg.text.includes(PROOF)} scraped=${svg.text.includes("tangoproof")}`
     );
 
     await win.keyboard.press("Escape");

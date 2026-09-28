@@ -1,27 +1,27 @@
-  Não, o nf-dataform não guarda dado nenhum
+  No, the transform layer doesn't store any data
 
-  Ele é só o gerador de SQL. O armazém é o BigQuery.
+  It only generates the SQL. The warehouse is where the data lives.
 
   mermaid
   flowchart TD
-      subgraph src["Fontes"]
-          PG["PG por tenant<br/>(pg_nexfar_*)"]
-          MG["Mongo/Ferret<br/>(mongo_nexfar_*)"]
-          ERP["ERP do distribuidor<br/>(result_*, target, winthor, infarma)"]
+      subgraph src["Sources"]
+          PG["PG per tenant<br/>(pg_app_*)"]
+          MG["Mongo<br/>(mongo_app_*)"]
+          ERP["Partner ERP<br/>(result_*, target, erp_one, erp_two)"]
       end
-      PG & MG & ERP -->|Airbyte| RAW
+      PG & MG & ERP -->|Loader| RAW
 
-      subgraph RAW["Landing RAW — 1 dataset POR TENANT (isolamento físico)"]
-          T["mixfarma · mapemi · granderio · grupomtf · abs<br/>treemed · gruponova · plena · farmeslog · movefarma<br/>medicamental · medicamental_hospitalar
-  · navarromed<br/>grupodimebras · vendaspharlab · demo"]
+      subgraph RAW["Landing RAW — 1 dataset PER TENANT (physical isolation)"]
+          T["alpha · bravo · charlie · delta · echo<br/>foxtrot · golf · hotel · india · juliet<br/>kilo · lima · mike · november · oscar_papa · quebec_romeo_west
+  · sierra<br/>tangoproof · uniform · demo"]
       end
 
-      RAW -->|"UNION ALL + distributorId"| STG["stg_nexfar (26 tabelas)<br/>★ AQUI CENTRALIZA"]
-      STG --> NEX["nexfar (50 tabelas)<br/>regra de negócio: suggestion,<br/>promoted, restock, nearby, orders…"]
-      NEX --> BI["bi_nexfar (80 views)<br/>camada de PowerBI/relatório"]
+      RAW -->|"UNION ALL + tenantId"| STG["stg_app (26 tables)<br/>★ EVERYTHING MERGES HERE"]
+      STG --> CORE["app (50 tables)<br/>business rules: suggestion,<br/>promoted, restock, nearby, orders…"]
+      CORE --> BI["bi_app (80 views)<br/>reporting layer"]
 
-      EXT["Fontes externas:<br/>clickup · mixpanel · sonar"] --> BI
-      INT["nexfar_internal<br/>(referência interna)"] --> NEX
+      EXT["External sources:<br/>tracker · analytics · sonar"] --> BI
+      INT["app_internal<br/>(internal reference)"] --> CORE
 
-  O ponto exato onde deixa de ser por tenant é o stg_nexfar. Cada tabela de lá é
-  um UNION ALL de todos os tenants carimbando distributorId.
+  The exact point where it stops being per tenant is stg_app. Every table there is
+  a UNION ALL of all tenants, each row stamped with tenantId.
