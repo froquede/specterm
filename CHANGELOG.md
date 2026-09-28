@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.24.2 — 2026-09-28
+
+### Changed
+- **Clicking a relative path copies the full path.** Paths in terminal output
+  are often relative to a directory other than the pane's. Specterm now looks
+  for the file in the pane's directory, the Claude Code transcript for the
+  pane, the directories above it, and a short walk below it and its parent,
+  and copies the absolute path, keeping any `:line:col`. Ctrl/⌘+click opens
+  the file it found. A bare file name is only looked for in the pane's
+  directory and the transcript, and a path it can't find is copied as
+  printed.
+
+### Fixed
+- **Mermaid diagrams with `<...>` in a label render in the markdown preview.**
+  A label like `org/<name>` or one with `<br/>` used to break the whole
+  diagram with a parse error.
+
 ## 0.24.1 — 2026-09-25
 
 ### Added
