@@ -7,7 +7,12 @@ const md = new MarkdownIt({
   typographer: true,
 });
 
-// Custom fence renderer for mermaid blocks
+// Custom fence renderer for mermaid blocks.
+//
+// The source goes into the <pre> HTML-escaped and stays escaped: mermaid.run
+// reads the element's innerHTML and entity-decodes it, so `<tenant>` or `<br/>`
+// in a label reaches the parser exactly as written. Injected raw, the browser
+// would parse them as tags first, and the diagram would fail to parse.
 const defaultFence =
   md.renderer.rules.fence ||
   function (tokens, idx, options, _env, self) {
@@ -17,13 +22,7 @@ const defaultFence =
 md.renderer.rules.fence = (tokens, idx, options, env, self) => {
   const token = tokens[idx];
   if (token.info.trim() === "mermaid") {
-    const escaped = md.utils
-      .escapeHtml(token.content)
-      .replace(/&amp;/g, "&")
-      .replace(/&lt;/g, "<")
-      .replace(/&gt;/g, ">")
-      .replace(/&quot;/g, '"');
-    return `<pre class="mermaid">${escaped}</pre>`;
+    return `<pre class="mermaid">${md.utils.escapeHtml(token.content)}</pre>`;
   }
   return defaultFence(tokens, idx, options, env, self);
 };

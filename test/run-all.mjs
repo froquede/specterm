@@ -57,6 +57,9 @@ const SUITES = [
   { name: "open-paths", file: "open-paths.mjs" },
   // Same shape as paste: the matcher behind click-to-copy, pure and DOM-free.
   { name: "path-links", file: "path-links.mjs", node: ["--experimental-strip-types"] },
+  // And the mermaid fence renderer from src/lib/markdown.ts: escaping only,
+  // no DOM. Milliseconds.
+  { name: "markdown", file: "markdown.mjs", node: ["--experimental-strip-types"] },
 ];
 
 const started = Date.now();
