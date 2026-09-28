@@ -52,10 +52,10 @@ asserting on observable behavior.
   on purpose: it leaves a program owning the mouse, and every keystroke typed
   after it arrives mixed with mouse reports.
 
-`run-all.mjs` also runs the two suites that need no app at all — `paste.mjs` and
-`path-links.mjs`, pure functions imported straight from `src/lib` with node
-stripping the types. They cost milliseconds and they are where the guessing in
-those two files is pinned down, case by case.
+`run-all.mjs` also runs the suites that need no app at all — `paste.mjs`,
+`path-links.mjs` and `markdown.mjs`, pure functions imported straight from
+`src/lib` with node stripping the types. They cost milliseconds and they are
+where the guessing in those files is pinned down, case by case.
 
 Two traps `e2e-session.mjs` documents in its header and exists to stay out of,
 because both produce a green run that proves nothing:
