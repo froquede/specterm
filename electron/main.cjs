@@ -12,6 +12,7 @@ const {
   Tray,
   nativeImage,
   Notification,
+  autoUpdater: electronAutoUpdater,
 } = require("electron");
 const path = require("path");
 const os = require("os");
@@ -2973,6 +2974,10 @@ function buildAppMenu() {
 // where electron-updater owns the download, i.e. everywhere except macOS.
 let updaterWired = false;
 const isMac = process.platform === "darwin";
+// Linux package installs whose updater would relaunch via app.relaunch(); see
+// wireAutoUpdater.
+const relaunchesThroughElectron =
+  process.platform === "linux" && !process.env.APPIMAGE;
 
 // macOS custom-updater state. electron-updater's mac path uses Squirrel.Mac,
 // which refuses to apply an update unless the app carries a valid, consistent
@@ -3043,6 +3048,12 @@ function wireAutoUpdater() {
   // nothing staged for it to apply on quit — leaving this on would only claim a
   // behavior we don't have.
   autoUpdater.autoInstallOnAppQuit = !isMac;
+  // Package-manager installs (.deb/.rpm/pacman) relaunch through Electron's
+  // app.relaunch(), whose Linux relauncher starts the new instance with
+  // no_new_privs set. Every shell inherits it, so sudo fails with "effective uid
+  // is not 0" until the app is restarted by hand. relaunchAfterExit does the
+  // relaunch instead. The AppImage updater already spawns the new binary itself.
+  if (relaunchesThroughElectron) autoUpdater.autoRunAppAfterInstall = false;
 
   autoUpdater.on("checking-for-update", () =>
     sendUpdaterEvent({ status: "checking" })
@@ -3382,9 +3393,29 @@ ipcMain.handle("updater:download", async () => {
   }
 });
 
+// Start the app again once this process has exited, from a plain child process
+// so the new instance keeps the privileges of a normal launch. It has to wait
+// for the exit: until then this instance holds the single-instance lock and
+// would swallow the new one.
+function relaunchAfterExit() {
+  spawn(
+    "/bin/sh",
+    [
+      "-c",
+      'pid=$1; shift; while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done; exec "$@"',
+      "sh",
+      String(process.pid),
+      process.execPath,
+      ...process.argv.slice(1),
+    ],
+    { detached: true, stdio: "ignore" }
+  ).unref();
+}
+
 // Quit and swap in the downloaded update. On Windows/Linux electron-updater
-// handles it (NSIS wizard / AppImage relaunch). On macOS we swap the .app
-// bundle ourselves, mirroring the terminal install.
+// handles it (NSIS wizard / AppImage relaunch), except the relaunch after a
+// Linux package install (relaunchAfterExit). On macOS we swap the .app bundle
+// ourselves, mirroring the terminal install.
 ipcMain.handle("updater:install", () => {
   if (!app.isPackaged) return;
   try {
@@ -3393,6 +3424,12 @@ ipcMain.handle("updater:install", () => {
     } else {
       // Same as macInstallUpdate: the install *is* the confirmed quit.
       quitConfirmed = true;
+      if (relaunchesThroughElectron) {
+        // electron-updater emits this only when the install succeeded, right
+        // before it quits. A failed or cancelled install leaves the app open.
+        electronAutoUpdater.removeListener("before-quit-for-update", relaunchAfterExit);
+        electronAutoUpdater.once("before-quit-for-update", relaunchAfterExit);
+      }
       autoUpdater.quitAndInstall(false, true);
     }
   } catch (err) {
