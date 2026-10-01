@@ -1730,8 +1730,7 @@ ipcMain.handle("git-remote-info", async (_event, cwd) => {
 
 // Raw `git status --porcelain=v1` output for the working tree at `cwd`. No
 // parsing here on purpose — that logic lives in src/lib/git-status.ts, where
-// it's plain testable TS instead of duplicated across this file and a future
-// Tauri command.
+// it's plain testable TS instead of buried in this file.
 //
 // `--untracked-files=all` matters: without it, a new directory with no
 // tracked files in it collapses to one "?? somedir/" line instead of listing

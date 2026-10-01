@@ -233,10 +233,6 @@ Windows needs a shell that `node-pty` can spawn; Specterm defaults to
 
 Releasing is documented in [docs/releasing.md](docs/releasing.md).
 
-> `src/backends/` abstracts the host, and a dormant Tauri v2 implementation
-> exists alongside the Electron one. It does not currently work — ship and test
-> on Electron.
-
 ## License
 
 [Apache-2.0](LICENSE)

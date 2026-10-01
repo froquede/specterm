@@ -1,64 +1,43 @@
-# Windows Setup (Tauri)
+# Windows Setup
 
-This guide walks through running and building Specterm natively on Windows via
-the Tauri backend, plus fixes for issues we hit along the way.
+How to run and build Specterm on Windows, plus fixes for issues we hit along
+the way.
 
 ## Prerequisites
 
-1. **Rust** (stable, MSVC toolchain)
-
-   ```powershell
-   winget install Rustlang.Rustup
-   rustup default stable-msvc
-   ```
-
-2. **Microsoft C++ Build Tools** — install the "Desktop development with C++"
-   workload (provides the MSVC linker Tauri needs).
-
-   ```powershell
-   winget install Microsoft.VisualStudio.2022.BuildTools
-   ```
-
-3. **WebView2 Runtime** — preinstalled on Windows 11. On older builds install it
-   from the Microsoft Evergreen distributable.
-
-4. **Node.js 18+**
+1. **Node.js 18+**
 
    ```powershell
    winget install OpenJS.NodeJS.LTS
    ```
 
-5. **Tauri CLI v2** (installed as a dev dependency by `npm install`, no global
-   install required).
+2. **Microsoft C++ Build Tools** — install the "Desktop development with C++"
+   workload. `node-pty` is a native addon and is rebuilt against Electron's ABI
+   after every install, which needs the MSVC compiler.
+
+   ```powershell
+   winget install Microsoft.VisualStudio.2022.BuildTools
+   ```
 
 ## Run in dev
 
 ```powershell
 npm install
-npm run tauri dev
+npx electron-builder install-app-deps
+npm run dev:electron
 ```
 
-The first build compiles the Rust backend and may take several minutes. Later
-runs are incremental.
+`dev:electron` sets an env var inline, which `cmd.exe`/PowerShell do not parse
+the way bash does. We use [`cross-env`](https://www.npmjs.com/package/cross-env)
+so the same script works on every OS.
 
 ## Build an installer
 
 ```powershell
-npm run tauri build
+npm run build:electron:win
 ```
 
-The NSIS installer and the standalone `.exe` land under
-`src-tauri/target/release/bundle/`.
-
-## Electron dev on Windows
-
-`dev:electron` sets an env var inline, which `cmd.exe`/PowerShell do not parse
-the way bash does. We use [`cross-env`](https://www.npmjs.com/package/cross-env)
-so the same script works on every OS:
-
-```powershell
-npm run dev:electron
-```
+The NSIS installer lands under `build-output/`.
 
 ---
 
@@ -66,30 +45,15 @@ npm run dev:electron
 
 ### Terminal opens but you can't type (no shell on Windows)
 
-**Symptom:** the Tauri window starts, the terminal renders, but keystrokes do
-nothing — no prompt, no echo.
+`node-pty` needs a real shell to spawn, and `SHELL` is unset on Windows. The
+Electron main process (`electron/main.cjs`) defaults to `powershell.exe`; set
+`SPECTERM_SHELL` (e.g. to `pwsh.exe` for PowerShell 7, or a Git Bash path) to
+override it.
 
-**Cause:** the PTY spawn hardcoded `SHELL` → `/bin/bash`, which does not exist
-on Windows. The child process failed to launch, so there was nothing connected
-to read input.
+### Terminals don't open at all
 
-**Fix:** `resolve_shell()` in `src-tauri/src/commands/pty.rs` now picks a real
-shell per platform:
-
-- Honor `$SHELL` if the user set one.
-- On Windows, prefer PowerShell Core (`pwsh.exe` under `%ProgramFiles%`),
-  falling back to built-in `powershell.exe`.
-- On Unix, fall back to `/bin/bash`.
-
-Set `SHELL` (e.g. to `C:\Windows\System32\cmd.exe` or a Git Bash path) to
-override the default.
-
-### Terminal opens in the wrong directory
-
-The startup directory previously had a hardcoded developer path. It now defaults
-to the user's home directory via `home_dir()`, which reads `HOME` then
-`USERPROFILE` (the Windows equivalent). Pass an explicit `cwd` to `spawnPty` to
-override.
+The `node-pty` addon was built for Node, not Electron. Re-run
+`npx electron-builder install-app-deps` after any `npm install` or `npm ci`.
 
 ### `electron .` ignores the dev server URL
 
@@ -103,8 +67,3 @@ syntax fails on Windows shells. Make sure you run the npm script (which uses
 The MSVC C++ Build Tools workload is missing or not on PATH. Reinstall the
 "Desktop development with C++" workload and reopen the terminal so PATH updates
 take effect.
-
-### WebView2 errors on launch
-
-Install the WebView2 Evergreen Runtime from Microsoft. Windows 11 ships with it;
-some Windows 10 images do not.

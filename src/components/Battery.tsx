@@ -25,11 +25,11 @@ type BatteryNavigator = Navigator & { getBattery?: () => Promise<BatteryManager>
 // the browser fires `levelchange`/`chargingchange` when there is something new
 // to show.
 //
-// It renders nothing where there's nothing honest to say: a runtime without the
-// API (WebKit, i.e. the Tauri build), or a machine without a battery, which
-// Chromium reports as "charging, 100%, full now, never empties". A laptop that
-// is plugged in and full reads the same way and disappears too, which is fine —
-// that's the one state nobody needs a reminder about.
+// It renders nothing where there's nothing honest to say: a machine without a
+// battery, which Chromium reports as "charging, 100%, full now, never
+// empties". A laptop that is plugged in and full reads the same way and
+// disappears too, which is fine — that's the one state nobody needs a
+// reminder about.
 export default function Battery() {
   const [level, setLevel] = createSignal<number | null>(null);
   const [charging, setCharging] = createSignal(false);

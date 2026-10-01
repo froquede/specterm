@@ -36,8 +36,7 @@
     "test:links": "node --experimental-strip-types test/path-links.mjs",
     "test:markdown": "node --experimental-strip-types test/markdown.mjs",
     "test:open-paths": "node test/open-paths.mjs",
-    "hero:gif": "vite build && node scripts/hero-gif.mjs",
-    "tauri": "tauri"
+    "hero:gif": "vite build && node scripts/hero-gif.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.4",
@@ -46,9 +45,6 @@
     "@codemirror/state": "^6.7.1",
     "@codemirror/view": "^6.43.6",
     "@lezer/highlight": "^1.2.3",
-    "@tauri-apps/api": "^2.0.0",
-    "@tauri-apps/plugin-fs": "^2.5.0",
-    "@tauri-apps/plugin-shell": "^2.0.0",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-search": "^0.15.0",
     "@xterm/addon-serialize": "^0.14.0",
@@ -142,7 +138,6 @@
     ]
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.0.0",
     "@types/markdown-it": "^14.1.2",
     "concurrently": "^9.0.0",
     "cross-env": "^10.1.0",

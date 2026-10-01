@@ -614,9 +614,7 @@ export function setRestoreLastSession(v: boolean) {
 // before any renderer could be asked anything. So every change is pushed, and so
 // is the current value at startup.
 //
-// Fire-and-forget on purpose: a backend with no such notion (Tauri, a single
-// window that can't outlive itself) no-ops it, and a failure here must never
-// stop a settings write.
+// Fire-and-forget on purpose: a failure here must never stop a settings write.
 function pushBackgroundSessions() {
   void getBackend()
     .then((backend) => {

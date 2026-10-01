@@ -115,7 +115,7 @@ export function saveScreens(screens: ScreenStore) {
   void getBackend()
     .then((backend) => backend.writeScreens(screens))
     .catch(() => {
-      /* No host-side screen storage (Tauri) — the layout still restores. */
+      /* Host unreachable — the layout still restores, without its screens. */
     });
   // An upgrade from the version that kept screens in localStorage leaves a blob
   // that will never be read again, in a quota shared with settings and themes.

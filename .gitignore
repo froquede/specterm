@@ -134,10 +134,6 @@ dist/
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
-# Tauri
-src-tauri/target/
-src-tauri/gen/schemas/
-
 # Electron
 electron-dist/
 build-output/
