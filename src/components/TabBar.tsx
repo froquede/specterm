@@ -14,6 +14,7 @@ import {
   IconFullscreenExit,
   IconSettings,
   IconGithubPanel,
+  IconVaultPanel,
   IconX,
   ICON_SIZE,
   ICON_STROKE,
@@ -50,6 +51,8 @@ interface TabBarProps {
   onOpenSettings: () => void;
   onToggleGithub: () => void;
   githubOpen: boolean;
+  onToggleVault: () => void;
+  vaultOpen: boolean;
   onStartRename: (tabId: string) => void;
   onCommitRename: (tabId: string, title: string) => void;
   onCancelRename: () => void;
@@ -347,6 +350,15 @@ export default function TabBar(props: TabBarProps) {
           <Show when={updatePending()}>
             <span class="tab-icon-badge" />
           </Show>
+        </button>
+        <button
+          class="tab-icon-btn tab-vault"
+          classList={{ active: props.vaultOpen }}
+          onClick={props.onToggleVault}
+          aria-pressed={props.vaultOpen}
+          title={`${props.vaultOpen ? "Hide" : "Open"} vault panel`}
+        >
+          <IconVaultPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
         <button
           class="tab-icon-btn tab-github"

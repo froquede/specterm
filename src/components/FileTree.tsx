@@ -26,6 +26,7 @@ import type { FileEntry } from "../backends/types";
 import { isAccelClick, os } from "../lib/platform";
 import { join, dirname, normalize, equalPath, sep } from "../lib/fspath";
 import { favorites, toggleFavorite, favoriteByIndex } from "../stores/favorites";
+import { isVault, removeVault } from "../stores/vaults";
 import {
   startupPath,
   lastBrowsedPath,
@@ -95,6 +96,8 @@ interface FileTreeProps {
   activePaneCwd: () => string;
   // Return focus to the grid/terminal (Esc on an already-empty filter).
   onDismiss?: () => void;
+  // Register a folder as a vault and show it in the vault panel.
+  onOpenVault: (path: string) => void;
 }
 
 interface DirEntry extends FileEntry {
@@ -266,7 +269,7 @@ export default function FileTree(props: FileTreeProps) {
     e.preventDefault();
     setSelectedIndex(index);
     const MENU_W = 220;
-    const MENU_H = 220;
+    const MENU_H = 250;
     const x = Math.max(4, Math.min(e.clientX, window.innerWidth - MENU_W));
     const y = Math.max(4, Math.min(e.clientY, window.innerHeight - MENU_H));
     setMenu({ x, y, entry });
@@ -305,6 +308,25 @@ export default function FileTree(props: FileTreeProps) {
     toggleFavorite(entry.path);
     closeMenu();
   }
+
+  function toggleEntryVault(entry: DirEntry) {
+    if (isVault(entry.path)) removeVault(entry.path);
+    else props.onOpenVault(entry.path);
+    closeMenu();
+  }
+
+  // A folder Obsidian has opened carries a .obsidian directory. That's a strong
+  // hint it is a vault here too, so the tree offers it — never adds it on its
+  // own, since indexing a folder is something the user should choose. A
+  // dismissal holds for this window's lifetime.
+  const [dismissedHints, setDismissedHints] = createSignal<string[]>([]);
+  const vaultHint = createMemo(() => {
+    if (drivesView() || filter()) return false;
+    const p = currentPath();
+    if (!p || isVault(p)) return false;
+    if (dismissedHints().some((d) => equalPath(d, p))) return false;
+    return rows().some((e) => e.isDirectory && e.name === ".obsidian");
+  });
 
   // While the menu is open, dismiss it on any outside interaction: a click or
   // right-click elsewhere, scrolling the list, resizing, or Escape. Listeners
@@ -589,6 +611,22 @@ export default function FileTree(props: FileTreeProps) {
             </Show>
           </div>
         </div>
+        <Show when={vaultHint()}>
+          <div class="file-tree-vault-hint">
+            <span class="file-tree-vault-hint-text">Obsidian vault folder</span>
+            <button onClick={() => props.onOpenVault(currentPath())}>
+              Open as vault
+            </button>
+            <button
+              class="file-tree-vault-hint-dismiss"
+              title="Dismiss"
+              aria-label="Dismiss"
+              onClick={() => setDismissedHints((d) => [...d, currentPath()])}
+            >
+              <IconX size={12} stroke-width={2.25} />
+            </button>
+          </div>
+        </Show>
         <div class="file-tree-header">
           <div class="file-tree-crumbs" title={headerPath()}>
             <For each={crumbs()}>
@@ -816,6 +854,15 @@ export default function FileTree(props: FileTreeProps) {
                       {isFav(m().entry.path)
                         ? "Remove from favorites"
                         : "Add to favorites"}
+                    </button>
+                    <button
+                      class="file-tree-menu-item"
+                      data-action="vault"
+                      onClick={() => toggleEntryVault(m().entry)}
+                    >
+                      {isVault(m().entry.path)
+                        ? "Remove from vaults"
+                        : "Open as vault"}
                     </button>
                   </Show>
                 </div>

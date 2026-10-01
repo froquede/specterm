@@ -52,8 +52,15 @@ asserting on observable behavior.
   on purpose: it leaves a program owning the mouse, and every keystroke typed
   after it arrives mixed with mouse reports.
 
+- **`e2e-vault.mjs`** — vaults, on a fixture shaped like a folder Obsidian has
+  opened: the offer to open it, the index skipping hidden folders and
+  `node_modules`, search, open by name from the keyboard, the outline scrolling
+  the preview, backlinks (including `#fragment` links) and removal. Runs under a
+  **sandboxed `HOME`** so the file tree opens on the fixture rather than the
+  developer's home.
+
 `run-all.mjs` also runs the suites that need no app at all — `paste.mjs`,
-`path-links.mjs` and `markdown.mjs`, pure functions imported straight from
+`path-links.mjs`, `markdown.mjs` and `vault-index.mjs`, pure functions imported straight from
 `src/lib` with node stripping the types. They cost milliseconds and they are
 where the guessing in those files is pinned down, case by case.
 
@@ -97,6 +104,8 @@ npm run test:e2e            # vite build + node test/e2e.mjs
 npm run test:e2e:session    # vite build + node test/e2e-session.mjs
 npm run test:e2e:windows    # vite build + node test/e2e-windows.mjs
 npm run test:e2e:links      # vite build + node test/e2e-links.mjs
+npm run test:e2e:vault      # vite build + node test/e2e-vault.mjs
+npm run test:vault          # node test/vault-index.mjs  (milliseconds)
 npm run test:perf           # vite build + node test/perf-boot.mjs
 npm run test:open-paths     # node test/open-paths.mjs  (milliseconds)
 ```

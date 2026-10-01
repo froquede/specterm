@@ -1,0 +1,309 @@
+/* Vault panel — shares the .app-body sidebar slot with the file tree, GitHub
+   and settings (mutually exclusive). Same width contract as .github-panel. */
+.vault-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: var(--sidebar-width);
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  overflow: hidden;
+  flex-shrink: 0;
+  font-size: 12px;
+}
+
+.vault-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.vault-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.vault-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 4px;
+}
+
+.vault-icon-btn:hover {
+  color: var(--fg);
+}
+
+.vault-empty {
+  padding: 16px;
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+
+.vault-list {
+  display: flex;
+  flex-direction: column;
+  padding: 4px 0;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.vault-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  user-select: none;
+}
+
+.vault-item:hover,
+.vault-item.active {
+  background: var(--bg-hover);
+}
+
+.vault-item.active .vault-item-label {
+  font-weight: 600;
+}
+
+.vault-item-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.vault-item-remove {
+  display: flex;
+  align-items: center;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  padding: 0 2px;
+  opacity: 0;
+}
+
+.vault-item:hover .vault-item-remove {
+  opacity: 1;
+}
+
+.vault-item-remove:hover {
+  color: var(--fg);
+}
+
+.vault-search {
+  padding: 8px 12px 4px;
+  flex-shrink: 0;
+}
+
+.vault-search input {
+  width: 100%;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font-size: 12px;
+  line-height: 14px;
+  font-family: inherit;
+  color: var(--fg);
+  outline: none;
+}
+
+.vault-search input::placeholder {
+  color: var(--fg-faint);
+}
+
+.vault-status {
+  padding: 0 12px 6px;
+  color: var(--fg-faint);
+  font-size: 11px;
+  min-height: 14px;
+  flex-shrink: 0;
+}
+
+.vault-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 0 4px 16px;
+}
+
+.vault-section {
+  margin-top: 8px;
+}
+
+.vault-section-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
+  padding: 4px 8px;
+}
+
+.vault-muted {
+  color: var(--fg-muted);
+  padding: 4px 8px;
+}
+
+.vault-hint {
+  margin-top: 8px;
+}
+
+.vault-outline-item {
+  padding-top: 2px;
+  padding-bottom: 2px;
+  padding-right: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 3px;
+}
+
+.vault-outline-item:hover {
+  background: var(--bg-hover);
+}
+
+.vault-result {
+  margin-bottom: 6px;
+}
+
+.vault-result-name {
+  padding: 3px 8px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border-radius: 3px;
+}
+
+.vault-result-name:hover {
+  background: var(--bg-hover);
+}
+
+.vault-hit {
+  display: flex;
+  gap: 8px;
+  padding: 2px 8px 2px 16px;
+  cursor: pointer;
+  border-radius: 3px;
+  color: var(--fg-muted);
+}
+
+.vault-hit:hover {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+
+.vault-hit-line {
+  flex-shrink: 0;
+  min-width: 2.5em;
+  text-align: right;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.vault-hit-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vault-hit-text mark {
+  background: color-mix(in srgb, var(--ansi-yellow) 27%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+/* Quick open — a palette over the window, the way a code editor's go-to-file
+   works. Portalled to <body>; the backdrop closes it on an outside click. */
+.quick-open-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.quick-open {
+  width: min(560px, calc(100vw - 32px));
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  color: var(--fg);
+}
+
+.quick-open-input {
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--fg);
+  padding: 10px 14px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+}
+
+.quick-open-input::placeholder {
+  color: var(--fg-faint);
+}
+
+.quick-open-list {
+  overflow-y: auto;
+  padding: 4px;
+}
+
+.quick-open-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 5px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+.quick-open-item.is-selected {
+  background: var(--bg-hover);
+}
+
+.quick-open-name {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.quick-open-dir {
+  font-size: 11px;
+  color: var(--fg-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-open-empty {
+  padding: 10px;
+  color: var(--fg-muted);
+  font-size: 12px;
+}

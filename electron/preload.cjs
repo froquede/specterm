@@ -142,6 +142,11 @@ contextBridge.exposeInMainWorld("specterm", {
 
   readDirStats: (path) => ipcRenderer.invoke("read-dir-stats", path),
 
+  listMarkdownFiles: (root) => ipcRenderer.invoke("list-markdown-files", root),
+
+  readTextFiles: (paths, maxBytes) =>
+    ipcRenderer.invoke("read-text-files", paths, maxBytes),
+
   listDrives: () => ipcRenderer.invoke("list-drives"),
 
   revealInFileManager: (path, isDirectory) =>

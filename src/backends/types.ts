@@ -19,6 +19,14 @@ export interface FileEntryStats extends FileEntry {
   mtimeMs: number;
 }
 
+// Every markdown file under a vault root, as the host found it. `truncated` is
+// true when the walk stopped at its cap, so the vault panel can say the index
+// is partial instead of silently missing files.
+export interface MarkdownListing {
+  files: { path: string; mtimeMs: number; size: number }[];
+  truncated: boolean;
+}
+
 // A process running inside a pane, as seen from the host. `args` is the full
 // command line where the platform can report one, null where it can't.
 export interface ProcessInfo {
@@ -273,6 +281,13 @@ export interface Backend {
   // Same listing with modification times. Returns [] for a missing directory
   // rather than throwing — callers use it to ask "has anything happened here?".
   readDirStats(path: string): Promise<FileEntryStats[]>;
+  // Every markdown file under `root`, in one round trip — what a vault's index
+  // is built from. Skips hidden folders and node_modules, never follows a
+  // symlink.
+  listMarkdownFiles(root: string): Promise<MarkdownListing>;
+  // Several text files at once. A file larger than `maxBytes`, or one that
+  // can't be read, is null in its slot instead of failing the whole batch.
+  readTextFiles(paths: string[], maxBytes: number): Promise<(string | null)[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;
   // Show a path in the OS file manager (Explorer/Finder/Nautilus). A directory

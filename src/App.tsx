@@ -44,7 +44,13 @@ import { writePty } from "./lib/pty";
 import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
 import { isMarkdownPath, isImagePath } from "./lib/file-kind";
-import { collectLeaves } from "./lib/split-tree";
+import { collectLeaves, findPane } from "./lib/split-tree";
+import {
+  addVault,
+  setSelectedVault,
+  quickOpenVisible,
+  setQuickOpenVisible,
+} from "./stores/vaults";
 import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
 import TitleStrip from "./components/TitleStrip";
@@ -61,6 +67,8 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const GithubPanel = lazy(() => import("./components/GithubPanel"));
+const VaultPanel = lazy(() => import("./components/VaultPanel"));
+const QuickOpen = lazy(() => import("./components/QuickOpen"));
 import type { PaneId } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
@@ -89,6 +97,25 @@ export default function App() {
   function toggleGithub() {
     store.toggleSidebarView("github");
     if (!githubOpen()) focusActivePane();
+  }
+
+  const vaultOpen = () => store.state.sidebarView === "vault";
+
+  function toggleVault() {
+    store.toggleSidebarView("vault");
+    if (!vaultOpen()) focusActivePane();
+  }
+
+  // Register a folder as a vault (from the file tree) and show it.
+  function openVault(path: string) {
+    addVault(path);
+    setSelectedVault(path);
+    store.showSidebar("vault");
+  }
+
+  function closeQuickOpen() {
+    setQuickOpenVisible(false);
+    focusActivePane();
   }
 
   // Keep keyboard focus on the active pane's terminal. The active pane is the
@@ -145,6 +172,15 @@ export default function App() {
   // actually changes — otherwise toggling the sidebar yanks keyboard focus back
   // into the terminal, and the terminal then swallows the keys the panel needs.
   const activePaneId = createMemo(() => store.activeTab?.activePaneId);
+
+  // The file shown in the active pane, or null for a terminal. The vault panel
+  // follows it (outline, backlinks, which vault is current).
+  const activeFile = createMemo(() => {
+    const tab = store.activeTab;
+    if (!tab) return null;
+    const pane = findPane(tab.root, tab.activePaneId);
+    return pane && pane.kind !== "terminal" ? pane.filePath : null;
+  });
 
   createEffect(() => {
     if (!activePaneId()) return;
@@ -379,6 +415,8 @@ export default function App() {
         store,
         focusActivePane,
         toggleSettings,
+        toggleVault,
+        toggleQuickOpen: () => setQuickOpenVisible((v) => !v),
       })
     );
 
@@ -697,6 +735,15 @@ export default function App() {
           see TitleStrip, which decides for itself and renders nothing
           otherwise. */}
       <TitleStrip />
+      <Show when={quickOpenVisible()}>
+        <Suspense>
+          <QuickOpen
+            activeFile={activeFile}
+            onOpenFile={handleOpenFile}
+            onClose={closeQuickOpen}
+          />
+        </Suspense>
+      </Show>
       {/* A drag from another window is over this one. Drawn across the whole
           window because that is the granularity of the drop: wherever it is
           released in here, the tab lands as a tab. */}
@@ -725,6 +772,8 @@ export default function App() {
         settingsOpen={settingsOpen()}
         onToggleGithub={toggleGithub}
         githubOpen={githubOpen()}
+        onToggleVault={toggleVault}
+        vaultOpen={vaultOpen()}
       />
       <div class="app-body">
         <FileTree
@@ -733,7 +782,17 @@ export default function App() {
           onCdPath={cdActivePane}
           activePaneCwd={activePaneCwd}
           onDismiss={focusActivePane}
+          onOpenVault={openVault}
         />
+        <Show when={vaultOpen()}>
+          <Suspense>
+            <VaultPanel
+              activeFile={activeFile}
+              activePaneId={activePaneId}
+              onOpenFile={handleOpenFile}
+            />
+          </Suspense>
+        </Show>
         {/* Mounted only while open. The panel probes the installed font list and
             builds the 325-scheme gallery on mount, so keeping it alive behind an
             internal <Show> paid that cost on every app boot. Nothing is rendered
