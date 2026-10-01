@@ -32,9 +32,11 @@
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "test:e2e:links": "vite build && node test/e2e-links.mjs",
+    "test:e2e:vault": "vite build && node test/e2e-vault.mjs",
     "test:paste": "node --experimental-strip-types test/paste.mjs",
     "test:links": "node --experimental-strip-types test/path-links.mjs",
     "test:markdown": "node --experimental-strip-types test/markdown.mjs",
+    "test:vault": "node --experimental-strip-types test/vault-index.mjs",
     "test:open-paths": "node test/open-paths.mjs",
     "hero:gif": "vite build && node scripts/hero-gif.mjs"
   },

@@ -42,6 +42,7 @@ const SUITES = [
   { name: "session", file: "e2e-session.mjs" },
   { name: "windows", file: "e2e-windows.mjs", clipboard: true },
   { name: "diagrams", file: "e2e-diagrams.mjs" },
+  { name: "vault", file: "e2e-vault.mjs" },
   // Not an Electron suite — it drives electron/repo-sync.cjs against real git
   // in a temp sandbox, so it costs seconds and runs alongside the rest for free.
   { name: "repo-sync", file: "repo-sync.mjs" },
@@ -60,6 +61,8 @@ const SUITES = [
   // And the mermaid fence renderer from src/lib/markdown.ts: escaping only,
   // no DOM. Milliseconds.
   { name: "markdown", file: "markdown.mjs", node: ["--experimental-strip-types"] },
+  // The vault index: link resolution, outline, search, backlinks. Pure, no DOM.
+  { name: "vault-index", file: "vault-index.mjs", node: ["--experimental-strip-types"] },
 ];
 
 const started = Date.now();

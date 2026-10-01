@@ -51,6 +51,56 @@ export function renderMarkdown(source: string, baseDir?: string): string {
   return md.render(source, { baseDir });
 }
 
+export interface NoteHeading {
+  level: number;
+  text: string;
+  // 0-based source line the heading starts on.
+  line: number;
+}
+
+export interface NoteLink {
+  // The href exactly as written, before any resolution.
+  href: string;
+  // 0-based source line of the block the link sits in.
+  line: number;
+}
+
+// The headings and links of a note, read off the same parser that renders it.
+// Sharing the parser is the point: the outline's Nth entry has to be the
+// preview's Nth <h1>–<h6>, and a regex over the source disagrees with
+// markdown-it about setext headings, headings in lists and `#` inside fences.
+export function noteStructure(source: string): {
+  headings: NoteHeading[];
+  links: NoteLink[];
+} {
+  const headings: NoteHeading[] = [];
+  const links: NoteLink[] = [];
+  const tokens = md.parse(source, {});
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+    if (token.type === "heading_open") {
+      const inline = tokens[i + 1];
+      const text = (inline?.children ?? [])
+        .filter((c) => c.type === "text" || c.type === "code_inline")
+        .map((c) => c.content)
+        .join("")
+        .trim();
+      headings.push({
+        level: Number(token.tag.slice(1)),
+        text: text || inline?.content || "",
+        line: token.map?.[0] ?? 0,
+      });
+    } else if (token.type === "inline" && token.children) {
+      for (const child of token.children) {
+        if (child.type !== "link_open") continue;
+        const href = child.attrGet("href");
+        if (href) links.push({ href, line: token.map?.[0] ?? 0 });
+      }
+    }
+  }
+  return { headings, links };
+}
+
 // The mermaid library itself — loading, palette and the pan/zoom viewport —
 // lives in lib/mermaid.ts, shared with the terminal diagram overlay. This is
 // only the markdown-specific half: finding the blocks the fence renderer left

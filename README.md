@@ -25,6 +25,11 @@ by being dropped on the tab bar. A filterable file sidebar with pinned favourite
 Markdown preview and editor with Mermaid, an image viewer you can zoom and pan,
 and a syntax-highlighted viewer for everything else — from the sidebar, or by
 naming the file on the command line.
+Folders of notes can be opened as **vaults** (right-click a folder → *Open as
+vault*; a folder Obsidian has opened is offered on its own): open any note by
+name, search the text of every note, and see the open note's outline and the
+notes that link to it. Links are plain relative markdown links, so the same
+folder reads the same in Specterm, Obsidian and on GitHub.
 Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
 Paths and URLs in terminal output are clickable, and a click copies them.
@@ -69,6 +74,8 @@ later version doesn't take your setting with it.
 | Paste an image into Claude Code | `⌃V` | `Alt+V` |
 | Find in terminal | `⌘F` | `Ctrl+Shift+F` |
 | Toggle sidebar / search | `⌘B` | `Ctrl+Shift+B` |
+| Open a vault note by name | `⌘P` | `Ctrl+Shift+P` |
+| Toggle vault panel (search notes, outline, backlinks) | `⌘⇧F` | `Ctrl+Alt+F` |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
 | Markdown / text file: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
 | Text file: toggle line comment | `⌘/` | `Ctrl+/` |

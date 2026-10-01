@@ -82,6 +82,17 @@ export function equalPath(a: string, b: string): boolean {
   return WIN ? na.toLowerCase() === nb.toLowerCase() : na === nb;
 }
 
+/** True when `path` is `root` itself or inside it (separator-aware). */
+export function isInside(path: string, root: string): boolean {
+  const r = normalize(root).replace(/[\\/]+$/, "");
+  const p = normalize(path);
+  if (equalPath(p, r)) return true;
+  const boundary = p.charAt(r.length);
+  return (
+    (boundary === "\\" || boundary === "/") && equalPath(p.slice(0, r.length), r)
+  );
+}
+
 /**
  * Build a shell command that changes the working directory to `path`, escaped
  * for the host OS's default shell. Windows terminals default to PowerShell
