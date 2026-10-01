@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.25.0 — 2026-10-01
+
+### Added
+- **Vaults.** Right-click a folder in the file tree and choose *Open as
+  vault* to index its notes. A folder Obsidian has opened (it has a
+  `.obsidian/` folder) is offered on its own, but never added without a
+  click. Vaults are a separate list from favorites.
+  - **Open a note by name** with `⌘P` (`Ctrl+Shift+P` on Linux/Windows).
+  - **The vault panel** (`⌘⇧F` / `Ctrl+Alt+F`, or the new button in the tab
+    bar) searches the text of every note, shows the open note's outline
+    (click a heading to scroll to it), and lists the notes that link to it.
+  - Links are plain relative markdown links, so a folder shared with
+    Obsidian reads the same in both apps and on GitHub.
+
+### Fixed
+- **`sudo` works after an in-app update on Linux.** After updating a
+  .deb/.rpm/pacman install, the relaunched app passed a restriction to every
+  shell that made `sudo` fail with "effective uid is not 0" until the app was
+  restarted by hand.
+
+### Removed
+- **The Tauri backend.** It never worked and nothing shipped with it;
+  Specterm runs on Electron only.
+
 ## 0.24.2 — 2026-09-28
 
 ### Changed
