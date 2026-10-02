@@ -419,6 +419,58 @@ try {
     String(migrated)
   );
 
+  // 10b. The same for the Vault: its list, the open sidebar and the user's
+  //      rebinding of its shortcuts carry over from when it was in the core.
+  await win.evaluate(() => {
+    localStorage.removeItem("specterm.plugin.vault");
+    localStorage.setItem("specterm.vaults", JSON.stringify([{ path: "/tmp/notes", label: "notes" }]));
+    localStorage.setItem("specterm.sidebar", JSON.stringify({ view: "vault" }));
+    localStorage.setItem(
+      "specterm.keybindings",
+      JSON.stringify({ "vault.toggle": { key: "k", ctrl: true, alt: true, shift: true } })
+    );
+  });
+  await win.reload();
+  await win.waitForSelector(".tab-bar", { timeout: 20000 });
+  check(
+    "a sidebar left on the old Vault panel opens on the plugin's",
+    await until("vault view", () => win.locator('.plugin-view[data-plugin="vault"]').isVisible())
+  );
+  const vaultStore = await win.evaluate(() => localStorage.getItem("specterm.plugin.vault"));
+  check(
+    "the vault list moves to the plugin's storage",
+    vaultStore === JSON.stringify({ vaults: [{ path: "/tmp/notes", label: "notes" }] }),
+    String(vaultStore)
+  );
+  await win.locator(".vault-panel").waitFor({ timeout: 5000 }).catch(() => {});
+  await win.keyboard.press("Control+Alt+Shift+K");
+  check(
+    "a rebound core shortcut keeps its chord as the plugin's",
+    await until("vault closed by the old override", async () =>
+      (await win.locator('.plugin-view[data-plugin="vault"]').count()) === 0
+    )
+  );
+  await win.evaluate(() => localStorage.removeItem("specterm.keybindings"));
+  const order = await win.locator(".tab-plugin").evaluateAll((els) => els.map((e) => e.dataset.plugin));
+  check(
+    "built-in buttons keep their old order (vault, then github)",
+    order.indexOf("vault") !== -1 && order.indexOf("vault") < order.indexOf("github"),
+    order.join(",")
+  );
+  const served = await win.evaluate(async () => {
+    const get = (u) => fetch(u).then((r) => r.status, () => "error");
+    return {
+      renderer: await get("specterm-plugin://vault/dist/renderer.js"),
+      host: await get("specterm-plugin://vault/host.cjs"),
+      manifest: await get("specterm-plugin://vault/specterm-plugin.json"),
+    };
+  });
+  check(
+    "the scheme serves a plugin's built files but not its host or manifest",
+    served.renderer === 200 && served.host === 404 && served.manifest === 404,
+    JSON.stringify(served)
+  );
+
   // 11. A built-in plugin can be turned off, and stays off.
   await win.locator(".tab-settings").click();
   await win.locator('.plugins-settings-item[data-plugin="github"] input').click();

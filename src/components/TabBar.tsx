@@ -14,7 +14,6 @@ import {
   IconFullscreen,
   IconFullscreenExit,
   IconSettings,
-  IconVaultPanel,
   IconX,
   ICON_SIZE,
   ICON_STROKE,
@@ -60,8 +59,6 @@ interface TabBarProps {
   onCreate: () => void;
   onToggleSidebar: () => void;
   onOpenSettings: () => void;
-  onToggleVault: () => void;
-  vaultOpen: boolean;
   // Plugin buttons open plugin views, so they need to know which view is up.
   sidebarView: SidebarView | null;
   onTogglePluginView: (key: PluginViewKey) => void;
@@ -403,15 +400,6 @@ export default function TabBar(props: TabBarProps) {
           <Show when={updatePending()}>
             <span class="tab-icon-badge" />
           </Show>
-        </button>
-        <button
-          class="tab-icon-btn tab-vault"
-          classList={{ active: props.vaultOpen }}
-          onClick={props.onToggleVault}
-          aria-pressed={props.vaultOpen}
-          title={`${props.vaultOpen ? "Hide" : "Open"} vault panel`}
-        >
-          <IconVaultPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
         {/* One per enabled plugin that asked for a button. Drawn from the
             manifest (see stores/plugins), so they are here on the first frame

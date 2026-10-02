@@ -7,30 +7,21 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { Portal } from "solid-js/web";
-import { equalPath } from "../lib/fspath";
-import { findNotesByName } from "../lib/vault-index";
-import {
-  currentVault,
-} from "../stores/vaults";
-import {
-  vaultIndex,
-  vaultIndexing,
-  acquireVaultIndex,
-  refreshVaultIndex,
-} from "../stores/vault-index";
-import "../styles/vault.css";
+import type { PluginPanelApi } from "../../../src/components/PluginView";
+import { equalPath } from "../../../src/lib/fspath";
+import { findNotesByName } from "./vault-index";
+import { currentVault } from "./vaults";
+import { vaultIndex, vaultIndexing, acquireVaultIndex, refreshVaultIndex } from "./index-store";
 
 interface QuickOpenProps {
+  api: PluginPanelApi;
   activeFile: () => string | null;
-  onOpenFile: (path: string, mode: "split" | "tab") => void;
-  onClose: () => void;
 }
 
 // Open a note by name: a fuzzy match over every note in the current vault,
 // keyboard first. Enter opens beside the active pane, ⌘/Ctrl+Enter in a new
 // tab — the same split-or-tab choice a click in the file tree makes.
-export default function QuickOpen(props: QuickOpenProps) {
+export function QuickOpen(props: QuickOpenProps) {
   const [query, setQuery] = createSignal("");
   const [selected, setSelected] = createSignal(0);
   let inputEl: HTMLInputElement | undefined;
@@ -38,7 +29,7 @@ export default function QuickOpen(props: QuickOpenProps) {
 
   const vault = createMemo(() => currentVault(props.activeFile()));
 
-  const release = acquireVaultIndex();
+  const release = acquireVaultIndex(props.api.invoke);
   onCleanup(release);
 
   createEffect(() => {
@@ -67,8 +58,8 @@ export default function QuickOpen(props: QuickOpenProps) {
   function choose(i: number, mode: "split" | "tab") {
     const note = matches()[i];
     if (!note) return;
-    props.onClose();
-    props.onOpenFile(note.path, mode);
+    props.api.close();
+    props.api.openFile(note.path, mode);
   }
 
   function onKeyDown(e: KeyboardEvent) {
@@ -76,7 +67,7 @@ export default function QuickOpen(props: QuickOpenProps) {
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      props.onClose();
+      props.api.close();
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       if (len) setSelected((i) => (i + 1) % len);
@@ -96,42 +87,38 @@ export default function QuickOpen(props: QuickOpenProps) {
   };
 
   return (
-    <Portal>
-      <div class="quick-open-backdrop" onClick={props.onClose}>
-        <div class="quick-open" onClick={(e) => e.stopPropagation()}>
-          <input
-            ref={inputEl}
-            class="quick-open-input"
-            type="text"
-            placeholder={vault() ? `Open a note in ${vault()!.label}…` : "Open a note…"}
-            value={query()}
-            onInput={(e) => {
-              setQuery(e.currentTarget.value);
-              setSelected(0);
-            }}
-            onKeyDown={onKeyDown}
-          />
-          <div class="quick-open-list" ref={listEl}>
-            <For each={matches()}>
-              {(note, i) => (
-                <div
-                  class="quick-open-item"
-                  classList={{ "is-selected": i() === selected() }}
-                  onMouseEnter={() => setSelected(i())}
-                  onClick={(e) => choose(i(), e.metaKey || e.ctrlKey ? "tab" : "split")}
-                  title={note.path}
-                >
-                  <span class="quick-open-name">{note.name}</span>
-                  <span class="quick-open-dir">{note.rel}</span>
-                </div>
-              )}
-            </For>
-            <Show when={matches().length === 0}>
-              <div class="quick-open-empty">{empty()}</div>
-            </Show>
-          </div>
-        </div>
+    <div class="quick-open">
+      <input
+        ref={inputEl}
+        class="quick-open-input"
+        type="text"
+        placeholder={vault() ? `Open a note in ${vault()!.label}…` : "Open a note…"}
+        value={query()}
+        onInput={(e) => {
+          setQuery(e.currentTarget.value);
+          setSelected(0);
+        }}
+        onKeyDown={onKeyDown}
+      />
+      <div class="quick-open-list" ref={listEl}>
+        <For each={matches()}>
+          {(note, i) => (
+            <div
+              class="quick-open-item"
+              classList={{ "is-selected": i() === selected() }}
+              onMouseEnter={() => setSelected(i())}
+              onClick={(e) => choose(i(), e.metaKey || e.ctrlKey ? "tab" : "split")}
+              title={note.path}
+            >
+              <span class="quick-open-name">{note.name}</span>
+              <span class="quick-open-dir">{note.rel}</span>
+            </div>
+          )}
+        </For>
+        <Show when={matches().length === 0}>
+          <div class="quick-open-empty">{empty()}</div>
+        </Show>
       </div>
-    </Portal>
+    </div>
   );
 }

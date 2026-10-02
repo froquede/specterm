@@ -3,7 +3,6 @@ import type {
   SpawnPtyOptions,
   FileEntry,
   FileEntryStats,
-  MarkdownListing,
   DriveEntry,
   ProcessInfo,
   UnlistenFn,
@@ -40,8 +39,6 @@ interface SpectermAPI {
   writeTextFile(path: string, content: string): Promise<void>;
   readDir(path: string): Promise<FileEntry[]>;
   readDirStats(path: string): Promise<FileEntryStats[]>;
-  listMarkdownFiles(root: string): Promise<MarkdownListing>;
-  readTextFiles(paths: string[], maxBytes: number): Promise<(string | null)[]>;
   listDrives(): Promise<DriveEntry[]>;
   revealInFileManager(path: string, isDirectory: boolean): Promise<void>;
   openExternal(url: string): Promise<void>;
@@ -204,17 +201,6 @@ export class ElectronBackend implements Backend {
 
   async readDirStats(path: string): Promise<FileEntryStats[]> {
     return this.api.readDirStats(path);
-  }
-
-  async listMarkdownFiles(root: string): Promise<MarkdownListing> {
-    return this.api.listMarkdownFiles(root);
-  }
-
-  async readTextFiles(
-    paths: string[],
-    maxBytes: number
-  ): Promise<(string | null)[]> {
-    return this.api.readTextFiles(paths, maxBytes);
   }
 
   async listDrives(): Promise<DriveEntry[]> {

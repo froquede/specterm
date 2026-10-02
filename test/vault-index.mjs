@@ -1,5 +1,6 @@
-// The vault index (src/lib/vault-index.ts) and the note parser it shares with
-// the preview (noteStructure in src/lib/markdown.ts).
+// The vault index (plugins/vault/src/vault-index.ts) and the note parser it
+// shares with the preview (noteStructure in src/lib/markdown.ts, which the
+// plugin gets as api.noteStructure).
 //
 // What these pin is the contract the vault panel and quick open rely on: a link
 // counts as a backlink exactly when MarkdownPane would follow it, the outline
@@ -36,15 +37,20 @@ register(
 
 const lib = (name) =>
   import(pathToFileURL(path.join(root, "src", "lib", name)).href);
+const vault = await import(
+  pathToFileURL(path.join(root, "plugins", "vault", "src", "vault-index.ts")).href
+);
 const {
+  setNoteStructure,
   buildNote,
   resolveNoteLink,
   findNotesByName,
   searchNotes,
   backlinksTo,
   isInside,
-} = await lib("vault-index.ts");
+} = vault;
 const { noteStructure } = await lib("markdown.ts");
+setNoteStructure(noteStructure);
 
 let passed = 0;
 let failed = 0;

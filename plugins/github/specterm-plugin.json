@@ -8,5 +8,5 @@
   "panel": "dist/panel.js",
   "style": "dist/panel.css",
   "sidebarViews": [{ "id": "github", "title": "GitHub", "icon": "git-branch", "ownHeader": true }],
-  "tabBarButton": { "view": "github", "icon": "git-branch", "title": "GitHub panel" }
+  "tabBarButton": { "view": "github", "icon": "git-branch", "title": "GitHub panel", "order": 20 }
 }

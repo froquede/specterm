@@ -1,0 +1,18 @@
+{
+  "id": "vault",
+  "name": "Vault",
+  "version": "1.0.0",
+  "engines": { "specterm": "^1.3" },
+  "host": "host.cjs",
+  "activation": "view",
+  "panel": "dist/panel.js",
+  "style": "dist/panel.css",
+  "renderer": "dist/renderer.js",
+  "sidebarViews": [{ "id": "vault", "title": "Vault", "icon": "library-big", "ownHeader": true }],
+  "overlays": [{ "id": "quick-open" }],
+  "tabBarButton": { "view": "vault", "icon": "library-big", "title": "Vault panel", "order": 10 },
+  "commands": [
+    { "id": "quick-open", "title": "Open a vault note by name", "key": "p", "toggleOverlay": "quick-open" },
+    { "id": "toggle", "title": "Toggle vault panel (search notes)", "key": "f", "shift": true, "toggleView": "vault" }
+  ]
+}

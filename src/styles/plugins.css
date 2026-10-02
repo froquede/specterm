@@ -40,3 +40,37 @@
   font-size: 13px;
   line-height: 1.5;
 }
+
+/* An overlay: a plugin's view over the window, like a palette. The backdrop and
+   the box are ours (a click on the backdrop or Escape closes it); what is in
+   the box is the plugin's. */
+.plugin-overlay-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 12vh;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.plugin-overlay {
+  width: min(560px, calc(100vw - 32px));
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-chrome);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
+  color: var(--fg);
+}
+
+.plugin-overlay > .plugin-view-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}

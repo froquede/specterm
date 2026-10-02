@@ -9,6 +9,11 @@
 // does — relative markdown links, some with a #fragment — plus a hidden folder
 // and a node_modules folder holding notes that must never be indexed.
 //
+// The Vault is a built-in plugin (plugins/vault/), so this also covers the
+// plugin contract's parts it needs: the renderer module's folder action and
+// banner, the quick-open overlay, onActiveFile, noteStructure and
+// revealHeading.
+//
 // Run: node test/e2e-vault.mjs   (after `vite build`)
 import { _electron as electron } from "playwright";
 import { launchOptions } from "./launch.mjs";
@@ -117,17 +122,20 @@ try {
 
   // 1. A folder Obsidian has opened is offered as a vault, not added.
   const hinted = await until("the Obsidian vault hint", () =>
-    win.locator(".file-tree-vault-hint").isVisible()
+    win.locator(".file-tree-banner").isVisible()
   );
   check("a folder with .obsidian/ is offered as a vault", hinted);
-  const storedBefore = await win.evaluate(() => localStorage.getItem("specterm.vaults"));
+  const storedBefore = await win.evaluate(() => localStorage.getItem("specterm.plugin.vault"));
   check("the offer alone adds nothing", !storedBefore || storedBefore === "[]", String(storedBefore));
 
   // 2. Accepting it registers the vault and opens the panel on it.
-  await win.locator(".file-tree-vault-hint button", { hasText: "Open as vault" }).click();
+  await win.locator(".file-tree-banner button", { hasText: "Open as vault" }).click();
   const panelUp = await until("the vault panel", () => win.locator(".vault-panel").isVisible());
   check("Open as vault shows the vault panel", panelUp);
-  const stored = await win.evaluate(() => JSON.parse(localStorage.getItem("specterm.vaults") || "[]"));
+  // The plugin's storage: { vaults: [...] }.
+  const stored = await win.evaluate(
+    () => JSON.parse(localStorage.getItem("specterm.plugin.vault") || "{}").vaults ?? []
+  );
   check(
     "the vault is persisted",
     stored.length === 1 && stored[0].path === vaultDir,
@@ -170,6 +178,14 @@ try {
   );
   const top = await win.locator(".quick-open-item.is-selected .quick-open-name").textContent();
   check("a fuzzy query selects the note it means", top === "guide.md", String(top));
+  const qoBox = await win.locator(".plugin-overlay").boundingBox();
+  const qoInner = await win.locator(".quick-open").boundingBox();
+  check(
+    "the palette fills the overlay box",
+    qoBox && qoInner && Math.abs(qoBox.width - qoInner.width) <= 2,
+    JSON.stringify({ qoBox, qoInner })
+  );
+  await win.screenshot({ path: path.join(root, "test", "shot-vault-quick-open.png") });
   await win.keyboard.press("Enter");
   const opened = await until("the note to open", async () =>
     (await win.locator(".markdown-filepath").allTextContents()).some((t) =>
@@ -228,7 +244,9 @@ try {
   await win.locator(".vault-item-remove").first().click({ force: true });
   const emptied = await until("the empty state", () => win.locator(".vault-empty").isVisible());
   check("removing the last vault shows how to add one", emptied);
-  const storedAfter = await win.evaluate(() => localStorage.getItem("specterm.vaults"));
+  const storedAfter = await win.evaluate(() =>
+    JSON.stringify(JSON.parse(localStorage.getItem("specterm.plugin.vault") || "{}").vaults ?? null)
+  );
   check("removal is persisted", storedAfter === "[]", String(storedAfter));
 
   await win.keyboard.press(SIDEBAR_KEY); // the file tree takes the slot back
@@ -240,7 +258,7 @@ try {
     .first();
   if (await docsRow.isVisible()) {
     await docsRow.click({ button: "right" });
-    await win.locator('.file-tree-menu-item[data-action="vault"]').click();
+    await win.locator('.file-tree-menu-item[data-action="plugin:vault:toggle"]').click();
     const viaMenu = await until("the panel via the menu", () => win.locator(".vault-panel").isVisible());
     const label = await win.locator(".vault-item.active .vault-item-label").textContent().catch(() => null);
     check("the folder menu's Open as vault adds and shows it", viaMenu && label === "docs", String(label));

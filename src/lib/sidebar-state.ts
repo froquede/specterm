@@ -18,7 +18,6 @@ const STORAGE_KEY = "specterm.sidebar";
 
 const VALID: readonly (SidebarView | null)[] = [
   "files",
-  "vault",
   "settings",
   null,
 ];
@@ -30,9 +29,10 @@ export function loadSidebarView(): SidebarView | null {
     if (raw === null) return "files"; // first run: the file tree, as before
     const parsed = JSON.parse(raw) as { view?: unknown };
     let view = parsed?.view === undefined ? "files" : parsed.view;
-    // The GitHub panel is a built-in plugin now; a sidebar left open on it
-    // comes back on the same panel.
+    // The GitHub and Vault panels are built-in plugins now; a sidebar left
+    // open on one comes back on the same panel.
     if (view === "github") view = "plugin:github/github";
+    if (view === "vault") view = "plugin:vault/vault";
     if (VALID.includes(view as SidebarView | null)) return view as SidebarView | null;
     // A plugin's view comes back only if that plugin is still there to draw it.
     // The boot contributions are already in hand, so this costs nothing.

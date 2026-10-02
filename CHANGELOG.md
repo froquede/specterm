@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.29.0 — 2026-10-02
+
+### Changed
+- **The Vault is a built-in plugin.** The panel, quick open (`⌘P` /
+  `Ctrl+Shift+P`), the folder menu's *Open as vault* and the offer over a
+  folder Obsidian has opened all work as before, and the Vault is on by
+  default; *Settings → Plugins* can now turn it off. Your vaults, an open
+  Vault sidebar and any shortcut you rebound for it carry over on their own.
+  - Reading a vault's notes no longer runs in the process your terminals'
+    output goes through, and none of it runs until you first open the panel
+    or quick open.
+
+### Added
+- **Plugin API 1.3.** Plugins can show a view over the window (like quick
+  open), add an item to the file tree's folder menu and an offer over the
+  folder it shows, follow the file in the active pane, scroll its preview
+  to a heading, and read a note's headings and links with Specterm's own
+  parser.
+
 ## 0.28.0 — 2026-10-02
 
 ### Changed

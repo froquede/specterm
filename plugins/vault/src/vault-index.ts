@@ -1,20 +1,29 @@
 // What a vault knows about its notes, and the questions asked of it: open a
 // note by name, search every note's text, and list who links to a note.
 //
-// Pure on purpose — no backend, no signals. The store (stores/vaults.ts) feeds
+// Pure on purpose — no backend, no signals. The store (index-store.ts) feeds
 // it what the host read off disk and owns the lifecycle; everything here is
-// testable in node (test/vault-index.mjs).
+// testable in node (test/vault-index.mjs). Moved from src/lib/vault-index.ts.
 //
 // Links count only in the form the repo already writes and every renderer
 // understands: a standard markdown link to a .md file, relative to the note or
 // absolute. That is the same rule MarkdownPane follows when a link is clicked,
 // so a backlink listed here is one you could also have followed from its source.
 
-import { noteStructure, type NoteHeading } from "./markdown";
-import { normalize, equalPath, basename, dirname, sep } from "./fspath";
-export { isInside } from "./fspath";
-import { isMarkdownPath } from "./file-kind";
-import { os } from "./platform";
+import type { NoteHeading, NoteLink } from "../../../src/lib/markdown";
+import { normalize, equalPath, basename, dirname, sep } from "../../../src/lib/fspath";
+export { isInside } from "../../../src/lib/fspath";
+import { isMarkdownPath } from "../../../src/lib/file-kind";
+import { os } from "../../../src/lib/platform";
+
+// The parser is Specterm's (api.noteStructure), so a note's outline here is
+// numbered exactly as its preview renders it. Set by whoever loads the index;
+// the tests hand in the same function directly.
+type Structure = (source: string) => { headings: NoteHeading[]; links: NoteLink[] };
+let noteStructure: Structure = () => ({ headings: [], links: [] });
+export function setNoteStructure(fn: Structure) {
+  noteStructure = fn;
+}
 
 const WIN = os === "windows";
 

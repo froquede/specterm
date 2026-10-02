@@ -470,8 +470,9 @@
   background: var(--border);
 }
 
-/* The offer to open a folder that Obsidian already treats as a vault. */
-.file-tree-vault-hint {
+/* A plugin's banner over the folder the tree shows — the Vault's offer to open
+   a folder that Obsidian already treats as a vault. */
+.file-tree-banner {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -482,11 +483,11 @@
   color: var(--fg-muted);
 }
 
-.file-tree-vault-hint-text {
+.file-tree-banner-text {
   flex: 1;
 }
 
-.file-tree-vault-hint button {
+.file-tree-banner button {
   border: none;
   background: none;
   color: var(--accent);
@@ -495,7 +496,7 @@
   font: inherit;
 }
 
-.file-tree-vault-hint .file-tree-vault-hint-dismiss {
+.file-tree-banner .file-tree-banner-dismiss {
   display: flex;
   color: var(--fg-muted);
 }

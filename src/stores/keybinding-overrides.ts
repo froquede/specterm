@@ -41,6 +41,13 @@ function parseChord(v: unknown): Chord | null | undefined {
   };
 }
 
+// Rows that moved out of the core into a plugin keep their user's chord: the
+// override was saved under the old id, and is read under the new one.
+const RENAMED: Readonly<Record<string, string>> = {
+  "vault.quickOpen": "plugin.vault.quick-open",
+  "vault.toggle": "plugin.vault.toggle",
+};
+
 function load(): OverrideMap {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -50,7 +57,11 @@ function load(): OverrideMap {
     const out: Record<string, Chord | null> = {};
     for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
       const chord = parseChord(value);
-      if (chord !== undefined) out[id] = chord;
+      if (chord === undefined) continue;
+      const renamed = RENAMED[id];
+      if (renamed) {
+        if (!(renamed in out)) out[renamed] = chord;
+      } else out[id] = chord;
     }
     return out;
   } catch (_) {

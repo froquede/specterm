@@ -85,10 +85,6 @@ export interface KeymapContext {
   focusActivePane: () => void;
   // Open/close the settings sidebar.
   toggleSettings: () => void;
-  // Open/close the vault panel.
-  toggleVault: () => void;
-  // Show/hide quick open (open a vault note by name).
-  toggleQuickOpen: () => void;
 }
 
 const newTerminal = () =>
@@ -107,8 +103,6 @@ export function createKeymap({
   store,
   focusActivePane,
   toggleSettings,
-  toggleVault,
-  toggleQuickOpen,
 }: KeymapContext): BindingSpec[] {
   // Move the selection one tab along, wrapping at both ends. Shared by the
   // ⌘⇧[ / ⌘⇧] pair and by Ctrl+Tab, which are two chords for the same move.
@@ -549,28 +543,6 @@ export function createKeymap({
         };
         focusFilter();
       },
-    },
-
-    // Vaults. Quick open is ⌘P, the go-to-file chord of every editor
-    // (Ctrl+Shift+P on Linux/Windows via cmd()). The vault panel — search,
-    // outline, backlinks — is ⌘⇧F, find-in-files, one modifier up from ⌘F's
-    // find-in-pane (Ctrl+Alt+F elsewhere). Both fire from inside an input so the
-    // same chord closes what it opened.
-    {
-      id: "vault.quickOpen",
-      key: "p",
-      ...cmd(),
-      allowInInput: true,
-      label: "Open a vault note by name",
-      run: () => toggleQuickOpen(),
-    },
-    {
-      id: "vault.toggle",
-      key: "f",
-      ...cmd({ shift: true }),
-      allowInInput: true,
-      label: "Toggle vault panel (search notes)",
-      run: () => toggleVault(),
     },
 
     // Font zoom — ⌘= / ⌘+ grow, ⌘- shrink, ⌘0 reset. Codes keep these stable

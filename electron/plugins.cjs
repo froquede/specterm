@@ -32,7 +32,10 @@ const path = require("path");
 //   1.1 — ctx.toast and api.onReveal, api.renderMarkdown, api.platform,
 //         api.openExternal, and `ownHeader` on a sidebar view.
 //   1.2 — api.onActiveCwd, api.openFile and api.storage; built-in plugins.
-const API_VERSION = { major: 1, minor: 2 };
+//   1.3 — overlays, the renderer module (file-tree folder actions and banners,
+//         commands it runs), api.onActiveFile, api.revealHeading,
+//         api.noteStructure, api.showView, and tabBarButton.order.
+const API_VERSION = { major: 1, minor: 3 };
 
 const SCHEME = "specterm-plugin";
 const MANIFEST = "specterm-plugin.json";
@@ -131,7 +134,12 @@ function parseManifest(dir, raw) {
     host: m.host === undefined ? null : innerFile(dir, m.host, "host"),
     panel: m.panel === undefined ? null : innerFile(dir, m.panel, "panel"),
     style: m.style === undefined ? null : innerFile(dir, m.style, "style"),
+    // Loaded in every window after its first paint, whether or not any of the
+    // plugin's views is open: for what has to exist before one is (a folder
+    // action in the file tree, the command a shortcut runs). Keep it small.
+    renderer: m.renderer === undefined ? null : innerFile(dir, m.renderer, "renderer"),
     sidebarViews: [],
+    overlays: [],
     tabBarButton: null,
     commands: [],
     // When the host module starts. "startup": as soon as the plugin is on
@@ -169,6 +177,22 @@ function parseManifest(dir, raw) {
     });
   }
 
+  // Overlays: a view shown over the window rather than in the sidebar, like a
+  // palette. The core draws the backdrop and closes it on Escape or a click
+  // outside; the panel module draws the rest, mounted with the overlay's id.
+  const overlays = m.overlays ?? [];
+  if (!Array.isArray(overlays) || overlays.length > MAX_VIEWS) {
+    throw new Error(`"overlays" must be a list of at most ${MAX_VIEWS}`);
+  }
+  if (overlays.length && !out.panel) throw new Error(`"overlays" needs a "panel" module to render them`);
+  const overlayIds = new Set();
+  for (const [i, o] of overlays.entries()) {
+    const id = name(o?.id, `overlays[${i}].id`);
+    if (overlayIds.has(id) || viewIds.has(id)) throw new Error(`view "${id}" is declared twice`);
+    overlayIds.add(id);
+    out.overlays.push({ id });
+  }
+
   if (m.tabBarButton !== undefined) {
     const b = m.tabBarButton;
     const view = name(b?.view, "tabBarButton.view");
@@ -177,6 +201,8 @@ function parseManifest(dir, raw) {
       view,
       icon: name(b.icon, "tabBarButton.icon"),
       title: text(b.title, "tabBarButton.title"),
+      // Where it sits among the plugin buttons: lower first, then by id.
+      order: Number.isFinite(b.order) ? Number(b.order) : 100,
     };
   }
 
@@ -197,11 +223,17 @@ function parseManifest(dir, raw) {
     if (typeof c.toggleView === "string") {
       if (!viewIds.has(c.toggleView)) throw new Error(`"commands[${i}].toggleView" names no sidebar view`);
       action = { toggleView: c.toggleView };
+    } else if (typeof c.toggleOverlay === "string") {
+      if (!overlayIds.has(c.toggleOverlay)) throw new Error(`"commands[${i}].toggleOverlay" names no overlay`);
+      action = { toggleOverlay: c.toggleOverlay };
     } else if (typeof c.invoke === "string") {
       if (!out.host) throw new Error(`"commands[${i}].invoke" needs a "host" module`);
       action = { invoke: name(c.invoke, `commands[${i}].invoke`) };
+    } else if (typeof c.run === "string") {
+      if (!out.renderer) throw new Error(`"commands[${i}].run" needs a "renderer" module`);
+      action = { run: name(c.run, `commands[${i}].run`) };
     } else {
-      throw new Error(`"commands[${i}]" needs "toggleView" or "invoke"`);
+      throw new Error(`"commands[${i}]" needs "toggleView", "toggleOverlay", "invoke" or "run"`);
     }
     out.commands.push({
       id,
@@ -226,7 +258,9 @@ function contributionOf(manifest) {
     version: manifest.version,
     panel: url(manifest.panel),
     style: url(manifest.style),
+    renderer: url(manifest.renderer),
     sidebarViews: manifest.sidebarViews,
+    overlays: manifest.overlays,
     tabBarButton: manifest.tabBarButton,
     commands: manifest.commands,
   };
@@ -593,10 +627,15 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     const p = discovered.get(url.hostname);
     if (!p?.manifest || !isEnabled(p.id)) return new Response("not found", { status: 404 });
     const rel = decodeURIComponent(url.pathname.replace(/^\/+/, ""));
-    // Only the files the manifest names — not anything else in the folder.
-    if (![p.manifest.panel, p.manifest.style].includes(rel)) {
-      return new Response("not found", { status: 404 });
-    }
+    // The files the manifest names, and whatever sits beside them in their
+    // folders (a bundler's shared chunks) — never the rest of the plugin, so
+    // its host module and manifest are not readable from the page.
+    const entries = [p.manifest.panel, p.manifest.style, p.manifest.renderer].filter(Boolean);
+    const dirs = entries.map((e) => path.posix.dirname(e)).filter((d) => d !== ".");
+    const allowed =
+      entries.includes(rel) ||
+      (!rel.split("/").includes("..") && dirs.some((d) => rel.startsWith(d + "/")));
+    if (!allowed) return new Response("not found", { status: 404 });
     try {
       const body = await fs.promises.readFile(path.join(p.dir, rel));
       return new Response(body, {

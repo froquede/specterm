@@ -1,7 +1,11 @@
 import { createEffect, createMemo, createRoot, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import type { PluginViewKey } from "../types";
 import {
+  findPluginOverlay,
   findPluginView,
+  pluginHost,
+  viewKey,
   invokePlugin,
   onPluginEvent,
   onPluginReveal,
@@ -11,7 +15,7 @@ import {
 import { useTabStore } from "../stores/tabs";
 import { useTerminalCwd } from "../lib/terminal-registry";
 import { getBackend } from "../backends";
-import { renderMarkdown } from "../lib/markdown";
+import { noteStructure, renderMarkdown, type NoteHeading, type NoteLink } from "../lib/markdown";
 import { os } from "../lib/platform";
 import "../styles/plugins.css";
 
@@ -19,7 +23,7 @@ import "../styles/plugins.css";
 // `engines.specterm`: an addition is a new minor (noted beside it), a change is
 // a new major.
 export interface PluginPanelApi {
-  apiVersion: "1.2";
+  apiVersion: "1.3";
   pluginId: string;
   viewId: string;
   /** Call a method its host module registered with `ctx.handle`. */
@@ -47,6 +51,17 @@ export interface PluginPanelApi {
   openFile(path: string, mode?: "tab" | "split"): void;
   /** 1.2 — A small JSON store for this plugin, shared by its windows. */
   storage: PluginStorage;
+  /** 1.3 — The file shown in the active pane: called now, and again whenever
+   *  it changes. null when the active pane is a terminal. */
+  onActiveFile(cb: (path: string | null) => void): () => void;
+  /** 1.3 — Scroll the active pane's rendered markdown to its Nth heading, N as
+   *  counted by noteStructure. Does nothing for a pane in edit mode. */
+  revealHeading(index: number): void;
+  /** 1.3 — The headings and links of a markdown source, parsed by the same
+   *  renderer the preview uses, so heading N here is heading N there. */
+  noteStructure(source: string): { headings: NoteHeading[]; links: NoteLink[] };
+  /** 1.3 — Show one of this plugin's sidebar views. */
+  showView(viewId: string): void;
 }
 
 const PLATFORM = ({ mac: "darwin", windows: "win32", linux: "linux" } as const)[os];
@@ -59,13 +74,22 @@ const PLATFORM = ({ mac: "darwin", windows: "win32", linux: "linux" } as const)[
 // stylesheet is attached for as long as the view is mounted. Everything the
 // panel subscribed to through `api.on` is dropped here when the view goes,
 // whether or not the panel's own dispose remembered to.
+// The same component mounts an overlay (`overlay`): no frame, a backdrop the
+// core owns that closes it on a click outside or Escape, and the panel module
+// mounted with the overlay's id.
 export default function PluginView(props: {
   viewKey: PluginViewKey;
   onClose: () => void;
-  onOpenFile: (path: string, mode: "split" | "tab") => void;
+  overlay?: boolean;
 }) {
   // Read once: App remounts this component when the key changes.
-  const found = findPluginView(props.viewKey);
+  const found = (() => {
+    if (props.overlay) {
+      const o = findPluginOverlay(props.viewKey);
+      return o && { plugin: o.plugin, view: { id: o.overlay.id, title: "", ownHeader: true } };
+    }
+    return findPluginView(props.viewKey);
+  })();
   const store = useTabStore();
   // The memo matters: the cwd epoch moves when *any* pane changes directory,
   // and a panel should only hear about the active one.
@@ -95,7 +119,7 @@ export default function PluginView(props: {
       document.head.appendChild(stylesheet);
     }
     const api: PluginPanelApi = {
-      apiVersion: "1.2",
+      apiVersion: "1.3",
       pluginId: plugin.id,
       viewId: view.id,
       invoke: (method, ...args) => invokePlugin(plugin.id, method, args),
@@ -143,8 +167,29 @@ export default function PluginView(props: {
         };
       },
       openFile(path, mode = "tab") {
-        if (typeof path === "string" && path) props.onOpenFile(path, mode === "split" ? "split" : "tab");
+        if (typeof path === "string" && path) pluginHost.openFile(path, mode === "split" ? "split" : "tab");
       },
+      onActiveFile(cb) {
+        const dispose = createRoot((disposeRoot) => {
+          createEffect(() => {
+            const file = pluginHost.activeFile();
+            try {
+              cb(file);
+            } catch (err) {
+              console.error(`[plugin ${plugin.id}] onActiveFile listener threw:`, err);
+            }
+          });
+          return disposeRoot;
+        });
+        unsubscribes.add(dispose);
+        return () => {
+          dispose();
+          unsubscribes.delete(dispose);
+        };
+      },
+      revealHeading: (index) => pluginHost.revealHeading(Number(index)),
+      noteStructure: (source) => noteStructure(String(source ?? "")),
+      showView: (viewId) => pluginHost.showView(viewKey(plugin.id, String(viewId))),
       storage: (() => {
         const storage = pluginStorage(plugin.id);
         return {
@@ -190,6 +235,38 @@ export default function PluginView(props: {
     body.replaceChildren();
   });
 
+  const content = () => (
+    <>
+      <Show when={error()}>
+        <div class="plugin-view-error">{error()}</div>
+      </Show>
+      <div class="plugin-view-body" ref={body} />
+    </>
+  );
+
+  if (props.overlay) {
+    return (
+      <Portal>
+        <div
+          class="plugin-overlay-backdrop"
+          data-plugin={found?.plugin.id}
+          onClick={() => props.onClose()}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              props.onClose();
+            }
+          }}
+        >
+          <div class="plugin-overlay" onClick={(e) => e.stopPropagation()}>
+            {content()}
+          </div>
+        </div>
+      </Portal>
+    );
+  }
+
   return (
     <div
       class="plugin-view"
@@ -202,10 +279,7 @@ export default function PluginView(props: {
           <span class="plugin-view-title">{found?.view.title ?? "Plugin"}</span>
         </div>
       </Show>
-      <Show when={error()}>
-        <div class="plugin-view-error">{error()}</div>
-      </Show>
-      <div class="plugin-view-body" ref={body} />
+      {content()}
     </div>
   );
 }

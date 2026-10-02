@@ -19,14 +19,6 @@ export interface FileEntryStats extends FileEntry {
   mtimeMs: number;
 }
 
-// Every markdown file under a vault root, as the host found it. `truncated` is
-// true when the walk stopped at its cap, so the vault panel can say the index
-// is partial instead of silently missing files.
-export interface MarkdownListing {
-  files: { path: string; mtimeMs: number; size: number }[];
-  truncated: boolean;
-}
-
 // A process running inside a pane, as seen from the host. `args` is the full
 // command line where the platform can report one, null where it can't.
 export interface ProcessInfo {
@@ -174,10 +166,13 @@ export interface PluginCommand {
   title: string;
   key: string;
   shift: boolean;
-  // Exactly one of these: open/close one of the plugin's views, or call a
-  // method on its host module.
+  // Exactly one of these: open/close one of the plugin's sidebar views or
+  // overlays, call a method on its host module, or run a command its renderer
+  // module registered.
   toggleView?: string;
+  toggleOverlay?: string;
   invoke?: string;
+  run?: string;
 }
 
 // What a window needs to draw a plugin, with no plugin code loaded.
@@ -188,8 +183,12 @@ export interface PluginContribution {
   // specterm-plugin:// URLs of the panel module and its stylesheet.
   panel: string | null;
   style: string | null;
+  // specterm-plugin:// URL of the module loaded in every window after its
+  // first paint (API 1.3).
+  renderer?: string | null;
   sidebarViews: PluginSidebarView[];
-  tabBarButton: { view: string; icon: string; title: string } | null;
+  overlays?: { id: string }[];
+  tabBarButton: { view: string; icon: string; title: string; order?: number } | null;
   commands: PluginCommand[];
 }
 
@@ -298,13 +297,6 @@ export interface Backend {
   // Same listing with modification times. Returns [] for a missing directory
   // rather than throwing — callers use it to ask "has anything happened here?".
   readDirStats(path: string): Promise<FileEntryStats[]>;
-  // Every markdown file under `root`, in one round trip — what a vault's index
-  // is built from. Skips hidden folders and node_modules, never follows a
-  // symlink.
-  listMarkdownFiles(root: string): Promise<MarkdownListing>;
-  // Several text files at once. A file larger than `maxBytes`, or one that
-  // can't be read, is null in its slot instead of failing the whole batch.
-  readTextFiles(paths: string[], maxBytes: number): Promise<(string | null)[]>;
   // Mounted Windows volumes; [] on macOS/Linux (single-root filesystems).
   listDrives(): Promise<DriveEntry[]>;
   // Show a path in the OS file manager (Explorer/Finder/Nautilus). A directory

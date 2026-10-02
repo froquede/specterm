@@ -1,11 +1,11 @@
-import { createSignal } from "solid-js";
-import { normalize, equalPath } from "../lib/fspath";
-import { getBackend } from "../backends";
-import { buildNote, type Note } from "../lib/vault-index";
-import { isVault, onVaultsRemoved } from "./vaults";
+import { createRoot, createSignal } from "solid-js";
+import { normalize, equalPath } from "../../../src/lib/fspath";
+import { buildNote, type Note } from "./vault-index";
+import { isVault, onVaultsChanged } from "./vaults";
 
-// The index of one vault, kept apart from the vault list (stores/vaults) so
-// only the lazily loaded vault panel and quick open ever load it.
+// The index of one vault. Only the panel and quick open use it; the renderer
+// module never loads this. Moved from src/stores/vault-index.ts; the host calls
+// go through the plugin's host module (host.cjs).
 //
 // One vault's index at a time, held only while something is using it. Each
 // consumer (the panel, quick open) acquires it on mount and releases it on
@@ -34,9 +34,22 @@ export interface VaultIndex {
   partial: boolean;
 }
 
-const [index, setIndex] = createSignal<VaultIndex | null>(null);
-const [indexing, setIndexing] = createSignal(false);
+const { index, setIndex, indexing, setIndexing } = createRoot(() => {
+  const [index, setIndex] = createSignal<VaultIndex | null>(null);
+  const [indexing, setIndexing] = createSignal(false);
+  return { index, setIndex, indexing, setIndexing };
+});
 export { index as vaultIndex, indexing as vaultIndexing };
+
+// The mounted view's way to the host module. Set while a view holds the index
+// (acquireVaultIndex), and every view hands in an equivalent one.
+type Invoke = (method: string, ...args: unknown[]) => Promise<unknown>;
+const invokers: Invoke[] = [];
+const invoke: Invoke = (method, ...args) => {
+  const fn = invokers[invokers.length - 1];
+  if (!fn) return Promise.reject(new Error("no vault view is open"));
+  return fn(method, ...args);
+};
 
 let holders = 0;
 let releaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -54,8 +67,9 @@ function releaseIndex() {
   lastRefreshRoot = "";
 }
 
-/** Hold the index alive. Returns the matching release. */
-export function acquireVaultIndex(): () => void {
+/** Hold the index alive, calling the host through `via`. Returns the release. */
+export function acquireVaultIndex(via: Invoke): () => void {
+  invokers.push(via);
   holders++;
   if (releaseTimer) {
     clearTimeout(releaseTimer);
@@ -65,6 +79,7 @@ export function acquireVaultIndex(): () => void {
   return () => {
     if (released) return;
     released = true;
+    invokers.splice(invokers.indexOf(via), 1);
     holders = Math.max(0, holders - 1);
     if (holders === 0) {
       releaseTimer = setTimeout(() => {
@@ -97,8 +112,10 @@ export async function refreshVaultIndex(root: string, force = false): Promise<vo
   if (!sameRoot) setIndex(null);
   setIndexing(true);
   try {
-    const backend = await getBackend();
-    const listing = await backend.listMarkdownFiles(root);
+    const listing = (await invoke("list-markdown-files", root)) as {
+      files: { path: string; mtimeMs: number; size: number }[];
+      truncated: boolean;
+    };
     if (gen !== generation) return;
 
     const known = new Map<string, Note>();
@@ -122,10 +139,11 @@ export async function refreshVaultIndex(root: string, force = false): Promise<vo
       const batch = toRead.slice(i, i + READ_BATCH);
       const affordable = budget > 0;
       const texts = affordable
-        ? await backend.readTextFiles(
+        ? ((await invoke(
+            "read-text-files",
             batch.map((f) => f.path),
             MAX_FILE_BYTES
-          )
+          )) as (string | null)[])
         : batch.map(() => null);
       if (gen !== generation) return;
       for (let j = 0; j < batch.length; j++) {
@@ -149,7 +167,7 @@ export async function refreshVaultIndex(root: string, force = false): Promise<vo
 }
 
 // A vault removed here or in another window takes its index with it.
-onVaultsRemoved(() => {
+onVaultsChanged(() => {
   const idx = index();
   if (idx && !isVault(idx.root)) releaseIndex();
 });

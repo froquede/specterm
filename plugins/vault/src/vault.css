@@ -1,16 +1,14 @@
-/* Vault panel — shares the .app-body sidebar slot with the file tree, GitHub
-   and settings (mutually exclusive). Same width contract as .github-panel. */
+/* The Vault panel and quick open. Specterm draws the card around the panel
+   (.plugin-view) and the box around quick open (.plugin-overlay); this styles
+   what is inside them, with the app's theme variables. Moved from
+   src/styles/vault.css when the Vault became a built-in plugin. */
 .vault-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  width: var(--sidebar-width);
-  background: var(--bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius);
+  min-width: 0;
   color: var(--fg);
   overflow: hidden;
-  flex-shrink: 0;
   font-size: 12px;
 }
 
@@ -230,29 +228,12 @@
 }
 
 /* Quick open — a palette over the window, the way a code editor's go-to-file
-   works. Portalled to <body>; the backdrop closes it on an outside click. */
-.quick-open-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  justify-content: center;
-  align-items: flex-start;
-  padding-top: 12vh;
-  background: rgba(0, 0, 0, 0.25);
-}
-
+   works. Specterm's overlay draws the backdrop and the box. */
 .quick-open {
-  width: min(560px, calc(100vw - 32px));
-  max-height: 60vh;
   display: flex;
   flex-direction: column;
-  background: var(--bg-chrome);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
-  overflow: hidden;
-  color: var(--fg);
+  min-height: 0;
+  flex: 1;
 }
 
 .quick-open-input {

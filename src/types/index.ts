@@ -103,7 +103,7 @@ export interface TabSnapshot {
 // exclusive by construction — one field, not four booleans to keep in sync.
 // `plugin:<plugin id>/<view id>` is a view contributed by a plugin.
 export type PluginViewKey = `plugin:${string}/${string}`;
-export type SidebarView = "files" | "vault" | "settings" | PluginViewKey;
+export type SidebarView = "files" | "settings" | PluginViewKey;
 
 export interface AppState {
   tabs: Tab[];

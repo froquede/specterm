@@ -16,6 +16,7 @@ import {
   type BindingSpec,
 } from "./keybindings";
 import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
+import { afterFirstTerminalRender } from "../lib/terminal-registry";
 
 // The renderer's side of plugins: what the enabled ones contribute to this
 // window, their badges, and the one subscription their events arrive on. The
@@ -50,6 +51,30 @@ export function findPluginView(
   return null;
 }
 
+export function findPluginOverlay(
+  key: string | null
+): { plugin: PluginContribution; overlay: { id: string } } | null {
+  if (!key || !key.startsWith("plugin:")) return null;
+  for (const plugin of contributions()) {
+    for (const overlay of plugin.overlays ?? []) {
+      if (viewKey(plugin.id, overlay.id) === key) return { plugin, overlay };
+    }
+  }
+  return null;
+}
+
+// The overlay open in this window, if any: one at a time, like a palette.
+const [openOverlay, setOpenOverlay] = createSignal<PluginViewKey | null>(null);
+export { openOverlay };
+
+export function toggleOverlay(key: PluginViewKey) {
+  setOpenOverlay((current) => (current === key ? null : key));
+}
+
+export function closeOverlay() {
+  setOpenOverlay(null);
+}
+
 export interface PluginButton {
   pluginId: string;
   viewKey: PluginViewKey;
@@ -58,18 +83,18 @@ export interface PluginButton {
 }
 
 export function pluginButtons(): PluginButton[] {
-  return contributions().flatMap((p) =>
-    p.tabBarButton
-      ? [
-          {
-            pluginId: p.id,
-            viewKey: viewKey(p.id, p.tabBarButton.view),
-            icon: p.tabBarButton.icon,
-            title: p.tabBarButton.title,
-          },
-        ]
-      : []
-  );
+  return contributions()
+    .filter((p) => p.tabBarButton)
+    .sort(
+      (a, b) =>
+        (a.tabBarButton!.order ?? 100) - (b.tabBarButton!.order ?? 100) || a.id.localeCompare(b.id)
+    )
+    .map((p) => ({
+      pluginId: p.id,
+      viewKey: viewKey(p.id, p.tabBarButton!.view),
+      icon: p.tabBarButton!.icon,
+      title: p.tabBarButton!.title,
+    }));
 }
 
 export async function invokePlugin(
@@ -307,6 +332,203 @@ export function pluginStorage(pluginId: string): PluginStorage {
   }
 })();
 
+// --- what panels and renderer modules can ask of the window ----------------------
+//
+// Set by App through initPlugins; read by PluginView and the renderer modules.
+
+export const pluginHost = {
+  openFile: (_path: string, _mode: "split" | "tab") => {},
+  activeFile: (() => null) as () => string | null,
+  revealHeading: (_index: number) => {},
+  showView: (key: PluginViewKey) => showViewImpl(key),
+};
+
+// --- file-tree contributions (from renderer modules) -----------------------------
+//
+// A folder action is an item in the file tree's menu for a folder; a folder
+// banner is a strip over the tree for the folder it is showing (the Vault's
+// "Obsidian vault folder" offer). Both are asked about synchronously when the
+// tree draws, and their answers come from the plugin's own state, which the
+// core cannot watch: a plugin calls api.fileTree.refresh() when that state
+// changes, and the tree asks again.
+
+export interface FolderAction {
+  pluginId: string;
+  id: string;
+  /** The item's label for this folder, or null to leave it out. */
+  title(path: string): string | null;
+  run(path: string): void;
+}
+
+export interface FolderBanner {
+  pluginId: string;
+  id: string;
+  /** For the folder the tree shows and the names in it: what to offer, or null. */
+  match(path: string, names: readonly string[]): { text: string; action: string } | null;
+  run(path: string): void;
+}
+
+const [folderActions, setFolderActions] = createSignal<readonly FolderAction[]>([]);
+const [folderBanners, setFolderBanners] = createSignal<readonly FolderBanner[]>([]);
+const [fileTreeEpoch, setFileTreeEpoch] = createSignal(0);
+export { folderActions, folderBanners, fileTreeEpoch };
+
+// --- renderer modules -----------------------------------------------------------
+//
+// A plugin's renderer module is loaded in every window after its first paint,
+// for what must exist before any of its views is open. It gets an api like the
+// panel's, without the parts that only make sense in a view, and returns its
+// dispose. Everything it registers is dropped when the plugin goes away,
+// whether or not that dispose remembers to.
+
+const rendererCommands = new Map<string, Map<string, () => void>>();
+
+function runRendererCommand(pluginId: string, name: string) {
+  const fn = rendererCommands.get(pluginId)?.get(name);
+  if (!fn) {
+    console.warn(`[plugin ${pluginId}] no renderer command "${name}" (still loading?)`);
+    return;
+  }
+  try {
+    fn();
+  } catch (err) {
+    console.error(`[plugin ${pluginId}] command "${name}" threw:`, err);
+  }
+}
+
+interface LoadedRenderer {
+  url: string;
+  disposers: Set<() => void>;
+  dispose: (() => void) | null;
+  gone: boolean;
+}
+
+const renderers = new Map<string, LoadedRenderer>();
+let renderersScheduled = false;
+
+function scheduleRenderers() {
+  if (renderersScheduled) return;
+  renderersScheduled = true;
+  const run = () => {
+    renderersScheduled = false;
+    void syncRenderers();
+  };
+  // After the window's first terminal has painted — not merely idle time,
+  // which a window waiting on its shell has plenty of — and then in the next
+  // idle slot, with a timeout so a busy window still gets them.
+  void afterFirstTerminalRender().then(() => {
+    if (typeof requestIdleCallback === "function") requestIdleCallback(run, { timeout: 1000 });
+    else setTimeout(run, 200);
+  });
+}
+
+function unloadRenderer(pluginId: string) {
+  const loaded = renderers.get(pluginId);
+  if (!loaded) return;
+  renderers.delete(pluginId);
+  loaded.gone = true;
+  try {
+    loaded.dispose?.();
+  } catch (err) {
+    console.error(`[plugin ${pluginId}] renderer dispose threw:`, err);
+  }
+  for (const off of loaded.disposers) off();
+  rendererCommands.delete(pluginId);
+  setFolderActions((list) => list.filter((a) => a.pluginId !== pluginId));
+  setFolderBanners((list) => list.filter((b) => b.pluginId !== pluginId));
+}
+
+async function syncRenderers() {
+  const wanted = new Map(
+    contributions()
+      .filter((p) => p.renderer)
+      .map((p) => [p.id, p] as const)
+  );
+  for (const [id, loaded] of [...renderers]) {
+    if (wanted.get(id)?.renderer !== loaded.url) unloadRenderer(id);
+  }
+  for (const [id, plugin] of wanted) {
+    if (renderers.has(id)) continue;
+    const loaded: LoadedRenderer = { url: plugin.renderer!, disposers: new Set(), dispose: null, gone: false };
+    renderers.set(id, loaded);
+    try {
+      const mod = await import(/* @vite-ignore */ plugin.renderer!);
+      if (loaded.gone) continue;
+      if (typeof mod.activate !== "function") throw new Error("the renderer module must export activate(api)");
+      const result = await mod.activate(rendererApi(plugin, loaded));
+      if (typeof result === "function") {
+        if (loaded.gone) result();
+        else loaded.dispose = result;
+      }
+    } catch (err) {
+      console.error(`[plugin ${id}] renderer module failed:`, err);
+    }
+  }
+}
+
+/** What a renderer module's activate(api) gets (API 1.3). */
+export type PluginRendererApi = ReturnType<typeof rendererApi>;
+
+function rendererApi(plugin: PluginContribution, loaded: LoadedRenderer) {
+  const id = plugin.id;
+  const track = (off: () => void) => {
+    loaded.disposers.add(off);
+    return () => {
+      off();
+      loaded.disposers.delete(off);
+    };
+  };
+  const storage = pluginStorage(id);
+  return {
+    apiVersion: "1.3" as const,
+    pluginId: id,
+    invoke: (method: string, ...args: unknown[]) => invokePlugin(id, method, args),
+    on: (event: string, cb: (payload: unknown) => void) => track(onPluginEvent(id, event, cb)),
+    storage: {
+      get: storage.get,
+      set: storage.set,
+      onChange: (cb: (key: string, value: unknown) => void) => track(storage.onChange(cb)),
+    },
+    showView: (viewId: string) => pluginHost.showView(viewKey(id, viewId)),
+    openFile: (path: string, mode: "tab" | "split" = "tab") => pluginHost.openFile(path, mode),
+    commands: {
+      register(name: string, fn: () => void) {
+        let map = rendererCommands.get(id);
+        if (!map) rendererCommands.set(id, (map = new Map()));
+        map.set(name, fn);
+        return track(() => rendererCommands.get(id)?.delete(name));
+      },
+    },
+    fileTree: {
+      addFolderAction(action: Omit<FolderAction, "pluginId">) {
+        const entry = { ...action, pluginId: id };
+        setFolderActions((list) => [...list, entry]);
+        return track(() => setFolderActions((list) => list.filter((a) => a !== entry)));
+      },
+      addFolderBanner(banner: Omit<FolderBanner, "pluginId">) {
+        const entry = { ...banner, pluginId: id };
+        setFolderBanners((list) => [...list, entry]);
+        return track(() => setFolderBanners((list) => list.filter((b) => b !== entry)));
+      },
+      /** Ask the tree to re-read every action and banner. */
+      refresh: () => setFileTreeEpoch((n) => n + 1),
+    },
+  };
+}
+
+// The vault list was the app's own (`specterm.vaults`); it is the Vault
+// plugin's now. Carried over once, the same way as the GitHub watchlist.
+(function migrateVaults() {
+  try {
+    if (localStorage.getItem(STORAGE_PREFIX + "vault") !== null) return;
+    const list = JSON.parse(localStorage.getItem("specterm.vaults") ?? "null");
+    if (!Array.isArray(list) || list.length === 0) return;
+    localStorage.setItem(STORAGE_PREFIX + "vault", JSON.stringify({ vaults: list }));
+  } catch (_) {
+    /* Unreadable: nothing to carry over. */
+  }
+})();
+
 // --- shortcuts ---------------------------------------------------------------
 
 let registeredIds = new Set<string>();
@@ -327,6 +549,8 @@ function syncBindings(list: readonly PluginContribution[]) {
       label: `${p.name}: ${c.title}`,
       run: () => {
         if (c.toggleView) toggleViewImpl(viewKey(p.id, c.toggleView));
+        else if (c.toggleOverlay) toggleOverlay(viewKey(p.id, c.toggleOverlay));
+        else if (c.run) runRendererCommand(p.id, c.run);
         else if (c.invoke) {
           invokePlugin(p.id, c.invoke, []).catch((err) =>
             console.error(`[plugin ${p.id}] ${c.invoke} failed:`, err)
@@ -352,19 +576,31 @@ export function initPlugins(opts: {
   toggleView: (key: PluginViewKey) => void;
   showView: (key: PluginViewKey) => void;
   isViewOpen: (key: PluginViewKey) => boolean;
+  openFile: (path: string, mode: "split" | "tab") => void;
+  // The file shown in the active pane, or null for a terminal. Tracked.
+  activeFile: () => string | null;
+  // Scroll the active pane's rendered markdown to its Nth heading.
+  revealHeading: (index: number) => void;
 }) {
   if (initialized) return;
   initialized = true;
   toggleViewImpl = opts.toggleView;
   showViewImpl = opts.showView;
   isViewOpenImpl = opts.isViewOpen;
+  pluginHost.openFile = opts.openFile;
+  pluginHost.activeFile = opts.activeFile;
+  pluginHost.revealHeading = opts.revealHeading;
   syncBindings(contributions());
+  // Renderer modules come in after the first paint, never in front of it.
+  scheduleRenderers();
 
   const applyChange = (change: PluginsChanged) => {
     // Most launches: the boot answer was right and nothing moves.
     if (JSON.stringify(change.contributions) !== JSON.stringify(contributions())) {
       setContributions(change.contributions);
       syncBindings(change.contributions);
+      scheduleRenderers();
+      if (openOverlay() && !findPluginOverlay(openOverlay())) closeOverlay();
     }
     setPluginList(change.plugins);
     // A plugin that went away takes its badge, toast and pending reveal with it.

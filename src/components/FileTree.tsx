@@ -26,7 +26,7 @@ import type { FileEntry } from "../backends/types";
 import { isAccelClick, os } from "../lib/platform";
 import { join, dirname, normalize, equalPath, sep } from "../lib/fspath";
 import { favorites, toggleFavorite, favoriteByIndex } from "../stores/favorites";
-import { isVault, removeVault } from "../stores/vaults";
+import { fileTreeEpoch, folderActions, folderBanners, type FolderBanner } from "../stores/plugins";
 import {
   startupPath,
   lastBrowsedPath,
@@ -96,8 +96,6 @@ interface FileTreeProps {
   activePaneCwd: () => string;
   // Return focus to the grid/terminal (Esc on an already-empty filter).
   onDismiss?: () => void;
-  // Register a folder as a vault and show it in the vault panel.
-  onOpenVault: (path: string) => void;
 }
 
 interface DirEntry extends FileEntry {
@@ -309,23 +307,53 @@ export default function FileTree(props: FileTreeProps) {
     closeMenu();
   }
 
-  function toggleEntryVault(entry: DirEntry) {
-    if (isVault(entry.path)) removeVault(entry.path);
-    else props.onOpenVault(entry.path);
-    closeMenu();
+  // Folder actions from plugins (the Vault's "Open as vault"), asked for their
+  // label for this folder each time the menu opens. A plugin whose answer
+  // depends on its own state calls api.fileTree.refresh() when that changes,
+  // which bumps fileTreeEpoch.
+  function folderMenuActions(path: string) {
+    fileTreeEpoch();
+    return folderActions().flatMap((action) => {
+      try {
+        const title = action.title(path);
+        return title ? [{ action, title }] : [];
+      } catch (err) {
+        console.error(`[plugin ${action.pluginId}] folder action "${action.id}" threw:`, err);
+        return [];
+      }
+    });
   }
 
-  // A folder Obsidian has opened carries a .obsidian directory. That's a strong
-  // hint it is a vault here too, so the tree offers it — never adds it on its
-  // own, since indexing a folder is something the user should choose. A
-  // dismissal holds for this window's lifetime.
-  const [dismissedHints, setDismissedHints] = createSignal<string[]>([]);
-  const vaultHint = createMemo(() => {
-    if (drivesView() || filter()) return false;
+  function runFolderAction(run: (path: string) => void, entry: DirEntry) {
+    closeMenu();
+    try {
+      run(entry.path);
+    } catch (err) {
+      console.error("[plugins] folder action failed:", err);
+    }
+  }
+
+  // A plugin's banner over the folder the tree shows (the Vault's offer to
+  // open a folder Obsidian already treats as a vault). The first one that
+  // matches wins. A dismissal holds for this window's lifetime.
+  const [dismissedBanners, setDismissedBanners] = createSignal<string[]>([]);
+  const bannerKey = (b: FolderBanner, path: string) => `${b.pluginId}:${b.id}:${path}`;
+  const banner = createMemo(() => {
+    fileTreeEpoch();
+    if (drivesView() || filter()) return null;
     const p = currentPath();
-    if (!p || isVault(p)) return false;
-    if (dismissedHints().some((d) => equalPath(d, p))) return false;
-    return rows().some((e) => e.isDirectory && e.name === ".obsidian");
+    if (!p) return null;
+    const names = rows().map((e) => e.name);
+    for (const b of folderBanners()) {
+      if (dismissedBanners().includes(bannerKey(b, p))) continue;
+      try {
+        const offer = b.match(p, names);
+        if (offer) return { banner: b, path: p, ...offer };
+      } catch (err) {
+        console.error(`[plugin ${b.pluginId}] folder banner "${b.id}" threw:`, err);
+      }
+    }
+    return null;
   });
 
   // While the menu is open, dismiss it on any outside interaction: a click or
@@ -611,21 +639,33 @@ export default function FileTree(props: FileTreeProps) {
             </Show>
           </div>
         </div>
-        <Show when={vaultHint()}>
-          <div class="file-tree-vault-hint">
-            <span class="file-tree-vault-hint-text">Obsidian vault folder</span>
-            <button onClick={() => props.onOpenVault(currentPath())}>
-              Open as vault
-            </button>
-            <button
-              class="file-tree-vault-hint-dismiss"
-              title="Dismiss"
-              aria-label="Dismiss"
-              onClick={() => setDismissedHints((d) => [...d, currentPath()])}
-            >
-              <IconX size={12} stroke-width={2.25} />
-            </button>
-          </div>
+        <Show when={banner()}>
+          {(b) => (
+            <div class="file-tree-banner" data-plugin={b().banner.pluginId}>
+              <span class="file-tree-banner-text">{b().text}</span>
+              <button
+                onClick={() => {
+                  try {
+                    b().banner.run(b().path);
+                  } catch (err) {
+                    console.error("[plugins] folder banner failed:", err);
+                  }
+                }}
+              >
+                {b().action}
+              </button>
+              <button
+                class="file-tree-banner-dismiss"
+                title="Dismiss"
+                aria-label="Dismiss"
+                onClick={() =>
+                  setDismissedBanners((d) => [...d, bannerKey(b().banner, b().path)])
+                }
+              >
+                <IconX size={12} stroke-width={2.25} />
+              </button>
+            </div>
+          )}
         </Show>
         <div class="file-tree-header">
           <div class="file-tree-crumbs" title={headerPath()}>
@@ -855,15 +895,17 @@ export default function FileTree(props: FileTreeProps) {
                         ? "Remove from favorites"
                         : "Add to favorites"}
                     </button>
-                    <button
-                      class="file-tree-menu-item"
-                      data-action="vault"
-                      onClick={() => toggleEntryVault(m().entry)}
-                    >
-                      {isVault(m().entry.path)
-                        ? "Remove from vaults"
-                        : "Open as vault"}
-                    </button>
+                    <For each={folderMenuActions(m().entry.path)}>
+                      {(item) => (
+                        <button
+                          class="file-tree-menu-item"
+                          data-action={`plugin:${item.action.pluginId}:${item.action.id}`}
+                          onClick={() => runFolderAction(item.action.run, m().entry)}
+                        >
+                          {item.title}
+                        </button>
+                      )}
+                    </For>
                   </Show>
                 </div>
               </div>

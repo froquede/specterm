@@ -92,7 +92,7 @@ Bundled plugins update with the app. For external plugins, the updater copies th
 
 ## Status
 
-Plugin API **1.2**, built and covered by `test/e2e-plugins.mjs` (45 checks, part of `run-all`):
+Plugin API **1.3**, built and covered by `test/e2e-plugins.mjs` (50 checks) and `test/e2e-vault.mjs` (22), both part of `run-all`:
 - discovery (symlinked folders included) and manifest validation (`electron/plugins.cjs`);
 - the shared plugin host process (`electron/plugin-host.cjs`), started on the first enable and killed when the last plugin is turned off;
 - the bridge (`invoke`, events, badge, toast) and the `specterm-plugin://` scheme, which serves only the files the manifest names;
@@ -100,27 +100,30 @@ Plugin API **1.2**, built and covered by `test/e2e-plugins.mjs` (45 checks, part
 - Settings > Plugins with the on/off switch;
 - the boot answer in `plugins.json`, collected synchronously only when the `hasPlugins` flag is set;
 - built-in plugins (`plugins/<id>/` in this repo): built by the app's `vite build`, unpacked from the asar in a package, on unless turned off, and read synchronously at boot so their buttons are in the first frame of every launch;
-- `activation: "view"`, so a plugin that only answers its own panel costs no process until that panel is first opened.
+- `activation: "view"`, so a plugin that only answers its own panel costs no process until that panel is first opened;
+- overlays (a view over the window, like a palette), and the renderer module, loaded in every window once its first terminal has rendered, for what must exist before any view is open: file-tree folder actions and banners, and commands a shortcut runs.
 
-GitHub is the first built-in plugin (`plugins/github/`). Measured on Linux, 9 launches each, median time to the first terminal paint with it on (the default) and off: 639 ms and 630 ms wall clock, 300 ms and 300 ms inside the page; its button was on the first frame in all 9.
+GitHub and the Vault are built-in plugins (`plugins/github/`, `plugins/vault/`). Measured on Linux, 11 launches each, median time to the window's first terminal render (`performance.mark("specterm:first-terminal-render")`): 170 ms with both on (the default), 180 ms with GitHub only, 179 ms with neither. The Vault's renderer module (0.7 KB, plus an 18 KB chunk it shares with its panel) runs after that mark, costing about 10–16 ms of main-thread time once the terminal is on screen.
 
 Measured on Linux (API 1.0), 7 launches each, median time to the first terminal paint: 642 ms without plugins and 636 ms with one enabled (wall clock); 300 ms and 314 ms inside the page. The button was on the first frame in all 7 launches.
 
 The first external plugin is the Sprint Platform inbox, in `nexfar/nf-sprint-planner` at `apps/specterm-inbox`.
 
-Not built yet: the file-tree and palette points, updates and the install command.
+Not built yet: updates and the install command.
 
-## Reference (API 1.2)
+## Reference (API 1.3)
 
-**Manifest** (`specterm-plugin.json`): `id` (the folder's name), `name`, `version`, `engines.specterm` (a caret range such as `"^1.1"`), and optionally `host`, `panel`, `style` (paths inside the plugin), `sidebarViews: [{ id, title, icon, ownHeader? }]`, `tabBarButton: { view, icon, title }`, `commands: [{ id, title, key, shift?, toggleView | invoke }]`, `activation: "startup" | "view"` (1.2; default `"startup"`). Icons are names from `src/lib/plugin-icons.ts`.
+**Manifest** (`specterm-plugin.json`): `id` (the folder's name), `name`, `version`, `engines.specterm` (a caret range such as `"^1.1"`), and optionally `host`, `panel`, `style` (paths inside the plugin), `sidebarViews: [{ id, title, icon, ownHeader? }]`, `tabBarButton: { view, icon, title }`, `commands: [{ id, title, key, shift?, toggleView | toggleOverlay | invoke | run }]`, `activation: "startup" | "view"` (1.2; default `"startup"`), and from 1.3 `renderer` (a path), `overlays: [{ id }]` and `tabBarButton.order`. Icons are names from `src/lib/plugin-icons.ts`. The `specterm-plugin://` scheme serves the files the manifest names and whatever sits in their folders (a bundler's chunks), never the host module or the manifest.
 
 **Host module** (CommonJS, `exports.activate(ctx)`, optional `exports.deactivate()`). `ctx` has `handle(method, fn)`, `emit(event, payload)`, `setBadge(count | "dot" | null)`, `toast({ title, tag?, body?, more?, payload? })` (1.1), `openExternal(url)`, `setInterval`, `setTimeout`, `clearTimer`, `onDispose(fn)` and `storagePath`. Everything registered through `ctx` is undone when the plugin is turned off.
 
-**Panel module** (ES module, `export function mount(element, api)`, returning a dispose function). `api` has `invoke(method, ...args)`, `on(event, cb)`, `close()`, and from 1.1 `onReveal(cb)`, `renderMarkdown(source)`, `platform` and `openExternal(url)`, and from 1.2 `onActiveCwd(cb)`, `openFile(path, "tab" | "split")` and `storage` (`get`, `set`, `onChange`; a small JSON object per plugin, shared by its windows). The panel brings its own framework; the theme comes from the core's CSS variables. A module stays loaded after its view closes, so module-level state survives a close and reopen.
+**Panel module** (ES module, `export function mount(element, api)`, returning a dispose function). `api` has `invoke(method, ...args)`, `on(event, cb)`, `close()`, and from 1.1 `onReveal(cb)`, `renderMarkdown(source)`, `platform` and `openExternal(url)`, and from 1.2 `onActiveCwd(cb)`, `openFile(path, "tab" | "split")` and `storage` (`get`, `set`, `onChange`; a small JSON object per plugin, shared by its windows). The panel brings its own framework; the theme comes from the core's CSS variables. From 1.3: `onActiveFile(cb)`, `revealHeading(index)`, `noteStructure(source)` (the preview's own parser, so heading N is the preview's heading N) and `showView(viewId)`; an overlay is mounted with its id as `viewId`. A module stays loaded after its view closes, so module-level state survives a close and reopen.
+
+**Renderer module** (1.3; ES module, `export function activate(api)`, returning a dispose function). `api` has `invoke`, `on`, `storage`, `showView`, `openFile`, `commands.register(name, fn)` (what a `run` shortcut calls), and `fileTree.addFolderAction({ id, title(path), run(path) })`, `fileTree.addFolderBanner({ id, match(path, names), run(path) })` and `fileTree.refresh()`. The tree asks for titles and banners synchronously when it draws; a plugin whose answers depend on its own state calls `refresh()` when that state changes. A plugin's panel and renderer modules built together share their chunks, so they share one copy of their state in the window.
 
 ## Order of work
 
 1. **GitHub as a built-in plugin.** Done (`plugins/github/`). It needed API 1.2: built-in plugins, `activation: "view"`, `onActiveCwd`, `openFile` and `storage` (the watchlist moved there from the app's settings, carried over on first run).
 2. **Inbox as an external plugin.** Done: #84 ported to `apps/specterm-inbox` in `nexfar/nf-sprint-planner`, which needed API 1.1 (toast, reveal, markdown, own header). Its e2e measures that nothing in the panel runs past its padding; that caught the conversation rows' summaries overflowing (Chromium's `align-items: flex-start` on `<button>`).
-3. **Vault as a bundled plugin.** This adds the file-tree, palette, active-file, markdown and reveal-heading points. It goes last because those points are the largest addition to the contract, and they should be shaped by a working base, not designed up front.
+3. **Vault as a built-in plugin.** Done (`plugins/vault/`), with API 1.3: overlays for quick open, the renderer module for the folder menu item and the Obsidian banner, and `onActiveFile`, `revealHeading` and `noteStructure` for the outline. The vault list, an open Vault sidebar and rebound Vault shortcuts carry over on first run.
 4. **Install command.** `specterm plugin add <git-url>[#tag] [--path <dir>]` clones the repo, checks out the tag and records the commit hash. `specterm plugin update <id>` lists the newer tags and moves only when the user confirms. Until this exists, installing is a manual clone plus checkout of a tag.

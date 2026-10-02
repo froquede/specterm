@@ -38,7 +38,7 @@ import {
 } from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
-import { findPluginView, initPlugins } from "./stores/plugins";
+import { closeOverlay, findPluginView, initPlugins, openOverlay } from "./stores/plugins";
 import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
@@ -46,12 +46,6 @@ import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
 import { isMarkdownPath, isImagePath } from "./lib/file-kind";
 import { collectLeaves, findPane } from "./lib/split-tree";
-import {
-  addVault,
-  setSelectedVault,
-  quickOpenVisible,
-  setQuickOpenVisible,
-} from "./stores/vaults";
 import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
 import TitleStrip from "./components/TitleStrip";
@@ -67,9 +61,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // gets the boot budget instead. It was already mounted lazily; this makes it
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
-const VaultPanel = lazy(() => import("./components/VaultPanel"));
 const PluginView = lazy(() => import("./components/PluginView"));
-const QuickOpen = lazy(() => import("./components/QuickOpen"));
 import type { PaneId, PluginViewKey } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
@@ -93,13 +85,6 @@ export default function App() {
     if (!settingsOpen()) focusActivePane();
   }
 
-  const vaultOpen = () => store.state.sidebarView === "vault";
-
-  function toggleVault() {
-    store.toggleSidebarView("vault");
-    if (!vaultOpen()) focusActivePane();
-  }
-
   function togglePluginView(key: PluginViewKey) {
     store.toggleSidebarView(key);
     if (store.state.sidebarView !== key) focusActivePane();
@@ -117,16 +102,23 @@ export default function App() {
     if (view?.startsWith("plugin:") && !findPluginView(view)) store.closeSidebar();
   });
 
-  // Register a folder as a vault (from the file tree) and show it.
-  function openVault(path: string) {
-    addVault(path);
-    setSelectedVault(path);
-    store.showSidebar("vault");
+  function closePluginOverlay() {
+    closeOverlay();
+    focusActivePane();
   }
 
-  function closeQuickOpen() {
-    setQuickOpenVisible(false);
-    focusActivePane();
+  // Scroll the active pane's rendered markdown to its Nth heading — for a
+  // plugin's outline (the Vault's). The plugin counts headings with
+  // noteStructure, which parses with the same markdown-it that rendered the
+  // preview, so the indices line up. A pane in edit mode has no rendered
+  // headings, and nothing happens.
+  function revealHeading(index: number) {
+    const id = store.activeTab?.activePaneId;
+    if (!id) return;
+    const content = document.querySelector(
+      `[data-pane-id="${CSS.escape(id)}"] .markdown-content`
+    );
+    content?.querySelectorAll("h1, h2, h3, h4, h5, h6")[index]?.scrollIntoView({ block: "start" });
   }
 
   // Keep keyboard focus on the active pane's terminal. The active pane is the
@@ -184,8 +176,8 @@ export default function App() {
   // into the terminal, and the terminal then swallows the keys the panel needs.
   const activePaneId = createMemo(() => store.activeTab?.activePaneId);
 
-  // The file shown in the active pane, or null for a terminal. The vault panel
-  // follows it (outline, backlinks, which vault is current).
+  // The file shown in the active pane, or null for a terminal. Plugins follow
+  // it through api.onActiveFile (the Vault's outline and backlinks).
   const activeFile = createMemo(() => {
     const tab = store.activeTab;
     if (!tab) return null;
@@ -426,8 +418,6 @@ export default function App() {
         store,
         focusActivePane,
         toggleSettings,
-        toggleVault,
-        toggleQuickOpen: () => setQuickOpenVisible((v) => !v),
       })
     );
 
@@ -437,6 +427,9 @@ export default function App() {
       toggleView: togglePluginView,
       showView: (key) => store.showSidebar(key),
       isViewOpen: (key) => store.state.sidebarView === key,
+      openFile: handleOpenFile,
+      activeFile,
+      revealHeading,
     });
 
     initKeybindings();
@@ -754,14 +747,12 @@ export default function App() {
           see TitleStrip, which decides for itself and renders nothing
           otherwise. */}
       <TitleStrip />
-      <Show when={quickOpenVisible()}>
-        <Suspense>
-          <QuickOpen
-            activeFile={activeFile}
-            onOpenFile={handleOpenFile}
-            onClose={closeQuickOpen}
-          />
-        </Suspense>
+      <Show when={openOverlay()} keyed>
+        {(key) => (
+          <Suspense>
+            <PluginView viewKey={key} overlay onClose={closePluginOverlay} />
+          </Suspense>
+        )}
       </Show>
       {/* A drag from another window is over this one. Drawn across the whole
           window because that is the granularity of the drop: wherever it is
@@ -789,8 +780,6 @@ export default function App() {
         }
         onTearOff={(id) => void tearOff("tab", id)}
         settingsOpen={settingsOpen()}
-        onToggleVault={toggleVault}
-        vaultOpen={vaultOpen()}
         sidebarView={store.state.sidebarView}
         onTogglePluginView={togglePluginView}
       />
@@ -801,17 +790,7 @@ export default function App() {
           onCdPath={cdActivePane}
           activePaneCwd={activePaneCwd}
           onDismiss={focusActivePane}
-          onOpenVault={openVault}
         />
-        <Show when={vaultOpen()}>
-          <Suspense>
-            <VaultPanel
-              activeFile={activeFile}
-              activePaneId={activePaneId}
-              onOpenFile={handleOpenFile}
-            />
-          </Suspense>
-        </Show>
         {/* Mounted only while open. The panel probes the installed font list and
             builds the 325-scheme gallery on mount, so keeping it alive behind an
             internal <Show> paid that cost on every app boot. Nothing is rendered
@@ -833,7 +812,6 @@ export default function App() {
             <Suspense>
               <PluginView
                 viewKey={key}
-                onOpenFile={handleOpenFile}
                 onClose={() => {
                   store.closeSidebar();
                   focusActivePane();

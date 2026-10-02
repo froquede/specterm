@@ -262,6 +262,23 @@ const PTY_RESIZE_THROTTLE_MS = 55;
 
 const instances = new Map<string, TerminalInstance>();
 
+// The window's first terminal has painted. Work that only has to happen "after
+// the first paint" (plugin renderer modules) waits for this rather than for
+// idle time: while a window waits on its shell, the main thread *is* idle, and
+// anything run then lands in front of the terminal appearing. A window opened
+// without a terminal (a file opened straight into a pane) gives up waiting
+// after FIRST_RENDER_FALLBACK_MS.
+const FIRST_RENDER_FALLBACK_MS = 3000;
+let markFirstRender: (() => void) | null = null;
+const firstRender = new Promise<void>((resolve) => {
+  markFirstRender = resolve;
+  setTimeout(resolve, FIRST_RENDER_FALLBACK_MS);
+});
+
+export function afterFirstTerminalRender(): Promise<void> {
+  return firstRender;
+}
+
 // Font zoom (Ghostty-style: ⌘= / ⌘- / ⌘0). Applies to every open terminal.
 export const DEFAULT_FONT_SIZE = 14;
 export const MIN_FONT_SIZE = 6;
@@ -946,6 +963,16 @@ export async function createTerminalInstance(
     theme: currentXtermTheme,
     allowProposedApi: true,
   });
+
+  if (markFirstRender) {
+    const sub = term.onRender(() => {
+      sub.dispose();
+      // Also the measuring point for "instant to open": see test/perf-boot.mjs.
+      performance.mark("specterm:first-terminal-render");
+      markFirstRender?.();
+      markFirstRender = null;
+    });
+  }
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);

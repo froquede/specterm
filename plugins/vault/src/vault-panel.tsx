@@ -8,37 +8,24 @@ import {
   onCleanup,
   onMount,
 } from "solid-js";
-import { IconRefresh, IconX, ICON_STROKE } from "../lib/icons";
-import { getBackend } from "../backends";
-import { isMarkdownPath } from "../lib/file-kind";
-import { isAccelClick } from "../lib/platform";
-import { noteStructure } from "../lib/markdown";
-import { equalPath } from "../lib/fspath";
-import {
-  backlinksTo,
-  searchNotes,
-  type SearchHit,
-} from "../lib/vault-index";
-import {
-  vaults,
-  currentVault,
-  setSelectedVault,
-  removeVault,
-} from "../stores/vaults";
-import {
-  vaultIndex,
-  vaultIndexing,
-  acquireVaultIndex,
-  refreshVaultIndex,
-} from "../stores/vault-index";
-import "../styles/vault.css";
+import IconRefresh from "lucide-solid/icons/refresh-cw";
+import IconX from "lucide-solid/icons/x";
+import type { PluginPanelApi } from "../../../src/components/PluginView";
+import { isMarkdownPath } from "../../../src/lib/file-kind";
+import { isAccelClick } from "../../../src/lib/platform";
+import { equalPath } from "../../../src/lib/fspath";
+import { backlinksTo, searchNotes, type SearchHit } from "./vault-index";
+import { vaults, currentVault, setSelectedVault, removeVault } from "./vaults";
+import { vaultIndex, vaultIndexing, acquireVaultIndex, refreshVaultIndex } from "./index-store";
+
+// Same stroke as the app's chrome icons (src/lib/icons.ts).
+const ICON_STROKE = 1.75;
 
 interface VaultPanelProps {
+  api: PluginPanelApi;
   // The file in the active pane, or null when that pane isn't showing one.
   // Tracked: the outline and backlinks follow the pane you're in.
   activeFile: () => string | null;
-  activePaneId: () => string | undefined;
-  onOpenFile: (path: string, mode: "split" | "tab") => void;
 }
 
 // A matched line with the match itself highlighted. Built from text nodes, not
@@ -54,7 +41,7 @@ function Snippet(props: { hit: SearchHit }) {
   );
 }
 
-export default function VaultPanel(props: VaultPanelProps) {
+export function VaultPanel(props: VaultPanelProps) {
   const [query, setQuery] = createSignal("");
   // Typed text is applied a beat later, so a fast typist in a big vault
   // doesn't run a full search per keystroke.
@@ -65,7 +52,7 @@ export default function VaultPanel(props: VaultPanelProps) {
   const vault = createMemo(() => currentVault(props.activeFile()));
 
   // The panel holds the index while it's mounted; see acquireVaultIndex.
-  const release = acquireVaultIndex();
+  const release = acquireVaultIndex(props.api.invoke);
   onCleanup(() => {
     release();
     if (queryTimer) clearTimeout(queryTimer);
@@ -108,9 +95,8 @@ export default function VaultPanel(props: VaultPanelProps) {
   const [outline, { refetch: refetchOutline }] = createResource(
     activeMarkdown,
     async (path) => {
-      const backend = await getBackend();
-      const text = await backend.readTextFile(path);
-      return noteStructure(text).headings;
+      const text = (await props.api.invoke("read-text-file", path)) as string;
+      return props.api.noteStructure(text).headings;
     }
   );
 
@@ -125,20 +111,15 @@ export default function VaultPanel(props: VaultPanelProps) {
   }
 
   function open(path: string, e: MouseEvent) {
-    props.onOpenFile(path, isAccelClick(e) ? "tab" : "split");
+    props.api.openFile(path, isAccelClick(e) ? "tab" : "split");
   }
 
   // Scroll the active preview to its Nth heading. The outline was parsed by the
-  // same markdown-it that rendered the preview, so the indices line up. A pane
-  // in edit mode has no rendered headings, and the click does nothing.
+  // same markdown-it that rendered the preview (api.noteStructure), so the
+  // indices line up. A pane in edit mode has no rendered headings, and the
+  // click does nothing.
   function goToHeading(i: number) {
-    const id = props.activePaneId();
-    if (!id) return;
-    const content = document.querySelector(
-      `[data-pane-id="${CSS.escape(id)}"] .markdown-content`
-    );
-    const heading = content?.querySelectorAll("h1, h2, h3, h4, h5, h6")[i];
-    heading?.scrollIntoView({ block: "start" });
+    props.api.revealHeading(i);
   }
 
   function refresh() {
