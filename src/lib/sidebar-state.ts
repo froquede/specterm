@@ -19,6 +19,7 @@ const VALID: readonly (SidebarView | null)[] = [
   "files",
   "vault",
   "github",
+  "inbox",
   "settings",
   null,
 ];

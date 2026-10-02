@@ -58,6 +58,7 @@ export { default as IconMarkdown } from "lucide-solid/icons/file-text";
 export { default as IconFolder } from "lucide-solid/icons/folder";
 export { default as IconDrive } from "lucide-solid/icons/hard-drive";
 export { default as IconReveal } from "lucide-solid/icons/external-link";
+export { default as IconInbox } from "lucide-solid/icons/message-square";
 export { default as IconCdHere } from "lucide-solid/icons/square-terminal";
 export { default as IconSyncCwd } from "lucide-solid/icons/folder-input";
 export { default as IconSave } from "lucide-solid/icons/save";

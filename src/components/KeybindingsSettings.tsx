@@ -51,7 +51,7 @@ import { isMac } from "../lib/platform";
 // in. Keyed off the prefix rather than a field on the spec so the keymap stays
 // a table of behaviour and this stays a decision about the panel.
 const GROUPS: { title: string; prefixes: string[] }[] = [
-  { title: "Window & app", prefixes: ["window", "app", "settings", "sidebar"] },
+  { title: "Window & app", prefixes: ["window", "app", "settings", "sidebar", "inbox"] },
   { title: "Tabs", prefixes: ["tab"] },
   { title: "Panes", prefixes: ["split", "pane"] },
   { title: "Terminal", prefixes: ["terminal", "font"] },

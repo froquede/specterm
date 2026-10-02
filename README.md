@@ -30,6 +30,12 @@ vault*; a folder Obsidian has opened is offered on its own): open any note by
 name, search the text of every note, and see the open note's outline and the
 notes that link to it. Links are plain relative markdown links, so the same
 folder reads the same in Specterm, Obsidian and on GitHub.
+An **inbox** in the tab bar carries the team's messages from the Sprint Platform
+(`/mensagens`): an unread count on the icon, a five-second preview under it when
+something new arrives (click it to land on that conversation), and a panel to
+read threads and reply. It signs in with the same token as `/planning-login`
+(`~/.config/sprint-platform/token`), or from the panel itself; set
+`NEXFAR_PLANNING_URL` to point it at another server.
 Mermaid blocks that go past in *terminal output* are drawn too:
 a chip appears beside the block and clicking it opens the diagram over the pane.
 Paths and URLs in terminal output are clickable, and a click copies them.
@@ -77,6 +83,7 @@ later version doesn't take your setting with it.
 | Open a vault note by name | `⌘P` | `Ctrl+Shift+P` |
 | Toggle vault panel (search notes, outline, backlinks) | `⌘⇧F` | `Ctrl+Alt+F` |
 | Toggle settings | `⌘,` | `Ctrl+Shift+,` |
+| Toggle inbox (Sprint Platform messages) | ``⌘⇧` `` | ``Ctrl+Shift+` `` |
 | Markdown / text file: edit / save | `⌘E` / `⌘S` | `Ctrl+Shift+E` / `Ctrl+S` |
 | Text file: toggle line comment | `⌘/` | `Ctrl+/` |
 | Font size up / down / reset | `⌘=` / `⌘-` / `⌘0` | `Ctrl+Shift+=` / `-` / `0` |

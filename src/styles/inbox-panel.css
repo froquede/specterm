@@ -1,0 +1,537 @@
+/* Inbox panel — the Sprint Platform's message channel. Shares the .app-body
+   sidebar slot (and its width contract) with the file tree, the vault, GitHub
+   and settings; see github-panel.css. */
+.inbox-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: var(--sidebar-width);
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.inbox-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px 8px 16px;
+  min-height: 42px;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.inbox-panel-header:has(.inbox-panel-title-thread) {
+  padding-left: 8px;
+}
+
+.inbox-panel-title {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-panel-actions {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.inbox-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+}
+
+.inbox-icon-btn:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.inbox-panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px 12px;
+}
+
+.inbox-empty {
+  padding: 14px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.inbox-empty p {
+  margin: 0 0 10px;
+}
+
+.inbox-empty code,
+.inbox-hint code {
+  background: var(--bg-chrome);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.inbox-signin {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 14px 8px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.inbox-signin p {
+  margin: 0;
+}
+
+.inbox-signin code {
+  background: var(--bg-chrome);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+.inbox-signin .inbox-signin-title {
+  color: var(--fg);
+  font-weight: 600;
+}
+
+.inbox-signin strong {
+  color: var(--fg);
+}
+
+.inbox-signin-steps {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.inbox-signin-steps li + li {
+  margin-top: 6px;
+}
+
+.inbox-signin-steps .inbox-code {
+  display: block;
+  margin-top: 4px;
+}
+
+.inbox-waiting {
+  animation: inbox-waiting 1.6s ease-in-out infinite;
+}
+
+@keyframes inbox-waiting {
+  50% { opacity: 0.45; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inbox-waiting { animation: none; }
+}
+
+.inbox-hint {
+  color: var(--fg-faint, var(--fg-muted));
+  font-size: 12px;
+}
+
+.inbox-error {
+  margin: 6px 8px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.inbox-code {
+  font-family: var(--font-mono, monospace);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  color: var(--fg-bright, var(--fg));
+}
+
+.inbox-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* In the sign-in states the actions stack: the sidebar can be dragged down to
+   a width where a button and a link side by side no longer fit, and a primary
+   action reads best as the full width of the column anyway. */
+.inbox-signin .inbox-row-actions {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  align-self: stretch;
+}
+
+.inbox-signin .inbox-primary-btn {
+  align-self: stretch;
+  justify-content: center;
+  padding: 7px 12px;
+}
+
+.inbox-signin .inbox-row-actions .inbox-link-btn {
+  align-self: center;
+  padding: 4px 8px;
+}
+
+.inbox-link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inbox-link-btn:hover {
+  text-decoration: underline;
+}
+
+.inbox-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: var(--accent-fg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.inbox-primary-btn svg {
+  width: 13px;
+  height: 13px;
+}
+
+.inbox-primary-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Thread list */
+.inbox-threads {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inbox-thread:hover {
+  background: var(--bg-hover);
+}
+
+.inbox-thread-head,
+.inbox-thread-sub {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.inbox-thread-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-thread.unread .inbox-thread-title {
+  font-weight: 600;
+}
+
+.inbox-thread-time {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-thread-preview {
+  flex: 1;
+  min-width: 0;
+  color: var(--fg-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-thread-author {
+  color: var(--fg);
+}
+
+.inbox-pill {
+  flex-shrink: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  box-sizing: border-box;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-fg);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+/* One thread */
+.inbox-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.inbox-message {
+  padding: 6px 8px 8px;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+
+.inbox-message {
+  cursor: pointer;
+}
+
+.inbox-message:hover {
+  background: var(--bg-hover);
+}
+
+.inbox-message:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.inbox-message + .inbox-message {
+  margin-top: 4px;
+}
+
+.inbox-message.fresh {
+  border-left-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+
+.inbox-message.fresh:hover {
+  background: color-mix(in srgb, var(--accent) 6%, var(--bg-hover));
+}
+
+.inbox-message-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--fg);
+  font-size: 12px;
+}
+
+.inbox-message-from {
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-message.mine .inbox-message-from {
+  color: var(--fg-muted);
+}
+
+.inbox-message-agent {
+  display: inline-flex;
+  color: var(--fg-muted);
+}
+
+.inbox-tag {
+  flex-shrink: 0;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  color: var(--fg-muted);
+  font-size: 10px;
+  line-height: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.inbox-tag-new {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.inbox-message-time {
+  margin-left: auto;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.inbox-message-resumo {
+  margin-top: 3px;
+  color: var(--fg-muted);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inbox-message-body {
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.inbox-message-body > :first-child {
+  margin-top: 0;
+}
+
+.inbox-message-body > :last-child {
+  margin-bottom: 0;
+}
+
+.inbox-message-body p,
+.inbox-message-body ul,
+.inbox-message-body ol,
+.inbox-message-body pre,
+.inbox-message-body blockquote {
+  margin: 0 0 8px;
+}
+
+.inbox-message-body ul,
+.inbox-message-body ol {
+  padding-left: 18px;
+}
+
+.inbox-message-body h1,
+.inbox-message-body h2,
+.inbox-message-body h3,
+.inbox-message-body h4 {
+  margin: 10px 0 6px;
+  font-size: 13px;
+}
+
+.inbox-message-body a {
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.inbox-message-body code {
+  background: var(--bg-chrome);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 11.5px;
+}
+
+.inbox-message-body pre {
+  padding: 8px;
+  background: var(--bg-chrome);
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+.inbox-message-body pre code {
+  padding: 0;
+  background: none;
+}
+
+.inbox-message-body blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--border);
+  color: var(--fg-muted);
+}
+
+.inbox-message-body table {
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+
+.inbox-message-body th,
+.inbox-message-body td {
+  padding: 2px 6px;
+  border: 1px solid var(--border);
+}
+
+/* Reply box, pinned under the scroll area */
+.inbox-reply {
+  flex-shrink: 0;
+  padding: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.inbox-reply-input {
+  width: 100%;
+  box-sizing: border-box;
+  resize: vertical;
+  min-height: 56px;
+  max-height: 40vh;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-chrome);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.inbox-reply-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.inbox-reply-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.inbox-decision {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-right: auto;
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+}

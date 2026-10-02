@@ -21,3 +21,6 @@ export { default as IconLoaderCircle } from "lucide-solid/icons/loader-circle";
 export { default as IconFilePlus } from "lucide-solid/icons/file-plus";
 export { default as IconFilePen } from "lucide-solid/icons/file-pen";
 export { default as IconFileMinus } from "lucide-solid/icons/file-minus";
+export { default as IconBot } from "lucide-solid/icons/bot";
+export { default as IconSend } from "lucide-solid/icons/send-horizontal";
+export { default as IconLogIn } from "lucide-solid/icons/log-in";

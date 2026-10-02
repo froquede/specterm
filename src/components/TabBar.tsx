@@ -1,5 +1,8 @@
-import { For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { shortcutLabel } from "../lib/platform";
+import { formatChord } from "../lib/chord";
+import { activeChord, keymapSpecs } from "../stores/keybindings";
 import { clockEnabled, tabBarSide, tabBarEdge } from "../stores/settings";
 import {
   ownControls,
@@ -15,6 +18,7 @@ import {
   IconSettings,
   IconGithubPanel,
   IconVaultPanel,
+  IconInbox,
   IconX,
   ICON_SIZE,
   ICON_STROKE,
@@ -37,6 +41,13 @@ import {
 } from "../stores/attention";
 import { collectLeaves } from "../lib/split-tree";
 import { updaterPhase, updaterVersion } from "../stores/updater";
+import {
+  inboxState,
+  inboxToast,
+  dismissInboxToast,
+  pauseInboxToast,
+  resumeInboxToast,
+} from "../stores/inbox";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -53,6 +64,9 @@ interface TabBarProps {
   githubOpen: boolean;
   onToggleVault: () => void;
   vaultOpen: boolean;
+  onToggleInbox: () => void;
+  onOpenInboxThread: (threadId: string) => void;
+  inboxOpen: boolean;
   onStartRename: (tabId: string) => void;
   onCommitRename: (tabId: string, title: string) => void;
   onCancelRename: () => void;
@@ -271,6 +285,60 @@ export default function TabBar(props: TabBarProps) {
 
   const sidebarKey = () => shortcutLabel("B");
   const settingsKey = () => shortcutLabel(",");
+  // The inbox chord can be rebound, so its label follows the keymap rather
+  // than being spelled out here.
+  const inboxKey = () => {
+    const spec = keymapSpecs().find((s) => s.id === "inbox.toggle");
+    const chord = spec ? activeChord(spec) : null;
+    return chord ? ` (${formatChord(chord)})` : "";
+  };
+  const inboxUnread = () => inboxState().unread;
+  const inboxTitle = () => {
+    const s = inboxState();
+    const verb = props.inboxOpen ? "Hide" : "Open";
+    if (s.status === "signed-out" || s.status === "unauthorized") {
+      return `${verb} inbox · not signed in${inboxKey()}`;
+    }
+    if (s.unread > 0) {
+      return `${verb} inbox · ${s.unread} unread${inboxKey()}`;
+    }
+    return `${verb} inbox${inboxKey()}`;
+  };
+
+  // The new-message preview hangs off the inbox button. It is portalled to
+  // <body> and placed from the button's rect rather than nested in it: the
+  // bar is a drag region, the panes below paint over anything it overflows
+  // into, and an auto-hidden bar would carry the preview off screen with it.
+  let inboxButton: HTMLButtonElement | undefined;
+  const [toastPos, setToastPos] = createSignal<{
+    left: number;
+    top?: number;
+    bottom?: number;
+  } | null>(null);
+  function placeToast() {
+    if (!inboxButton) return;
+    const rect = inboxButton.getBoundingClientRect();
+    const width = 300;
+    const margin = 8;
+    const centre = rect.left + rect.width / 2;
+    const left = Math.min(
+      Math.max(margin, centre - width / 2),
+      window.innerWidth - width - margin
+    );
+    if (tabBarEdge() === "bottom") {
+      setToastPos({ left, bottom: Math.max(margin, window.innerHeight - rect.top + 6) });
+    } else {
+      setToastPos({ left, top: Math.max(margin, rect.bottom + 6) });
+    }
+  }
+  // Shown only where it adds something: with the inbox already open, the
+  // panel itself picks the new message up.
+  const toast = () => (props.inboxOpen ? null : inboxToast());
+  createEffect(() => {
+    if (toast()) placeToast();
+  });
+  window.addEventListener("resize", placeToast);
+  onCleanup(() => window.removeEventListener("resize", placeToast));
 
   // The bar's three regions are ordered by CSS (see .tab-bar[data-side]), so
   // anchoring the tabs and icons to the right corner is a reflow, not a
@@ -369,7 +437,60 @@ export default function TabBar(props: TabBarProps) {
         >
           <IconGithubPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
+        <button
+          ref={inboxButton}
+          class="tab-icon-btn tab-inbox"
+          classList={{ active: props.inboxOpen }}
+          onClick={props.onToggleInbox}
+          aria-pressed={props.inboxOpen}
+          title={inboxTitle()}
+        >
+          <IconInbox size={ICON_SIZE} stroke-width={ICON_STROKE} />
+          {/* A count rather than the plain dot: unread messages are a number
+              someone is going to work down, not a single thing to look at. */}
+          <Show when={inboxUnread() > 0}>
+            <span class="tab-icon-badge tab-icon-count">
+              {inboxUnread() > 99 ? "99+" : inboxUnread()}
+            </span>
+          </Show>
+        </button>
       </div>
+      <Show when={toast()}>
+        {(t) => (
+          <Portal>
+            <button
+              class="inbox-toast"
+              classList={{ "is-above": tabBarEdge() === "bottom" }}
+              style={{
+                left: `${toastPos()?.left ?? 0}px`,
+                top: toastPos()?.top !== undefined ? `${toastPos()!.top}px` : undefined,
+                bottom:
+                  toastPos()?.bottom !== undefined ? `${toastPos()!.bottom}px` : undefined,
+              }}
+              role="status"
+              aria-live="polite"
+              onMouseEnter={pauseInboxToast}
+              onMouseLeave={resumeInboxToast}
+              onClick={() => {
+                const threadId = t().item.threadId;
+                dismissInboxToast();
+                props.onOpenInboxThread(threadId);
+              }}
+            >
+              <span class="inbox-toast-head">
+                <span class="inbox-toast-from">{t().item.from.name}</span>
+                <Show when={t().item.taskLabel}>
+                  <span class="inbox-toast-task">{t().item.taskLabel}</span>
+                </Show>
+                <Show when={t().more > 0}>
+                  <span class="inbox-toast-more">+{t().more}</span>
+                </Show>
+              </span>
+              <span class="inbox-toast-body">{t().item.resumo}</span>
+            </button>
+          </Portal>
+        )}
+      </Show>
       <div class="tab-list" onWheel={onTabListWheel}>
         <For each={props.tabs}>
           {(tab) => (

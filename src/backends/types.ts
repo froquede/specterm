@@ -75,6 +75,80 @@ export interface UpdaterEvent {
   message?: string;
 }
 
+// The Sprint Platform's message channel, as electron/inbox.cjs relays it. Field
+// names are the platform's own (Portuguese), passed through untouched.
+export type InboxStatus = "idle" | "signed-out" | "unauthorized" | "error" | "ok";
+
+export interface InboxPerson {
+  clickupUserId: string;
+  name: string;
+}
+
+// One unread message, without its body (the platform's ItemInbox).
+export interface InboxItem {
+  id: string;
+  threadId: string;
+  taskLabel: string | null;
+  from: InboxPerson & { via: "agent" | "human" };
+  resumo: string;
+  decisao: boolean;
+  createdAt: string;
+  lidaEm: string | null;
+}
+
+export interface InboxState {
+  status: InboxStatus;
+  unread: number;
+  items: InboxItem[];
+  me: InboxPerson | null;
+  baseUrl: string;
+  error: string | null;
+  checkedAt: string | null;
+}
+
+export interface InboxThreadSummary {
+  threadId: string;
+  taskId: string | null;
+  taskLabel: string | null;
+  participantes: InboxPerson[];
+  ultima: { id: string; resumo: string; fromName: string; createdAt: string };
+  naoLidas: number;
+}
+
+export interface InboxMessage {
+  id: string;
+  threadId: string;
+  from: InboxPerson & { via: "agent" | "human" };
+  taskId: string | null;
+  taskLabel: string | null;
+  resumo: string;
+  corpo: string;
+  decisao: boolean;
+  respondeA: string | null;
+  createdAt: string;
+  destinatarios: Array<InboxPerson & { entrega: string; lidaEm: string | null }>;
+}
+
+export interface InboxSendPayload {
+  corpo: string;
+  respondeA?: string;
+  decisao?: boolean;
+}
+
+export type InboxResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; status: number; error: string };
+
+export type InboxEvent =
+  | { type: "state"; state: InboxState }
+  | { type: "new"; items: InboxItem[] }
+  | {
+      type: "login";
+      phase: "waiting" | "done" | "expired" | "cancelled";
+      userCode?: string;
+      url?: string;
+    };
+
 // A tab (or a single pane, as a one-leaf tab) in the form it travels between
 // windows: no pane ids — the destination mints its own — and every terminal
 // reduced to its live PTY plus a serialized copy of its screen and scrollback.
@@ -497,4 +571,18 @@ export interface Backend {
   installUpdate(): Promise<void>;
   getCurrentVersion(): Promise<string>;
   onUpdaterEvent(cb: (event: UpdaterEvent) => void): Promise<UnlistenFn>;
+
+  // Sprint Platform inbox (nf-sprint-planner's /mensagens). The host polls it
+  // and pushes changes through onInboxEvent; the calls below are the panel's.
+  inboxState(): Promise<InboxState>;
+  inboxRefresh(): Promise<InboxState>;
+  inboxThreads(): Promise<InboxResult<InboxThreadSummary[]>>;
+  // Reading a thread marks it read on the server.
+  inboxThread(threadId: string): Promise<InboxResult<InboxMessage[]>>;
+  inboxSend(payload: InboxSendPayload): Promise<InboxResult<unknown>>;
+  inboxOpenWeb(threadId?: string): Promise<void>;
+  // Device-flow sign-in; progress arrives as "login" events.
+  inboxLogin(): Promise<{ ok: boolean; error?: string }>;
+  inboxLoginCancel(): Promise<void>;
+  onInboxEvent(cb: (event: InboxEvent) => void): Promise<UnlistenFn>;
 }

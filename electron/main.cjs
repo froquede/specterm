@@ -24,6 +24,7 @@ const { execFile, spawn } = require("child_process");
 const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
 const { filePathsFromArgv } = require("./open-paths.cjs");
+const { registerInbox } = require("./inbox.cjs");
 
 // Runs `cmd` and resolves with trimmed stdout, or rejects with the error
 // (stdout/stderr attached) on a non-zero exit, spawn failure, or timeout.
@@ -2970,6 +2971,10 @@ ipcMain.handle("notify-waiting", (event, payload) => {
     // daemon running). The badge and the in-window dot still say it.
   }
 });
+
+// The Sprint Platform inbox: one poller for the whole app, every window hears
+// it. See inbox.cjs.
+registerInbox({ ipcMain, shell, openWindows });
 
 // === Application menu ===
 // Minimal menu so the OS default accelerators (⌘C/⌘V/⌘W/⌘T/⌘D) don't get

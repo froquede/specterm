@@ -38,6 +38,7 @@ import {
 } from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
+import { initInbox, setPendingThread } from "./stores/inbox";
 import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
@@ -68,6 +69,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const GithubPanel = lazy(() => import("./components/GithubPanel"));
 const VaultPanel = lazy(() => import("./components/VaultPanel"));
+const InboxPanel = lazy(() => import("./components/InboxPanel"));
 const QuickOpen = lazy(() => import("./components/QuickOpen"));
 import type { PaneId } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
@@ -104,6 +106,19 @@ export default function App() {
   function toggleVault() {
     store.toggleSidebarView("vault");
     if (!vaultOpen()) focusActivePane();
+  }
+
+  const inboxOpen = () => store.state.sidebarView === "inbox";
+
+  function toggleInbox() {
+    store.toggleSidebarView("inbox");
+    if (!inboxOpen()) focusActivePane();
+  }
+
+  // From the new-message preview: show the inbox with that thread open.
+  function openInboxThread(threadId: string) {
+    setPendingThread(threadId);
+    store.showSidebar("inbox");
   }
 
   // Register a folder as a vault (from the file tree) and show it.
@@ -417,6 +432,7 @@ export default function App() {
         toggleSettings,
         toggleVault,
         toggleQuickOpen: () => setQuickOpenVisible((v) => !v),
+        toggleInbox,
       })
     );
 
@@ -548,6 +564,10 @@ export default function App() {
     // listening: updater events are broadcast app-wide, and this window's own
     // Settings button needs an ear for the answer.
     void initUpdater(boot.autoCheckUpdates);
+
+    // The Sprint Platform inbox: the host runs one poller for the app; every
+    // window listens for the badge count and the new-message preview.
+    void initInbox();
 
     // When the OS window regains focus, return the cursor to the active pane —
     // and, since the user is now looking at it, put out any attention flag it
@@ -774,6 +794,9 @@ export default function App() {
         githubOpen={githubOpen()}
         onToggleVault={toggleVault}
         vaultOpen={vaultOpen()}
+        onToggleInbox={toggleInbox}
+        onOpenInboxThread={openInboxThread}
+        inboxOpen={inboxOpen()}
       />
       <div class="app-body">
         <FileTree
@@ -812,6 +835,11 @@ export default function App() {
         <Show when={githubOpen()}>
           <Suspense>
             <GithubPanel onOpenFile={(path) => handleOpenFile(path, "tab")} />
+          </Suspense>
+        </Show>
+        <Show when={inboxOpen()}>
+          <Suspense>
+            <InboxPanel />
           </Suspense>
         </Show>
         <Show when={store.state.sidebarView !== null}>

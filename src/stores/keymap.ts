@@ -89,6 +89,8 @@ export interface KeymapContext {
   toggleVault: () => void;
   // Show/hide quick open (open a vault note by name).
   toggleQuickOpen: () => void;
+  // Open/close the Sprint Platform inbox.
+  toggleInbox: () => void;
 }
 
 const newTerminal = () =>
@@ -109,6 +111,7 @@ export function createKeymap({
   toggleSettings,
   toggleVault,
   toggleQuickOpen,
+  toggleInbox,
 }: KeymapContext): BindingSpec[] {
   // Move the selection one tab along, wrapping at both ends. Shared by the
   // ⌘⇧[ / ⌘⇧] pair and by Ctrl+Tab, which are two chords for the same move.
@@ -571,6 +574,21 @@ export function createKeymap({
       allowInInput: true,
       label: "Toggle vault panel (search notes)",
       run: () => toggleVault(),
+    },
+    // The key left of 1, matched by position: Shift turns its key into "~" on
+    // a US layout, and on others it carries a different glyph entirely. Not
+    // cmd(): its shift variant is Ctrl+Alt off the Mac, and this one is
+    // Ctrl+Shift everywhere but there.
+    {
+      id: "inbox.toggle",
+      key: "`",
+      code: "Backquote",
+      ctrl: true,
+      shift: true,
+      byOS: { mac: { key: "`", code: "Backquote", meta: true, shift: true } },
+      allowInInput: true,
+      label: "Toggle inbox (Sprint Platform messages)",
+      run: () => toggleInbox(),
     },
 
     // Font zoom — ⌘= / ⌘+ grow, ⌘- shrink, ⌘0 reset. Codes keep these stable

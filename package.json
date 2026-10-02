@@ -33,6 +33,7 @@
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "test:e2e:links": "vite build && node test/e2e-links.mjs",
     "test:e2e:vault": "vite build && node test/e2e-vault.mjs",
+    "test:e2e:inbox": "vite build && node test/e2e-inbox.mjs",
     "test:paste": "node --experimental-strip-types test/paste.mjs",
     "test:links": "node --experimental-strip-types test/path-links.mjs",
     "test:markdown": "node --experimental-strip-types test/markdown.mjs",

@@ -324,4 +324,19 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.on("updater:event", handler);
     return () => ipcRenderer.removeListener("updater:event", handler);
   },
+
+  // Sprint Platform inbox — see electron/inbox.cjs.
+  inboxState: () => ipcRenderer.invoke("inbox:state"),
+  inboxRefresh: () => ipcRenderer.invoke("inbox:refresh"),
+  inboxThreads: () => ipcRenderer.invoke("inbox:threads"),
+  inboxThread: (threadId) => ipcRenderer.invoke("inbox:thread", threadId),
+  inboxSend: (payload) => ipcRenderer.invoke("inbox:send", payload),
+  inboxOpenWeb: (threadId) => ipcRenderer.invoke("inbox:open-web", threadId),
+  inboxLogin: () => ipcRenderer.invoke("inbox:login"),
+  inboxLoginCancel: () => ipcRenderer.invoke("inbox:login-cancel"),
+  onInboxEvent: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("inbox:event", handler);
+    return () => ipcRenderer.removeListener("inbox:event", handler);
+  },
 });

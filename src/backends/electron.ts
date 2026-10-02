@@ -13,6 +13,12 @@ import type {
   GitRemoteInfo,
   GhStatus,
   GithubRepoSnapshot,
+  InboxEvent,
+  InboxMessage,
+  InboxResult,
+  InboxSendPayload,
+  InboxState,
+  InboxThreadSummary,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -107,6 +113,15 @@ interface SpectermAPI {
   installUpdate(): Promise<void>;
   getCurrentVersion(): Promise<string>;
   onUpdaterEvent(cb: (event: UpdaterEvent) => void): () => void;
+  inboxState(): Promise<InboxState>;
+  inboxRefresh(): Promise<InboxState>;
+  inboxThreads(): Promise<InboxResult<InboxThreadSummary[]>>;
+  inboxThread(threadId: string): Promise<InboxResult<InboxMessage[]>>;
+  inboxSend(payload: InboxSendPayload): Promise<InboxResult<unknown>>;
+  inboxOpenWeb(threadId?: string): Promise<void>;
+  inboxLogin(): Promise<{ ok: boolean; error?: string }>;
+  inboxLoginCancel(): Promise<void>;
+  onInboxEvent(cb: (event: InboxEvent) => void): () => void;
 }
 
 declare global {
@@ -451,5 +466,41 @@ export class ElectronBackend implements Backend {
     cb: (event: UpdaterEvent) => void
   ): Promise<UnlistenFn> {
     return this.api.onUpdaterEvent(cb);
+  }
+
+  async inboxState(): Promise<InboxState> {
+    return this.api.inboxState();
+  }
+
+  async inboxRefresh(): Promise<InboxState> {
+    return this.api.inboxRefresh();
+  }
+
+  async inboxThreads(): Promise<InboxResult<InboxThreadSummary[]>> {
+    return this.api.inboxThreads();
+  }
+
+  async inboxThread(threadId: string): Promise<InboxResult<InboxMessage[]>> {
+    return this.api.inboxThread(threadId);
+  }
+
+  async inboxSend(payload: InboxSendPayload): Promise<InboxResult<unknown>> {
+    return this.api.inboxSend(payload);
+  }
+
+  async inboxOpenWeb(threadId?: string): Promise<void> {
+    return this.api.inboxOpenWeb(threadId);
+  }
+
+  async inboxLogin(): Promise<{ ok: boolean; error?: string }> {
+    return this.api.inboxLogin();
+  }
+
+  async inboxLoginCancel(): Promise<void> {
+    return this.api.inboxLoginCancel();
+  }
+
+  async onInboxEvent(cb: (event: InboxEvent) => void): Promise<UnlistenFn> {
+    return this.api.onInboxEvent(cb);
   }
 }
