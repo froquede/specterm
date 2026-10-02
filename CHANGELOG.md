@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.26.0 — 2026-10-02
+
+### Added
+- **Plugins.** A plugin is a folder in the `plugins` folder of Specterm's
+  data directory, with a `specterm-plugin.json` manifest. It can add sidebar
+  views, a tab-bar button with a count or a dot, and shortcuts you can
+  rebind in Settings like any other.
+  - **Off until you turn it on.** A newly found plugin is listed in
+    *Settings → Plugins* and runs nothing until you switch it on. A plugin
+    written for a newer plugin API is listed with the reason and cannot be
+    turned on.
+  - **Never slows a terminal down.** A plugin's background code runs in its
+    own process, not in the one your shells' output goes through. That
+    process starts when you turn on the first plugin and stops when you turn
+    off the last one.
+  - **No cost at startup.** The buttons of the plugins you use are drawn
+    with the first frame. Their code loads after the first shell is up, and
+    a view's code only when you open it.
+  - The design, the manifest and what comes next are in
+    [docs/plugin-architecture.md](docs/plugin-architecture.md).
+
 ## 0.25.0 — 2026-10-01
 
 ### Added

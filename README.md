@@ -38,6 +38,11 @@ base16 gallery, and a tab bar that stands in for the title bar.
 Closing a window (or quitting) while a build, a test run or a Claude session is
 still going asks first, naming what is running — read from the shells' own child
 processes, so a window of idle prompts still closes on one click.
+**Plugins** add sidebar views, tab-bar buttons with a badge, and shortcuts. A
+plugin is a folder in the `plugins` folder of Specterm's data directory and
+starts off until you turn it on in *Settings → Plugins*. Its background code runs
+in a separate process, so it can never slow down a terminal. See
+[docs/plugin-architecture.md](docs/plugin-architecture.md).
 
 ## Keybindings
 
