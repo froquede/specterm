@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.28.0 — 2026-10-02
+
+### Changed
+- **The GitHub panel is a built-in plugin.** It looks and works as before
+  and is on by default; *Settings → Plugins* can now turn it off, which
+  also removes its button. Your watchlist and an open GitHub sidebar carry
+  over on their own.
+  - Its `git` and `gh` calls no longer run in the process your terminals'
+    output goes through, and nothing of it runs until you first open the
+    panel.
+
+### Added
+- **Plugin API 1.2.** Panels can follow the active pane's folder, open
+  files in a tab or a split, and keep a little state of their own that
+  every window shares. A plugin can ask to start only when its panel is
+  first opened.
+
 ## 0.27.0 — 2026-10-02
 
 ### Added

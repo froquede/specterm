@@ -1,18 +1,13 @@
-/* GitHub panel — shares the .app-body sidebar slot with the file tree and
-   settings (mutually exclusive). Same width contract as .settings-sidebar:
-   no floor of its own, so switching panels at a narrow width doesn't shove
-   the terminal grid sideways. */
+/* The GitHub panel. Specterm draws the card around it (.plugin-view: the
+   sidebar's width, border and background); this styles what is inside, with
+   the app's theme variables. Moved from src/styles/github-panel.css. */
 .github-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
-  width: var(--sidebar-width);
-  background: var(--bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius);
+  min-width: 0;
   color: var(--fg);
   overflow: hidden;
-  flex-shrink: 0;
 }
 
 .github-panel-header {
@@ -208,6 +203,8 @@
 }
 .gh-card-refresh,
 .gh-card-remove {
+  display: inline-flex;
+  align-items: center;
   background: none;
   border: none;
   color: var(--fg-muted);

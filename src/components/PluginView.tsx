@@ -1,11 +1,15 @@
-import { createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createMemo, createRoot, createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { PluginViewKey } from "../types";
 import {
   findPluginView,
   invokePlugin,
   onPluginEvent,
   onPluginReveal,
+  pluginStorage,
+  type PluginStorage,
 } from "../stores/plugins";
+import { useTabStore } from "../stores/tabs";
+import { useTerminalCwd } from "../lib/terminal-registry";
 import { getBackend } from "../backends";
 import { renderMarkdown } from "../lib/markdown";
 import { os } from "../lib/platform";
@@ -15,7 +19,7 @@ import "../styles/plugins.css";
 // `engines.specterm`: an addition is a new minor (noted beside it), a change is
 // a new major.
 export interface PluginPanelApi {
-  apiVersion: "1.1";
+  apiVersion: "1.2";
   pluginId: string;
   viewId: string;
   /** Call a method its host module registered with `ctx.handle`. */
@@ -34,6 +38,15 @@ export interface PluginPanelApi {
   platform: "darwin" | "win32" | "linux";
   /** 1.1 — Open an http(s) URL in the default browser. */
   openExternal(url: string): void;
+  /** 1.2 — The active pane's working directory: called now, and again
+   *  whenever it changes (a pane or tab switch, a `cd`). null when the active
+   *  pane isn't a terminal or hasn't reported one. Returns the unsubscribe. */
+  onActiveCwd(cb: (cwd: string | null) => void): () => void;
+  /** 1.2 — Open a file in a new tab ("tab") or beside the active pane
+   *  ("split"), the way the file tree does. */
+  openFile(path: string, mode?: "tab" | "split"): void;
+  /** 1.2 — A small JSON store for this plugin, shared by its windows. */
+  storage: PluginStorage;
 }
 
 const PLATFORM = ({ mac: "darwin", windows: "win32", linux: "linux" } as const)[os];
@@ -46,9 +59,20 @@ const PLATFORM = ({ mac: "darwin", windows: "win32", linux: "linux" } as const)[
 // stylesheet is attached for as long as the view is mounted. Everything the
 // panel subscribed to through `api.on` is dropped here when the view goes,
 // whether or not the panel's own dispose remembered to.
-export default function PluginView(props: { viewKey: PluginViewKey; onClose: () => void }) {
+export default function PluginView(props: {
+  viewKey: PluginViewKey;
+  onClose: () => void;
+  onOpenFile: (path: string, mode: "split" | "tab") => void;
+}) {
   // Read once: App remounts this component when the key changes.
   const found = findPluginView(props.viewKey);
+  const store = useTabStore();
+  // The memo matters: the cwd epoch moves when *any* pane changes directory,
+  // and a panel should only hear about the active one.
+  const activeCwd = createMemo(() => {
+    const paneId = store.activeTab?.activePaneId;
+    return paneId ? useTerminalCwd(paneId) || null : null;
+  });
   const [error, setError] = createSignal<string | null>(null);
   let body!: HTMLDivElement;
   let disposed = false;
@@ -71,7 +95,7 @@ export default function PluginView(props: { viewKey: PluginViewKey; onClose: () 
       document.head.appendChild(stylesheet);
     }
     const api: PluginPanelApi = {
-      apiVersion: "1.1",
+      apiVersion: "1.2",
       pluginId: plugin.id,
       viewId: view.id,
       invoke: (method, ...args) => invokePlugin(plugin.id, method, args),
@@ -98,6 +122,44 @@ export default function PluginView(props: { viewKey: PluginViewKey; onClose: () 
         if (!/^https?:\/\//i.test(String(url))) return;
         void getBackend().then((backend) => backend.openExternal(String(url)));
       },
+      onActiveCwd(cb) {
+        // Its own root, so the subscription ends exactly when the panel asks
+        // (or the view closes) and not before.
+        const dispose = createRoot((disposeRoot) => {
+          createEffect(() => {
+            const cwd = activeCwd();
+            try {
+              cb(cwd);
+            } catch (err) {
+              console.error(`[plugin ${plugin.id}] onActiveCwd listener threw:`, err);
+            }
+          });
+          return disposeRoot;
+        });
+        unsubscribes.add(dispose);
+        return () => {
+          dispose();
+          unsubscribes.delete(dispose);
+        };
+      },
+      openFile(path, mode = "tab") {
+        if (typeof path === "string" && path) props.onOpenFile(path, mode === "split" ? "split" : "tab");
+      },
+      storage: (() => {
+        const storage = pluginStorage(plugin.id);
+        return {
+          get: storage.get,
+          set: storage.set,
+          onChange(cb) {
+            const off = storage.onChange(cb);
+            unsubscribes.add(off);
+            return () => {
+              off();
+              unsubscribes.delete(off);
+            };
+          },
+        };
+      })(),
     };
     try {
       const mod = await import(/* @vite-ignore */ panelUrl);

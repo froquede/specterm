@@ -198,7 +198,6 @@ interface Persisted {
   clockFormat: string;
   clockBattery: boolean;
   clockOffline: boolean;
-  githubWatchlist: string[];
 }
 
 const DEFAULTS: Persisted = {
@@ -223,7 +222,6 @@ const DEFAULTS: Persisted = {
   clockFormat: CLOCK_FORMAT_DEFAULT,
   clockBattery: CLOCK_BATTERY_DEFAULT,
   clockOffline: CLOCK_OFFLINE_DEFAULT,
-  githubWatchlist: [],
 };
 
 // Every field is read defensively: a blob written by an older version simply
@@ -320,9 +318,6 @@ function load(): Persisted {
         typeof p.clockOffline === "boolean"
           ? p.clockOffline
           : DEFAULTS.clockOffline,
-      githubWatchlist: Array.isArray(p.githubWatchlist)
-        ? p.githubWatchlist.filter((v: unknown) => typeof v === "string")
-        : DEFAULTS.githubWatchlist,
     };
   } catch (_) {
     // Corrupt or unavailable storage — fall back to defaults.
@@ -373,9 +368,6 @@ const [clockEnabled, setClockEnabledSignal] = createSignal(initial.clockEnabled)
 const [clockFormat, setClockFormatSignal] = createSignal(initial.clockFormat);
 const [clockBattery, setClockBatterySignal] = createSignal(initial.clockBattery);
 const [clockOffline, setClockOfflineSignal] = createSignal(initial.clockOffline);
-const [githubWatchlist, setGithubWatchlistSignal] = createSignal(
-  initial.githubWatchlist
-);
 
 export {
   unfocusedOpacity,
@@ -399,7 +391,6 @@ export {
   clockFormat,
   clockBattery,
   clockOffline,
-  githubWatchlist,
 };
 
 /** Which window edge the tab bar sits on. */
@@ -459,7 +450,6 @@ function persist() {
         clockFormat: clockFormat(),
         clockBattery: clockBattery(),
         clockOffline: clockOffline(),
-        githubWatchlist: githubWatchlist(),
       } satisfies Persisted)
     );
   } catch (_) {
@@ -587,7 +577,6 @@ function reloadFromStorage() {
   setClockFormatSignal(p.clockFormat);
   setClockBatterySignal(p.clockBattery);
   setClockOfflineSignal(p.clockOffline);
-  setGithubWatchlistSignal(p.githubWatchlist);
   applyCssVars();
   applyWindowOpacity();
 }
@@ -681,16 +670,6 @@ export function setClockBattery(v: boolean) {
 
 export function setClockOffline(v: boolean) {
   setClockOfflineSignal(v);
-  persist();
-}
-
-// --- GitHub watchlist -------------------------------------------------------
-
-export function setGithubWatchlist(v: string[]) {
-  // Dedupe and drop blanks — the add-repo input in the panel already validates
-  // format, this is just the last line of defense against a corrupt blob.
-  const cleaned = [...new Set(v.map((s) => s.trim()).filter(Boolean))];
-  setGithubWatchlistSignal(cleaned);
   persist();
 }
 

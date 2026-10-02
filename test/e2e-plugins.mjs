@@ -212,7 +212,24 @@ try {
     "a newly found plugin starts off",
     !(await win.locator('.plugins-settings-item[data-plugin="hello"] input').isChecked())
   );
-  check("nothing of it is drawn while off", (await win.locator(".tab-plugin").count()) === 0);
+  check(
+    "nothing of it is drawn while off",
+    (await win.locator('.tab-plugin[data-plugin="hello"]').count()) === 0
+  );
+
+  // 1b. The built-in GitHub plugin: listed as built in, on by default, its
+  //     button there, and no host process until its view is opened.
+  const githubItem = win.locator('.plugins-settings-item[data-plugin="github"]');
+  check("the built-in GitHub plugin is listed", (await githubItem.count()) === 1);
+  check("and is on by default", await githubItem.locator("input").isChecked());
+  check(
+    "and its button is drawn",
+    (await win.locator('.tab-plugin[data-plugin="github"]').count()) === 1
+  );
+  const githubRunning = async () =>
+    (await win.evaluate(() => window.specterm.pluginsState())).plugins.find((p) => p.id === "github")
+      ?.running === true;
+  check("its host has not started before its view opens", !(await githubRunning()));
   check(
     "a symlinked plugin folder is found",
     (await win.locator('.plugins-settings-item[data-plugin="linked"]').count()) === 1
@@ -373,6 +390,41 @@ try {
       (await win.locator('.tab-plugin[data-plugin="hello"] .tab-icon-count').textContent()) === "3"
     )
   );
+
+  // 10. The built-in GitHub plugin: its host starts on the view's first call,
+  //     and a user of the version where GitHub was part of the core keeps
+  //     their watchlist and their open panel.
+  const github = win.locator('.tab-plugin[data-plugin="github"]');
+  await github.click();
+  const githubView = win.locator('.plugin-view[data-plugin="github"]');
+  check("the GitHub button opens its view", await until("github view", () => githubView.isVisible()));
+  check("its host starts on the view's first call", await until("github running", githubRunning));
+  await win.evaluate(() => {
+    localStorage.removeItem("specterm.plugin.github");
+    const settings = JSON.parse(localStorage.getItem("specterm.settings") || "{}");
+    settings.githubWatchlist = ["acme/widgets"];
+    localStorage.setItem("specterm.settings", JSON.stringify(settings));
+    localStorage.setItem("specterm.sidebar", JSON.stringify({ view: "github" }));
+  });
+  await win.reload();
+  await win.waitForSelector(".tab-bar", { timeout: 20000 });
+  check(
+    "a sidebar left on the old GitHub panel opens on the plugin's",
+    await until("migrated view", () => githubView.isVisible())
+  );
+  const migrated = await win.evaluate(() => localStorage.getItem("specterm.plugin.github"));
+  check(
+    "the watchlist moves from the settings to the plugin's storage",
+    migrated === JSON.stringify({ watchlist: ["acme/widgets"] }),
+    String(migrated)
+  );
+
+  // 11. A built-in plugin can be turned off, and stays off.
+  await win.locator(".tab-settings").click();
+  await win.locator('.plugins-settings-item[data-plugin="github"] input').click();
+  check("turning GitHub off removes its button", await until("no github", async () => (await github.count()) === 0));
+  const saved = JSON.parse(fs.readFileSync(path.join(userDataDir, "plugins.json"), "utf-8"));
+  check("and is remembered", saved.disabled?.github === true, JSON.stringify(saved.disabled));
 
   await win.screenshot({ path: path.join(root, "test", "shot-plugins.png") });
 } catch (err) {

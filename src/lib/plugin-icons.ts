@@ -18,6 +18,7 @@ import IconActivity from "lucide-solid/icons/activity";
 import IconBot from "lucide-solid/icons/bot";
 import IconNotebookPen from "lucide-solid/icons/notebook-pen";
 import IconGitPullRequest from "lucide-solid/icons/git-pull-request";
+import IconGitBranch from "lucide-solid/icons/git-branch";
 import IconCloud from "lucide-solid/icons/cloud";
 import IconGauge from "lucide-solid/icons/gauge";
 
@@ -36,6 +37,7 @@ const PLUGIN_ICONS: Record<string, IconComponent> = {
   bot: IconBot,
   "notebook-pen": IconNotebookPen,
   "git-pull-request": IconGitPullRequest,
+  "git-branch": IconGitBranch,
   cloud: IconCloud,
   gauge: IconGauge,
 };

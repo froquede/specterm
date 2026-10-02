@@ -25,7 +25,7 @@
 //                 controls, the pane title-bars. A dynamic import here would
 //                 mean a visible frame with holes where the icons go.
 //   icons-lazy  — everything reachable only from a panel that is itself lazily
-//                 mounted (settings, github). It rides in that panel's chunk,
+//                 mounted (settings, the vault). It rides in that panel's chunk,
 //                 so it costs a launch that never opens settings nothing at all.
 
 export { default as IconSidebarOpen } from "lucide-solid/icons/panel-left-open";
@@ -34,7 +34,6 @@ export { default as IconPlus } from "lucide-solid/icons/plus";
 export { default as IconFullscreen } from "lucide-solid/icons/maximize";
 export { default as IconFullscreenExit } from "lucide-solid/icons/minimize";
 export { default as IconSettings } from "lucide-solid/icons/settings";
-export { default as IconGithubPanel } from "lucide-solid/icons/git-branch";
 export { default as IconVaultPanel } from "lucide-solid/icons/library-big";
 export { default as IconX } from "lucide-solid/icons/x";
 export { default as IconMinus } from "lucide-solid/icons/minus";

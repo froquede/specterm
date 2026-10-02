@@ -14,7 +14,6 @@ import {
   IconFullscreen,
   IconFullscreenExit,
   IconSettings,
-  IconGithubPanel,
   IconVaultPanel,
   IconX,
   ICON_SIZE,
@@ -61,8 +60,6 @@ interface TabBarProps {
   onCreate: () => void;
   onToggleSidebar: () => void;
   onOpenSettings: () => void;
-  onToggleGithub: () => void;
-  githubOpen: boolean;
   onToggleVault: () => void;
   vaultOpen: boolean;
   // Plugin buttons open plugin views, so they need to know which view is up.
@@ -415,15 +412,6 @@ export default function TabBar(props: TabBarProps) {
           title={`${props.vaultOpen ? "Hide" : "Open"} vault panel`}
         >
           <IconVaultPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
-        </button>
-        <button
-          class="tab-icon-btn tab-github"
-          classList={{ active: props.githubOpen }}
-          onClick={props.onToggleGithub}
-          aria-pressed={props.githubOpen}
-          title={`${props.githubOpen ? "Hide" : "Open"} GitHub panel`}
-        >
-          <IconGithubPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
         {/* One per enabled plugin that asked for a button. Drawn from the
             manifest (see stores/plugins), so they are here on the first frame

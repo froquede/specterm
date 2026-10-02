@@ -1,33 +1,23 @@
-import { createEffect, createMemo, createSignal, For, Show, onCleanup } from "solid-js";
+import { createSignal, For, Show, onCleanup } from "solid-js";
+import { render } from "solid-js/web";
+import IconStar from "lucide-solid/icons/star";
+import IconRefresh from "lucide-solid/icons/refresh-cw";
+import IconX from "lucide-solid/icons/x";
+import IconGitFork from "lucide-solid/icons/git-fork";
+import IconGitPullRequest from "lucide-solid/icons/git-pull-request";
+import IconCircleDot from "lucide-solid/icons/circle-dot";
+import IconCircleCheck from "lucide-solid/icons/circle-check";
+import IconCircleX from "lucide-solid/icons/circle-x";
+import IconLoaderCircle from "lucide-solid/icons/loader-circle";
+import IconFilePlus from "lucide-solid/icons/file-plus";
+import IconFilePen from "lucide-solid/icons/file-pen";
+import IconFileMinus from "lucide-solid/icons/file-minus";
+import type { PluginPanelApi } from "../../../src/components/PluginView";
+import type { GithubRepoSnapshot } from "./types";
+import { join, normalize, basename } from "../../../src/lib/fspath";
+import { classifyGitStatus, type GitStatusCategory, type GitStatusFile } from "./git-status";
 import {
-  IconStar,
-  IconRefresh,
-  ICON_SIZE,
-  ICON_STROKE,
-} from "../lib/icons";
-import {
-  IconGitFork,
-  IconGitPullRequest,
-  IconCircleDot,
-  IconCircleCheck,
-  IconCircleX,
-  IconLoaderCircle,
-  IconFilePlus,
-  IconFilePen,
-  IconFileMinus,
-} from "../lib/icons-lazy";
-import { getBackend } from "../backends";
-import type { GithubRepoSnapshot } from "../backends/types";
-import { useTabStore } from "../stores/tabs";
-import { useTerminalCwd } from "../lib/terminal-registry";
-import "../styles/github-panel.css";
-import { join, normalize, basename } from "../lib/fspath";
-import {
-  classifyGitStatus,
-  type GitStatusCategory,
-  type GitStatusFile,
-} from "../lib/git-status";
-import {
+  attach,
   ghCliStatus,
   currentRepo,
   currentWorkingTreeStatus,
@@ -39,12 +29,20 @@ import {
   addToWatchlist,
   removeFromWatchlist,
   startGithubPolling,
-} from "../stores/github";
+} from "./store";
+import "./panel.css";
 
-interface GithubPanelProps {
-  // Always opens as a new tab — see App.tsx's wiring to handleOpenFile.
-  onOpenFile: (path: string) => void;
-}
+// The GitHub panel, as a built-in plugin: the active pane's repo (branch, CI,
+// working-tree changes) and a watchlist of repos with their open PRs and
+// issues. Moved from src/components/GithubPanel.tsx; host.cjs runs the `git`
+// and `gh` calls.
+
+// Same metrics as the app's chrome icons (src/lib/icons.ts).
+const ICON_SIZE = 15;
+const ICON_STROKE = 1.75;
+
+// The mounted panel's api, for the small components below that open links.
+let panelApi: PluginPanelApi | null = null;
 
 const STATUS_GROUPS: { category: GitStatusCategory; title: string }[] = [
   { category: "modified", title: "Modified" },
@@ -69,7 +67,7 @@ function StatusIcon(props: { category: GitStatusCategory }) {
 }
 
 function openLink(url: string) {
-  void getBackend().then((b) => b.openExternal(url));
+  panelApi?.openExternal(url);
 }
 
 function ChecksIcon(props: { status: "pending" | "success" | "failure" | null }) {
@@ -128,7 +126,7 @@ function RepoCard(props: { repoKey: string; onRemove?: () => void }) {
               props.onRemove?.();
             }}
           >
-            ×
+            <IconX size={12} stroke-width={ICON_STROKE} />
           </button>
         </Show>
       </div>
@@ -179,35 +177,25 @@ function RepoCard(props: { repoKey: string; onRemove?: () => void }) {
   );
 }
 
-export default function GithubPanel(props: GithubPanelProps) {
-  const store = useTabStore();
+function GithubPanel(props: { api: PluginPanelApi }) {
   const [addValue, setAddValue] = createSignal("");
   const [statusExpanded, setStatusExpanded] = createSignal(false);
 
   function openStatusFile(file: GitStatusFile) {
     const root = current()?.root;
     if (!root) return;
-    props.onOpenFile(normalize(join(root, file.path)));
+    // Always a new tab, as it was before the panel was a plugin.
+    props.api.openFile(normalize(join(root, file.path)), "tab");
   }
 
+  onCleanup(attach(props.api));
   onCleanup(startGithubPolling());
 
   // Re-detects the repo whenever the active pane changes (tab switch, pane
-  // focus change, split) or its shell changes directory — useTerminalCwd is
-  // the reactive read, so a `cd` into another repo is picked up without
-  // switching panes. See stores/github.ts's staleness check for why this
-  // doesn't refetch `gh` on every one.
-  // The memo matters: the cwd epoch bumps when *any* pane changes directory,
-  // and only a change to the active pane's should spawn `git` again.
-  const activePaneCwd = createMemo(() => {
-    const paneId = store.activeTab?.activePaneId;
-    return paneId ? useTerminalCwd(paneId) : null;
-  });
-  createEffect(() => {
-    const cwd = activePaneCwd();
-    if (cwd === null) return;
-    void refreshCurrentRepo(cwd);
-  });
+  // focus change, split) or its shell changes directory, so a `cd` into
+  // another repo is picked up without switching panes. See store.ts's
+  // staleness check for why this doesn't refetch `gh` on every one.
+  onCleanup(props.api.onActiveCwd((cwd) => void refreshCurrentRepo(cwd)));
 
   function submitAdd(e: Event) {
     e.preventDefault();
@@ -379,4 +367,15 @@ export default function GithubPanel(props: GithubPanelProps) {
       </div>
     </div>
   );
+}
+
+/** Specterm's entry point: render into the element it gives us; the returned
+ *  function is called when the view closes. */
+export function mount(el: HTMLElement, api: PluginPanelApi): () => void {
+  panelApi = api;
+  const dispose = render(() => <GithubPanel api={api} />, el);
+  return () => {
+    dispose();
+    if (panelApi === api) panelApi = null;
+  };
 }

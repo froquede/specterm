@@ -43,6 +43,9 @@ export default function PluginsSettings() {
                   <Show when={plugin.version}>
                     <span class="plugins-settings-version"> {plugin.version}</span>
                   </Show>
+                  <Show when={plugin.builtIn}>
+                    <span class="plugins-settings-version"> · built in</span>
+                  </Show>
                 </label>
                 <input
                   id={`plugin-${plugin.id}`}
@@ -60,8 +63,9 @@ export default function PluginsSettings() {
           )}
         </For>
         <p class="settings-hint">
-          A plugin runs with the same access to your files, network and terminals as Specterm
-          itself. Turn on only plugins you trust.
+          Built-in plugins ship with Specterm and are on unless you turn them off. Any other
+          plugin runs with the same access to your files, network and terminals as Specterm
+          itself: turn on only plugins you trust.
         </p>
       </Show>
     </div>

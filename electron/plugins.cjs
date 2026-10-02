@@ -31,7 +31,8 @@ const path = require("path");
 //   1.0 — sidebar views, tab-bar button and badge, commands, invoke and events.
 //   1.1 — ctx.toast and api.onReveal, api.renderMarkdown, api.platform,
 //         api.openExternal, and `ownHeader` on a sidebar view.
-const API_VERSION = { major: 1, minor: 1 };
+//   1.2 — api.onActiveCwd, api.openFile and api.storage; built-in plugins.
+const API_VERSION = { major: 1, minor: 2 };
 
 const SCHEME = "specterm-plugin";
 const MANIFEST = "specterm-plugin.json";
@@ -133,7 +134,20 @@ function parseManifest(dir, raw) {
     sidebarViews: [],
     tabBarButton: null,
     commands: [],
+    // When the host module starts. "startup": as soon as the plugin is on
+    // (after the first window has painted), for plugins that work in the
+    // background, like a poller behind a badge. "view": on the first call from
+    // its panel, for plugins that only answer their own view; until then the
+    // plugin costs no process at all.
+    activation: "startup",
   };
+  if (m.activation !== undefined) {
+    if (m.activation !== "startup" && m.activation !== "view") {
+      throw new Error(`"activation" must be "startup" or "view"`);
+    }
+    if (m.activation === "view" && !m.host) throw new Error(`"activation": "view" needs a "host" module`);
+    out.activation = m.activation;
+  }
 
   const views = m.sidebarViews ?? [];
   if (!Array.isArray(views) || views.length > MAX_VIEWS) {
@@ -220,15 +234,25 @@ function contributionOf(manifest) {
 
 // --- the registry -------------------------------------------------------------
 
-function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWindows }) {
+function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWindows, bundledDir }) {
   const userData = app.getPath("userData");
   const pluginsDir = path.join(userData, "plugins");
   const statePath = path.join(userData, "plugins.json");
   const dataDir = path.join(userData, "plugin-data");
 
-  // { enabled: { [id]: true }, contributions: [...] } — the second half is the
-  // boot answer for the next launch.
+  // { enabled: { [id]: true }, disabled: { [id]: true }, contributions: [...] }.
+  // `enabled` lists the external plugins the user turned on, `disabled` the
+  // built-in ones they turned off: each kind is recorded only when it differs
+  // from its default. `contributions` is the external half of the next
+  // launch's boot answer.
   let state = null;
+
+  // Built-in plugins: the same contract, shipped inside the app and on by
+  // default. Read synchronously with the state, because they are part of the
+  // first frame from the very first launch (and the first launch after an
+  // update that changed one), when there is no cached answer to fall back on.
+  // A handful of small files from the app's own folder.
+  let bundled = null; // id -> { id, dir, manifest | null, error | null, builtIn: true }
 
   // id -> { id, dir, manifest | null, error | null }
   const discovered = new Map();
@@ -244,14 +268,43 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     if (state) return state;
     try {
       const parsed = JSON.parse(fs.readFileSync(statePath, "utf-8"));
+      const map = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : {});
       state = {
-        enabled: parsed && typeof parsed.enabled === "object" && parsed.enabled ? parsed.enabled : {},
+        enabled: map(parsed?.enabled),
+        disabled: map(parsed?.disabled),
         contributions: Array.isArray(parsed?.contributions) ? parsed.contributions : [],
       };
     } catch (_) {
-      state = { enabled: {}, contributions: [] };
+      state = { enabled: {}, disabled: {}, contributions: [] };
     }
+    loadBundled();
     return state;
+  }
+
+  function loadBundled() {
+    if (bundled) return bundled;
+    bundled = new Map();
+    if (!bundledDir) return bundled;
+    let names = [];
+    try {
+      names = fs.readdirSync(bundledDir, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+        .map((e) => e.name);
+    } catch (_) {
+      return bundled;
+    }
+    for (const name of names) {
+      const dir = path.join(bundledDir, name);
+      try {
+        const manifest = parseManifest(dir, fs.readFileSync(path.join(dir, MANIFEST), "utf-8"));
+        bundled.set(manifest.id, { id: manifest.id, dir, manifest, error: null, builtIn: true });
+      } catch (err) {
+        // A broken built-in is a build mistake, never the user's; say so loudly.
+        console.error(`[plugins] built-in plugin "${name}" is invalid:`, err.message);
+        bundled.set(name, { id: name, dir, manifest: null, error: `invalid manifest: ${err.message}`, builtIn: true });
+      }
+    }
+    return bundled;
   }
 
   function writeState() {
@@ -264,7 +317,21 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     }
   }
 
-  const isEnabled = (id) => loadState().enabled[id] === true;
+  const isBuiltIn = (id) => loadBundled().has(id);
+  const isEnabled = (id) =>
+    isBuiltIn(id) ? loadState().disabled[id] !== true : loadState().enabled[id] === true;
+
+  // What a window draws at boot, before discovery has run: the built-ins as
+  // they are now, plus the external plugins as the last run left them.
+  function bootContributions() {
+    if (discoveredOnce) return currentContributions();
+    const s = loadState();
+    const builtIns = [...loadBundled().values()]
+      .filter((p) => p.manifest && isEnabled(p.id))
+      .map((p) => contributionOf(p.manifest));
+    const external = s.contributions.filter((c) => !isBuiltIn(c.id));
+    return [...builtIns, ...external].sort((a, b) => a.id.localeCompare(b.id));
+  }
 
   function currentContributions() {
     const out = [];
@@ -283,7 +350,9 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         name: p.manifest?.name ?? p.id,
         version: p.manifest?.version ?? null,
         dir: p.dir,
+        builtIn: p.builtIn === true,
         enabled: isEnabled(p.id),
+        running: hostStatus.get(p.id) === "active",
         error: p.error ?? hostErrors.get(p.id) ?? null,
       }))
       .sort((a, b) => a.id.localeCompare(b.id));
@@ -299,8 +368,11 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   function publish() {
     const s = loadState();
     const next = currentContributions();
-    if (JSON.stringify(next) !== JSON.stringify(s.contributions)) {
-      s.contributions = next;
+    // Only the external plugins are cached: the built-ins are read fresh at
+    // every boot (see loadBundled).
+    const external = next.filter((c) => !isBuiltIn(c.id));
+    if (JSON.stringify(external) !== JSON.stringify(s.contributions)) {
+      s.contributions = external;
       writeState();
     }
     sendAll("plugins:changed", { contributions: next, plugins: list() });
@@ -308,6 +380,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
 
   async function discover() {
     discovered.clear();
+    for (const p of loadBundled().values()) discovered.set(p.id, p);
     let entries = [];
     try {
       entries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
@@ -331,6 +404,17 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
           try {
             const raw = await fs.promises.readFile(path.join(dir, MANIFEST), "utf-8");
             const manifest = parseManifest(dir, raw);
+            if (isBuiltIn(manifest.id)) {
+              // Listed under its folder name, so it doesn't replace the
+              // built-in it collides with.
+              discovered.set(`${e.name} (external)`, {
+                id: `${e.name} (external)`,
+                dir,
+                manifest: null,
+                error: `"${manifest.id}" is the id of a built-in plugin; give this one another id`,
+              });
+              return;
+            }
             discovered.set(manifest.id, { id: manifest.id, dir, manifest, error: null });
           } catch (err) {
             const error =
@@ -531,7 +615,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // launches where `hasBootContributions()` stamped the flag, so a user with no
   // plugins never pays for the round trip.
   ipcMain.on("plugins-boot-sync", (event) => {
-    event.returnValue = discoveredOnce ? currentContributions() : loadState().contributions;
+    event.returnValue = bootContributions();
   });
 
   ipcMain.handle("plugins:list", () => list());
@@ -540,7 +624,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // subscribed to the changes — so whatever was published before it was
   // listening is not lost.
   ipcMain.handle("plugins:state", () => ({
-    contributions: discoveredOnce ? currentContributions() : loadState().contributions,
+    contributions: bootContributions(),
     plugins: list(),
     badges: Object.fromEntries(badges),
   }));
@@ -550,18 +634,44 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     if (!p) throw new Error(`no plugin "${id}"`);
     if (enabled && !p.manifest) throw new Error(p.error || `plugin "${id}" cannot be enabled`);
     const s = loadState();
-    if (enabled) s.enabled[id] = true;
+    if (isBuiltIn(id)) {
+      if (enabled) delete s.disabled[id];
+      else s.disabled[id] = true;
+    } else if (enabled) s.enabled[id] = true;
     else delete s.enabled[id];
     writeState();
-    if (enabled) await activate(p);
-    else await deactivate(id);
+    if (enabled) {
+      if (p.manifest.activation === "startup") await activate(p);
+    } else await deactivate(id);
     publish();
     return list();
   });
 
+  // Starts a view-activated plugin's host on its panel's first call. Calls that
+  // arrive while it starts wait for the same activation.
+  const activating = new Map();
+  async function ensureRunning(id) {
+    if (hostStatus.get(id) === "active") return;
+    const p = discovered.get(id);
+    if (!p?.manifest?.host || !isEnabled(id) || p.manifest.activation !== "view" || hostStatus.get(id) === "failed") {
+      throw new Error(`plugin "${id}" is not running`);
+    }
+    if (!activating.has(id)) {
+      activating.set(
+        id,
+        activate(p).finally(() => {
+          activating.delete(id);
+          publish();
+        })
+      );
+    }
+    await activating.get(id);
+    if (hostStatus.get(id) !== "active") throw new Error(hostErrors.get(id) || `plugin "${id}" failed to start`);
+  }
+
   ipcMain.handle("plugins:invoke", async (_event, id, method, args) => {
-    if (hostStatus.get(id) !== "active") throw new Error(`plugin "${id}" is not running`);
     if (typeof method !== "string" || !NAME_RE.test(method)) throw new Error("invalid method name");
+    await ensureRunning(id);
     return request({ type: "invoke", id, method, args: Array.isArray(args) ? args : [] }, INVOKE_TIMEOUT_MS);
   });
 
@@ -570,15 +680,16 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     await discover();
     discoveredOnce = true;
     await Promise.all(
-      [...discovered.values()].filter((p) => p.manifest && isEnabled(p.id)).map(activate)
+      [...discovered.values()]
+        .filter((p) => p.manifest && isEnabled(p.id) && p.manifest.activation === "startup")
+        .map(activate)
     );
     publish();
   }
 
   return {
     // Whether the next window has plugin contributions to collect at boot.
-    hasBootContributions: () =>
-      (discoveredOnce ? currentContributions() : loadState().contributions).length > 0,
+    hasBootContributions: () => bootContributions().length > 0,
     start,
     // On quit: the host goes with the app, and nothing is waited on.
     stop() {

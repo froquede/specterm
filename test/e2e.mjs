@@ -334,8 +334,11 @@ async function splitPane(win, key) {
 // GitHub panel: current-repo detection is hermetic (git only, no `gh`/network),
 // so this is the one part of the feature real CI can verify. It builds a throw-
 // away repo with a fake github.com remote, cds a terminal into it, and checks
-// the panel's "Current repo" line — proving detectRepo's remote-URL parsing
-// (src/lib/github-remote.ts) end to end without ever calling `gh`.
+// the panel's "Current repo" line — proving the remote-URL parsing
+// (plugins/github/src/github-remote.ts) end to end without ever calling `gh`.
+// The panel is a built-in plugin, so this also covers the whole path: the
+// button from the boot answer, the panel module over specterm-plugin://, its
+// host started on the first call, and api.onActiveCwd.
 async function testGithubPanelCurrentRepo(win) {
   const repoDir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-gh-"));
   execSync("git init -q", { cwd: repoDir });
@@ -354,13 +357,17 @@ async function testGithubPanelCurrentRepo(win) {
   // time to land before the panel reads it.
   await win.waitForTimeout(1800);
 
-  await win.evaluate(() => document.querySelector(".tab-github")?.click());
-  await win.waitForTimeout(500);
-
-  const state = await win.evaluate(() => ({
-    name: document.querySelector(".gh-current-repo-name")?.textContent ?? null,
-    branch: document.querySelector(".gh-current-repo-branch")?.textContent ?? null,
-  }));
+  await win.evaluate(() => document.querySelector('.tab-plugin[data-plugin="github"]')?.click());
+  const read = () =>
+    win.evaluate(() => ({
+      name: document.querySelector(".gh-current-repo-name")?.textContent ?? null,
+      branch: document.querySelector(".gh-current-repo-branch")?.textContent ?? null,
+    }));
+  let state = await read();
+  for (let i = 0; i < 100 && state.name === null; i++) {
+    await win.waitForTimeout(100);
+    state = await read();
+  }
 
   check(
     "GitHub panel detects the repo from the active pane's cwd",
@@ -373,7 +380,7 @@ async function testGithubPanelCurrentRepo(win) {
     `got branch="${state.branch}"`
   );
 
-  await win.evaluate(() => document.querySelector(".tab-github")?.click());
+  await win.evaluate(() => document.querySelector('.tab-plugin[data-plugin="github"]')?.click());
   fs.rmSync(repoDir, { recursive: true, force: true });
 }
 

@@ -67,7 +67,6 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // gets the boot budget instead. It was already mounted lazily; this makes it
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
-const GithubPanel = lazy(() => import("./components/GithubPanel"));
 const VaultPanel = lazy(() => import("./components/VaultPanel"));
 const PluginView = lazy(() => import("./components/PluginView"));
 const QuickOpen = lazy(() => import("./components/QuickOpen"));
@@ -92,13 +91,6 @@ export default function App() {
   function toggleSettings() {
     store.toggleSidebarView("settings");
     if (!settingsOpen()) focusActivePane();
-  }
-
-  const githubOpen = () => store.state.sidebarView === "github";
-
-  function toggleGithub() {
-    store.toggleSidebarView("github");
-    if (!githubOpen()) focusActivePane();
   }
 
   const vaultOpen = () => store.state.sidebarView === "vault";
@@ -797,8 +789,6 @@ export default function App() {
         }
         onTearOff={(id) => void tearOff("tab", id)}
         settingsOpen={settingsOpen()}
-        onToggleGithub={toggleGithub}
-        githubOpen={githubOpen()}
         onToggleVault={toggleVault}
         vaultOpen={vaultOpen()}
         sidebarView={store.state.sidebarView}
@@ -838,16 +828,12 @@ export default function App() {
             />
           </Suspense>
         </Show>
-        <Show when={githubOpen()}>
-          <Suspense>
-            <GithubPanel onOpenFile={(path) => handleOpenFile(path, "tab")} />
-          </Suspense>
-        </Show>
         <Show when={openPluginView()} keyed>
           {(key) => (
             <Suspense>
               <PluginView
                 viewKey={key}
+                onOpenFile={handleOpenFile}
                 onClose={() => {
                   store.closeSidebar();
                   focusActivePane();

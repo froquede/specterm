@@ -39,7 +39,7 @@ function makeContext(id, storagePath, entry) {
   };
   return {
     id,
-    apiVersion: "1.1",
+    apiVersion: "1.2",
     storagePath,
     // A method the plugin's panel can call: `api.invoke(method, ...args)`.
     handle(method, fn) {

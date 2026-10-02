@@ -15,6 +15,7 @@ import {
   unregisterBindings,
   type BindingSpec,
 } from "./keybindings";
+import { publishStoreChange, registerStoreSync } from "../lib/store-sync";
 
 // The renderer's side of plugins: what the enabled ones contribute to this
 // window, their badges, and the one subscription their events arrive on. The
@@ -211,6 +212,100 @@ export function openPluginToast() {
   if (active.toast.payload !== null) reveal(active.pluginId, active.toast.payload);
   showViewImpl(active.viewKey);
 }
+
+// --- storage -------------------------------------------------------------------
+//
+// api.storage: a small JSON object per plugin, in this origin's localStorage
+// under `specterm.plugin.<id>`, and kept the same in every window through the
+// store-sync channel the settings use. Small means small: a write that would
+// take the plugin past STORAGE_MAX is refused, so no plugin can fill the
+// storage the app itself depends on.
+
+const STORAGE_PREFIX = "specterm.plugin.";
+const STORAGE_MAX = 256 * 1024;
+const storageListeners = new Map<string, Set<(key: string, value: unknown) => void>>();
+const storageSynced = new Set<string>();
+
+function readPluginStorage(pluginId: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(STORAGE_PREFIX + pluginId) ?? "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (_) {
+    return {};
+  }
+}
+
+function notifyStorage(pluginId: string, key: string, value: unknown) {
+  for (const cb of [...(storageListeners.get(pluginId) ?? [])]) {
+    try {
+      cb(key, value);
+    } catch (err) {
+      console.error(`[plugin ${pluginId}] storage listener threw:`, err);
+    }
+  }
+}
+
+// Another window wrote: tell this window's listeners about every key that
+// now differs from what they last saw.
+function syncStorage(pluginId: string) {
+  if (storageSynced.has(pluginId)) return;
+  storageSynced.add(pluginId);
+  let seen = readPluginStorage(pluginId);
+  registerStoreSync(`plugin:${pluginId}`, () => {
+    const next = readPluginStorage(pluginId);
+    for (const key of new Set([...Object.keys(seen), ...Object.keys(next)])) {
+      if (JSON.stringify(seen[key]) !== JSON.stringify(next[key])) notifyStorage(pluginId, key, next[key]);
+    }
+    seen = next;
+  });
+}
+
+export interface PluginStorage {
+  get(key: string): unknown;
+  /** JSON-serialisable values; `undefined` removes the key. Throws when the
+   *  plugin's storage would grow past its limit. */
+  set(key: string, value: unknown): void;
+  /** Changes made in other windows. Returns the unsubscribe. */
+  onChange(cb: (key: string, value: unknown) => void): () => void;
+}
+
+export function pluginStorage(pluginId: string): PluginStorage {
+  syncStorage(pluginId);
+  return {
+    get: (key) => readPluginStorage(pluginId)[key],
+    set(key, value) {
+      const data = readPluginStorage(pluginId);
+      if (value === undefined) delete data[key];
+      else data[key] = JSON.parse(JSON.stringify(value));
+      const raw = JSON.stringify(data);
+      if (raw.length > STORAGE_MAX) throw new Error(`plugin storage is limited to ${STORAGE_MAX / 1024} KB`);
+      localStorage.setItem(STORAGE_PREFIX + pluginId, raw);
+      publishStoreChange(`plugin:${pluginId}`);
+    },
+    onChange(cb) {
+      let set = storageListeners.get(pluginId);
+      if (!set) storageListeners.set(pluginId, (set = new Set()));
+      set.add(cb);
+      return () => set!.delete(cb);
+    },
+  };
+}
+
+// The GitHub panel's watchlist used to be one of the app's settings. It is the
+// GitHub plugin's own now; carried over once, the first time this version
+// runs, before anything could write settings without it.
+(function migrateGithubWatchlist() {
+  try {
+    if (localStorage.getItem(STORAGE_PREFIX + "github") !== null) return;
+    const settings = JSON.parse(localStorage.getItem("specterm.settings") ?? "null");
+    const list = settings?.githubWatchlist;
+    if (!Array.isArray(list) || list.length === 0) return;
+    const watchlist = list.filter((v: unknown) => typeof v === "string");
+    localStorage.setItem(STORAGE_PREFIX + "github", JSON.stringify({ watchlist }));
+  } catch (_) {
+    /* Unreadable settings: nothing to carry over. */
+  }
+})();
 
 // --- shortcuts ---------------------------------------------------------------
 

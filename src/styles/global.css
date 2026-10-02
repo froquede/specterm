@@ -2150,7 +2150,7 @@ body.resizing-sidebar .xterm {
 
 .app[data-chrome="classic"] .file-tree,
 .app[data-chrome="classic"] .settings-sidebar,
-.app[data-chrome="classic"] .github-panel {
+.app[data-chrome="classic"] .plugin-view {
   border: none;
   border-right: 1px solid var(--border);
   border-radius: 0;

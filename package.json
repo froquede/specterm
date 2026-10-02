@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.27.0",
+  "version": "0.28.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
@@ -70,11 +70,15 @@
     },
     "afterSign": "scripts/adhoc-sign.cjs",
     "asarUnpack": [
-      "node_modules/node-pty/**/*"
+      "node_modules/node-pty/**/*",
+      "plugins/**/*"
     ],
     "files": [
       "dist/**/*",
       "electron/**/*",
+      "plugins/*/specterm-plugin.json",
+      "plugins/*/host.cjs",
+      "plugins/*/dist/**/*",
       "node_modules/**/*",
       "package.json",
       "build/icon.png"
