@@ -44,6 +44,12 @@ export function registerBindings(specs: BindingSpec[]) {
   setKeymapSpecs((prev) => [...prev, ...specs]);
 }
 
+/** Drop rows by id — for rows whose owner can go away, like a disabled plugin. */
+export function unregisterBindings(ids: ReadonlySet<string>) {
+  if (ids.size === 0) return;
+  setKeymapSpecs((prev) => prev.filter((spec) => !ids.has(spec.id)));
+}
+
 /** The chord a row ships with on this OS, before any user override. */
 export function defaultChord(spec: BindingSpec): Chord {
   const fromOS = spec.byOS?.[os];

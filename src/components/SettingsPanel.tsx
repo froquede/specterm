@@ -128,8 +128,10 @@ import {
   IconSessions,
   IconUpdates,
   IconKeyboard,
+  IconPlugins,
 } from "../lib/icons-lazy";
 import KeybindingsSettings from "./KeybindingsSettings";
+import PluginsSettings from "./PluginsSettings";
 import { capturing } from "../stores/keybindings";
 
 interface SettingsPanelProps {
@@ -1316,6 +1318,11 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               </p>
             </div>
           </Show>
+        </Category>
+
+        {/* ---- Plugins ---------------------------------------------------- */}
+        <Category id="plugins" title="Plugins" icon={IconPlugins}>
+          <PluginsSettings />
         </Category>
 
         {/* ---- Updates ---------------------------------------------------- */}

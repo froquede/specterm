@@ -38,6 +38,7 @@ import {
 } from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
+import { findPluginView, initPlugins } from "./stores/plugins";
 import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
@@ -68,8 +69,9 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const GithubPanel = lazy(() => import("./components/GithubPanel"));
 const VaultPanel = lazy(() => import("./components/VaultPanel"));
+const PluginView = lazy(() => import("./components/PluginView"));
 const QuickOpen = lazy(() => import("./components/QuickOpen"));
-import type { PaneId } from "./types";
+import type { PaneId, PluginViewKey } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
@@ -105,6 +107,23 @@ export default function App() {
     store.toggleSidebarView("vault");
     if (!vaultOpen()) focusActivePane();
   }
+
+  function togglePluginView(key: PluginViewKey) {
+    store.toggleSidebarView(key);
+    if (store.state.sidebarView !== key) focusActivePane();
+  }
+
+  // The sidebar is showing a plugin's view that still exists. When the plugin
+  // is turned off its view goes with it, and the sidebar closes rather than
+  // sitting there empty.
+  const openPluginView = () => {
+    const view = store.state.sidebarView;
+    return findPluginView(view) ? (view as PluginViewKey) : null;
+  };
+  createEffect(() => {
+    const view = store.state.sidebarView;
+    if (view?.startsWith("plugin:") && !findPluginView(view)) store.closeSidebar();
+  });
 
   // Register a folder as a vault (from the file tree) and show it.
   function openVault(path: string) {
@@ -419,6 +438,10 @@ export default function App() {
         toggleQuickOpen: () => setQuickOpenVisible((v) => !v),
       })
     );
+
+    // Plugin shortcuts go in after the core's, so a plugin can never take a
+    // chord the app already uses. Drawn from the boot answer, nothing awaited.
+    initPlugins({ toggleView: togglePluginView });
 
     initKeybindings();
 
@@ -774,6 +797,8 @@ export default function App() {
         githubOpen={githubOpen()}
         onToggleVault={toggleVault}
         vaultOpen={vaultOpen()}
+        sidebarView={store.state.sidebarView}
+        onTogglePluginView={togglePluginView}
       />
       <div class="app-body">
         <FileTree
@@ -813,6 +838,19 @@ export default function App() {
           <Suspense>
             <GithubPanel onOpenFile={(path) => handleOpenFile(path, "tab")} />
           </Suspense>
+        </Show>
+        <Show when={openPluginView()} keyed>
+          {(key) => (
+            <Suspense>
+              <PluginView
+                viewKey={key}
+                onClose={() => {
+                  store.closeSidebar();
+                  focusActivePane();
+                }}
+              />
+            </Suspense>
+          )}
         </Show>
         <Show when={store.state.sidebarView !== null}>
           <SidebarResizeHandle root={store.activeTab?.root} />

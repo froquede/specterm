@@ -12,6 +12,7 @@ export { default as IconTerminal } from "lucide-solid/icons/square-terminal";
 export { default as IconKeyboard } from "lucide-solid/icons/keyboard";
 export { default as IconSessions } from "lucide-solid/icons/history";
 export { default as IconUpdates } from "lucide-solid/icons/download";
+export { default as IconPlugins } from "lucide-solid/icons/plug";
 export { default as IconGitFork } from "lucide-solid/icons/git-fork";
 export { default as IconGitPullRequest } from "lucide-solid/icons/git-pull-request";
 export { default as IconCircleDot } from "lucide-solid/icons/circle-dot";

@@ -140,6 +140,66 @@ export interface WindowBoot {
   // true for the single window opened at launch when the host had nothing of its
   // own to restore — two windows both migrating the same blob would duplicate it.
   migrateLegacy: boolean;
+  // Whether the host had plugin contributions for this window; `plugins` is them.
+  hasPlugins?: boolean;
+  // The enabled plugins' buttons, views and shortcuts as of launch, collected
+  // synchronously so the tab bar is complete on the first frame. Null when there
+  // are none. The live list arrives later through onPluginsChanged.
+  plugins?: PluginContribution[] | null;
+}
+
+// --- Plugins (see electron/plugins.cjs and docs/plugin-architecture.md) -----
+
+export interface PluginSidebarView {
+  id: string;
+  title: string;
+  icon: string;
+}
+
+export interface PluginCommand {
+  id: string;
+  title: string;
+  key: string;
+  shift: boolean;
+  // Exactly one of these: open/close one of the plugin's views, or call a
+  // method on its host module.
+  toggleView?: string;
+  invoke?: string;
+}
+
+// What a window needs to draw a plugin, with no plugin code loaded.
+export interface PluginContribution {
+  id: string;
+  name: string;
+  version: string;
+  // specterm-plugin:// URLs of the panel module and its stylesheet.
+  panel: string | null;
+  style: string | null;
+  sidebarViews: PluginSidebarView[];
+  tabBarButton: { view: string; icon: string; title: string } | null;
+  commands: PluginCommand[];
+}
+
+// A plugin as Settings lists it: installed, valid or not, on or off.
+export interface PluginInfo {
+  id: string;
+  name: string;
+  version: string | null;
+  dir: string;
+  enabled: boolean;
+  error: string | null;
+}
+
+// A positive count, a plain dot, or nothing.
+export type PluginBadge = number | "dot" | null;
+
+export interface PluginsChanged {
+  contributions: PluginContribution[];
+  plugins: PluginInfo[];
+}
+
+export interface PluginsState extends PluginsChanged {
+  badges: Record<string, PluginBadge>;
 }
 
 // A window's tabs as the host saved them: no live processes behind them, unlike a
@@ -497,4 +557,15 @@ export interface Backend {
   installUpdate(): Promise<void>;
   getCurrentVersion(): Promise<string>;
   onUpdaterEvent(cb: (event: UpdaterEvent) => void): Promise<UnlistenFn>;
+
+  // Plugins. One fixed set of calls for all of them; see electron/plugins.cjs.
+  pluginsList(): Promise<PluginInfo[]>;
+  pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]>;
+  pluginsState(): Promise<PluginsState>;
+  pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
+  onPluginEvent(
+    cb: (id: string, event: string, payload: unknown) => void
+  ): Promise<UnlistenFn>;
+  onPluginBadge(cb: (id: string, value: PluginBadge) => void): Promise<UnlistenFn>;
+  onPluginsChanged(cb: (change: PluginsChanged) => void): Promise<UnlistenFn>;
 }

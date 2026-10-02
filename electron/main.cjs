@@ -12,6 +12,8 @@ const {
   Tray,
   nativeImage,
   Notification,
+  protocol,
+  utilityProcess,
   autoUpdater: electronAutoUpdater,
 } = require("electron");
 const path = require("path");
@@ -24,6 +26,15 @@ const { execFile, spawn } = require("child_process");
 const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
 const { filePathsFromArgv } = require("./open-paths.cjs");
+const { registerPluginScheme, createPlugins } = require("./plugins.cjs");
+
+// Chromium fixes its privileged schemes at startup, so this one is declared
+// before anything else happens. See plugins.cjs.
+registerPluginScheme(protocol);
+
+// Created once the app is ready (it registers IPC handlers and a protocol), and
+// read by windowBootArg for every window after that.
+let plugins = null;
 
 // Runs `cmd` and resolves with trimmed stdout, or rejects with the error
 // (stdout/stderr attached) on a non-zero exit, spawn failure, or timeout.
@@ -306,7 +317,11 @@ function windowBootArg(opts) {
       `hasRestore=${bit(Boolean(opts.restore))},` +
       `autoCheckUpdates=${bit(autoCheckUpdates)},` +
       `ownControls=${bit(process.platform !== "darwin" && sessionPrefs.customTitleBar)},` +
-      `migrateLegacy=${bit(Boolean(opts.migrateLegacy))}`,
+      `migrateLegacy=${bit(Boolean(opts.migrateLegacy))},` +
+      // Whether there are plugin buttons and views to draw on the first frame.
+      // Only then does the preload ask for them, so a launch with no plugins
+      // has no extra round trip at all.
+      `hasPlugins=${bit(plugins?.hasBootContributions() ?? false)}`,
   };
 }
 
@@ -2626,6 +2641,7 @@ ipcMain.on("session:write-screens-async", (event, screens) => {
 // the time `will-quit` fires every window has closed, so every screen it sent has
 // arrived: write the final merge synchronously so the last word is on disk.
 app.on("will-quit", () => {
+  plugins?.stop();
   if (!screensDirty) return;
   try {
     const merged = mergedScreens();
@@ -3549,6 +3565,8 @@ app.whenReady().then(() => {
 
   buildAppMenu();
 
+  plugins = createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWindows });
+
   // One window per window that was open when the app last quit, each where it was.
   // Nothing here decides *what* goes in them beyond handing over the saved layout —
   // the renderer validates it and hydrates, exactly as it does for a tab handed over
@@ -3561,6 +3579,13 @@ app.whenReady().then(() => {
     // duplicate it.
     createWindow({ migrateLegacy: sessionPrefs.restoreLastSession });
   }
+
+  // Plugins wait for the first window to have painted: finding them, starting
+  // their host process and activating them all happen behind the first shell,
+  // never in front of it.
+  const first = openWindows()[0];
+  if (first) first.once("ready-to-show", () => void plugins.start());
+  else void plugins.start();
 });
 
 // An explicit Quit is the one thing that ends a detached session, so it is also

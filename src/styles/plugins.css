@@ -1,0 +1,42 @@
+/* The frame around a plugin's sidebar view — the same card the GitHub and
+   vault panels sit in, so a plugin's view reads as part of the app. The body is
+   the plugin's; it styles it with the theme variables (--bg, --fg, --fg-muted,
+   --accent, --border, ...). */
+.plugin-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: var(--sidebar-width);
+  background: var(--bg);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  color: var(--fg);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.plugin-view-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.plugin-view-title {
+  font-weight: 600;
+}
+
+.plugin-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.plugin-view-error {
+  padding: 12px 16px;
+  color: var(--fg-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}

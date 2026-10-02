@@ -28,6 +28,7 @@ function readBootFlags() {
         autoCheckUpdates: flags.autoCheckUpdates === true,
         ownControls: flags.ownControls === true,
         migrateLegacy: flags.migrateLegacy === true,
+        hasPlugins: flags.hasPlugins === true,
       };
     }
   }
@@ -37,6 +38,7 @@ function readBootFlags() {
     autoCheckUpdates: true,
     ownControls: false,
     migrateLegacy: false,
+    hasPlugins: false,
   };
 }
 
@@ -63,6 +65,19 @@ const windowBoot = {
         } catch (_) {
           // Older host, or a channel that isn't there — fall back to a plain window
           // rather than failing the launch.
+          return null;
+        }
+      })()
+    : null,
+  // The enabled plugins' buttons, views and shortcuts, so the tab bar is drawn
+  // complete on the first frame instead of shifting when they arrive. Same
+  // blocking channel as `restore`, and for the same reason; asked for only
+  // when the host said there is something to collect.
+  plugins: flags.hasPlugins
+    ? (() => {
+        try {
+          return ipcRenderer.sendSync("plugins-boot-sync");
+        } catch (_) {
           return null;
         }
       })()
@@ -323,5 +338,27 @@ contextBridge.exposeInMainWorld("specterm", {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("updater:event", handler);
     return () => ipcRenderer.removeListener("updater:event", handler);
+  },
+
+  // Plugins — see electron/plugins.cjs. One fixed bridge for all of them: a
+  // plugin never adds anything here.
+  pluginsList: () => ipcRenderer.invoke("plugins:list"),
+  pluginsSetEnabled: (id, enabled) => ipcRenderer.invoke("plugins:set-enabled", id, enabled),
+  pluginsState: () => ipcRenderer.invoke("plugins:state"),
+  pluginInvoke: (id, method, args) => ipcRenderer.invoke("plugins:invoke", id, method, args),
+  onPluginEvent: (cb) => {
+    const handler = (_event, id, name, payload) => cb(id, name, payload);
+    ipcRenderer.on("plugins:event", handler);
+    return () => ipcRenderer.removeListener("plugins:event", handler);
+  },
+  onPluginBadge: (cb) => {
+    const handler = (_event, id, value) => cb(id, value);
+    ipcRenderer.on("plugins:badge", handler);
+    return () => ipcRenderer.removeListener("plugins:badge", handler);
+  },
+  onPluginsChanged: (cb) => {
+    const handler = (_event, payload) => cb(payload);
+    ipcRenderer.on("plugins:changed", handler);
+    return () => ipcRenderer.removeListener("plugins:changed", handler);
   },
 });

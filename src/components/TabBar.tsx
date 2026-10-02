@@ -37,6 +37,9 @@ import {
 } from "../stores/attention";
 import { collectLeaves } from "../lib/split-tree";
 import { updaterPhase, updaterVersion } from "../stores/updater";
+import { pluginBadges, pluginButtons } from "../stores/plugins";
+import { pluginIcon } from "../lib/plugin-icons";
+import type { PluginViewKey, SidebarView } from "../types";
 import type { Tab } from "../types";
 
 interface TabBarProps {
@@ -53,6 +56,9 @@ interface TabBarProps {
   githubOpen: boolean;
   onToggleVault: () => void;
   vaultOpen: boolean;
+  // Plugin buttons open plugin views, so they need to know which view is up.
+  sidebarView: SidebarView | null;
+  onTogglePluginView: (key: PluginViewKey) => void;
   onStartRename: (tabId: string) => void;
   onCommitRename: (tabId: string, title: string) => void;
   onCancelRename: () => void;
@@ -369,6 +375,38 @@ export default function TabBar(props: TabBarProps) {
         >
           <IconGithubPanel size={ICON_SIZE} stroke-width={ICON_STROKE} />
         </button>
+        {/* One per enabled plugin that asked for a button. Drawn from the
+            manifest (see stores/plugins), so they are here on the first frame
+            and no plugin code runs to paint them. */}
+        <For each={pluginButtons()}>
+          {(button) => {
+            const Icon = pluginIcon(button.icon);
+            const open = () => props.sidebarView === button.viewKey;
+            const badge = () => pluginBadges()[button.pluginId] ?? null;
+            return (
+              <button
+                class="tab-icon-btn tab-plugin"
+                classList={{ active: open() }}
+                data-plugin={button.pluginId}
+                onClick={() => props.onTogglePluginView(button.viewKey)}
+                aria-pressed={open()}
+                title={`${open() ? "Hide" : "Open"} ${button.title}${
+                  typeof badge() === "number" ? ` · ${badge()}` : ""
+                }`}
+              >
+                <Icon size={ICON_SIZE} stroke-width={ICON_STROKE} />
+                <Show when={badge() === "dot"}>
+                  <span class="tab-icon-badge" />
+                </Show>
+                <Show when={typeof badge() === "number"}>
+                  <span class="tab-icon-badge tab-icon-count">
+                    {(badge() as number) > 99 ? "99+" : badge()}
+                  </span>
+                </Show>
+              </button>
+            );
+          }}
+        </For>
       </div>
       <div class="tab-list" onWheel={onTabListWheel}>
         <For each={props.tabs}>

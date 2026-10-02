@@ -1,4 +1,5 @@
 import type { SidebarView } from "../types";
+import { windowBoot } from "../backends";
 
 // Which sidebar you had open, remembered across launches.
 //
@@ -30,9 +31,16 @@ export function loadSidebarView(): SidebarView | null {
     if (raw === null) return "files"; // first run: the file tree, as before
     const parsed = JSON.parse(raw) as { view?: unknown };
     const view = parsed?.view === undefined ? "files" : parsed.view;
-    return VALID.includes(view as SidebarView | null)
-      ? (view as SidebarView | null)
-      : "files";
+    if (VALID.includes(view as SidebarView | null)) return view as SidebarView | null;
+    // A plugin's view comes back only if that plugin is still there to draw it.
+    // The boot contributions are already in hand, so this costs nothing.
+    if (typeof view === "string" && view.startsWith("plugin:")) {
+      const known = (windowBoot().plugins ?? []).some((p) =>
+        p.sidebarViews.some((v) => view === `plugin:${p.id}/${v.id}`)
+      );
+      if (known) return view as SidebarView;
+    }
+    return "files";
   } catch (_) {
     // Unreadable or corrupt — open the file tree, which is what a fresh profile
     // does. Never worth failing a launch over.

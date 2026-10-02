@@ -13,6 +13,10 @@ import type {
   GitRemoteInfo,
   GhStatus,
   GithubRepoSnapshot,
+  PluginBadge,
+  PluginInfo,
+  PluginsChanged,
+  PluginsState,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -107,6 +111,13 @@ interface SpectermAPI {
   installUpdate(): Promise<void>;
   getCurrentVersion(): Promise<string>;
   onUpdaterEvent(cb: (event: UpdaterEvent) => void): () => void;
+  pluginsList(): Promise<PluginInfo[]>;
+  pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]>;
+  pluginsState(): Promise<PluginsState>;
+  pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
+  onPluginEvent(cb: (id: string, event: string, payload: unknown) => void): () => void;
+  onPluginBadge(cb: (id: string, value: PluginBadge) => void): () => void;
+  onPluginsChanged(cb: (change: PluginsChanged) => void): () => void;
 }
 
 declare global {
@@ -451,5 +462,35 @@ export class ElectronBackend implements Backend {
     cb: (event: UpdaterEvent) => void
   ): Promise<UnlistenFn> {
     return this.api.onUpdaterEvent(cb);
+  }
+
+  async pluginsList(): Promise<PluginInfo[]> {
+    return this.api.pluginsList();
+  }
+
+  async pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]> {
+    return this.api.pluginsSetEnabled(id, enabled);
+  }
+
+  async pluginsState(): Promise<PluginsState> {
+    return this.api.pluginsState();
+  }
+
+  async pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown> {
+    return this.api.pluginInvoke(id, method, args);
+  }
+
+  async onPluginEvent(
+    cb: (id: string, event: string, payload: unknown) => void
+  ): Promise<UnlistenFn> {
+    return this.api.onPluginEvent(cb);
+  }
+
+  async onPluginBadge(cb: (id: string, value: PluginBadge) => void): Promise<UnlistenFn> {
+    return this.api.onPluginBadge(cb);
+  }
+
+  async onPluginsChanged(cb: (change: PluginsChanged) => void): Promise<UnlistenFn> {
+    return this.api.onPluginsChanged(cb);
   }
 }

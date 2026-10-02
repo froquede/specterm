@@ -572,6 +572,26 @@ body,
   background: var(--accent);
 }
 
+/* A count instead of the dot, for a plugin whose badge is a number of things to
+   work through (unread messages) rather than one thing to look at. */
+.tab-icon-badge.tab-icon-count {
+  left: calc(50% + var(--tab-icon) / 2 - 6px);
+  right: auto;
+  top: calc(50% - var(--tab-icon) / 2 - 5px);
+  width: auto;
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  box-sizing: border-box;
+  color: var(--accent-fg);
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 14px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
 .tab-icon-btn:hover .tab-icon-badge,
 .tab-icon-btn.active .tab-icon-badge {
   box-shadow: 0 0 0 2px var(--bg-hover);
@@ -2180,4 +2200,14 @@ body.resizing-sidebar .xterm {
 
 .app[data-chrome="classic"] .pane-attention {
   right: 11px;
+}
+
+/* Settings > Plugins */
+.plugins-settings-item + .plugins-settings-item {
+  margin-top: 8px;
+}
+
+.plugins-settings-version {
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
 }

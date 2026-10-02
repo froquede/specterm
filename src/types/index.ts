@@ -101,7 +101,9 @@ export interface TabSnapshot {
 // What currently occupies the single sidebar slot in .app-body. The file tree,
 // the vault panel, the GitHub panel, and the settings panel are mutually
 // exclusive by construction — one field, not four booleans to keep in sync.
-export type SidebarView = "files" | "vault" | "github" | "settings";
+// `plugin:<plugin id>/<view id>` is a view contributed by a plugin.
+export type PluginViewKey = `plugin:${string}/${string}`;
+export type SidebarView = "files" | "vault" | "github" | "settings" | PluginViewKey;
 
 export interface AppState {
   tabs: Tab[];
