@@ -1,4 +1,5 @@
-import { For, Show } from "solid-js";
+import { createEffect, createSignal, For, onCleanup, Show } from "solid-js";
+import { Portal } from "solid-js/web";
 import { shortcutLabel } from "../lib/platform";
 import { clockEnabled, tabBarSide, tabBarEdge } from "../stores/settings";
 import {
@@ -37,7 +38,15 @@ import {
 } from "../stores/attention";
 import { collectLeaves } from "../lib/split-tree";
 import { updaterPhase, updaterVersion } from "../stores/updater";
-import { pluginBadges, pluginButtons } from "../stores/plugins";
+import {
+  dismissPluginToast,
+  openPluginToast,
+  pausePluginToast,
+  pluginBadges,
+  pluginButtons,
+  pluginToast,
+  resumePluginToast,
+} from "../stores/plugins";
 import { pluginIcon } from "../lib/plugin-icons";
 import type { PluginViewKey, SidebarView } from "../types";
 import type { Tab } from "../types";
@@ -278,6 +287,47 @@ export default function TabBar(props: TabBarProps) {
   const sidebarKey = () => shortcutLabel("B");
   const settingsKey = () => shortcutLabel(",");
 
+  // A plugin's toast hangs off its button. It is portalled to <body> and
+  // placed from the button's rect rather than nested in it: the bar is a drag
+  // region, the panes below paint over anything it overflows into, and an
+  // auto-hidden bar would carry the toast off screen with it.
+  const pluginButtonEls = new Map<string, HTMLButtonElement>();
+  const [toastPos, setToastPos] = createSignal<{
+    left: number;
+    top?: number;
+    bottom?: number;
+  } | null>(null);
+  function placeToast() {
+    const active = pluginToast();
+    const anchor = active ? pluginButtonEls.get(active.pluginId) : undefined;
+    if (!anchor) {
+      setToastPos(null);
+      return;
+    }
+    const rect = anchor.getBoundingClientRect();
+    const width = 300;
+    const margin = 8;
+    const centre = rect.left + rect.width / 2;
+    const left = Math.min(
+      Math.max(margin, centre - width / 2),
+      window.innerWidth - width - margin
+    );
+    if (tabBarEdge() === "bottom") {
+      setToastPos({ left, bottom: Math.max(margin, window.innerHeight - rect.top + 6) });
+    } else {
+      setToastPos({ left, top: Math.max(margin, rect.bottom + 6) });
+    }
+  }
+  createEffect(() => {
+    // The view was opened some other way while the toast was up: it has done
+    // its job.
+    const active = pluginToast();
+    if (active && props.sidebarView === active.viewKey) dismissPluginToast();
+    else placeToast();
+  });
+  window.addEventListener("resize", placeToast);
+  onCleanup(() => window.removeEventListener("resize", placeToast));
+
   // The bar's three regions are ordered by CSS (see .tab-bar[data-side]), so
   // anchoring the tabs and icons to the right corner is a reflow, not a
   // different DOM: the tabs keep their left-to-right reading order either way.
@@ -385,6 +435,7 @@ export default function TabBar(props: TabBarProps) {
             const badge = () => pluginBadges()[button.pluginId] ?? null;
             return (
               <button
+                ref={(el) => pluginButtonEls.set(button.pluginId, el)}
                 class="tab-icon-btn tab-plugin"
                 classList={{ active: open() }}
                 data-plugin={button.pluginId}
@@ -408,6 +459,41 @@ export default function TabBar(props: TabBarProps) {
           }}
         </For>
       </div>
+      <Show when={pluginToast() && toastPos() ? pluginToast() : null}>
+        {(t) => (
+          <Portal>
+            <button
+              class="plugin-toast"
+              classList={{ "is-above": tabBarEdge() === "bottom" }}
+              data-plugin={t().pluginId}
+              style={{
+                left: `${toastPos()?.left ?? 0}px`,
+                top: toastPos()?.top !== undefined ? `${toastPos()!.top}px` : undefined,
+                bottom:
+                  toastPos()?.bottom !== undefined ? `${toastPos()!.bottom}px` : undefined,
+              }}
+              role="status"
+              aria-live="polite"
+              onMouseEnter={pausePluginToast}
+              onMouseLeave={resumePluginToast}
+              onClick={openPluginToast}
+            >
+              <span class="plugin-toast-head">
+                <span class="plugin-toast-title">{t().toast.title}</span>
+                <Show when={t().toast.tag}>
+                  <span class="plugin-toast-tag">{t().toast.tag}</span>
+                </Show>
+                <Show when={t().toast.more > 0}>
+                  <span class="plugin-toast-more">+{t().toast.more}</span>
+                </Show>
+              </span>
+              <Show when={t().toast.body}>
+                <span class="plugin-toast-body">{t().toast.body}</span>
+              </Show>
+            </button>
+          </Portal>
+        )}
+      </Show>
       <div class="tab-list" onWheel={onTabListWheel}>
         <For each={props.tabs}>
           {(tab) => (

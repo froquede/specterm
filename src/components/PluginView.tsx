@@ -1,12 +1,21 @@
 import { createSignal, onCleanup, onMount, Show } from "solid-js";
 import type { PluginViewKey } from "../types";
-import { findPluginView, invokePlugin, onPluginEvent } from "../stores/plugins";
+import {
+  findPluginView,
+  invokePlugin,
+  onPluginEvent,
+  onPluginReveal,
+} from "../stores/plugins";
+import { getBackend } from "../backends";
+import { renderMarkdown } from "../lib/markdown";
+import { os } from "../lib/platform";
 import "../styles/plugins.css";
 
 // What a plugin's panel module gets. Versioned with the manifest's
-// `engines.specterm`; adding to it is fine, changing it is a new major.
+// `engines.specterm`: an addition is a new minor (noted beside it), a change is
+// a new major.
 export interface PluginPanelApi {
-  apiVersion: 1;
+  apiVersion: "1.1";
   pluginId: string;
   viewId: string;
   /** Call a method its host module registered with `ctx.handle`. */
@@ -15,7 +24,19 @@ export interface PluginPanelApi {
   on(event: string, cb: (payload: unknown) => void): () => void;
   /** Close this view. */
   close(): void;
+  /** 1.1 — The payload of a clicked toast. One that arrived before the panel
+   *  subscribed is delivered on subscribing. Returns the unsubscribe. */
+  onReveal(cb: (payload: unknown) => void): () => void;
+  /** 1.1 — Markdown to HTML with the app's own renderer: raw HTML in the
+   *  source is escaped, never passed through. */
+  renderMarkdown(source: string): string;
+  /** 1.1 — The host OS, for things like shortcut labels. */
+  platform: "darwin" | "win32" | "linux";
+  /** 1.1 — Open an http(s) URL in the default browser. */
+  openExternal(url: string): void;
 }
+
+const PLATFORM = ({ mac: "darwin", windows: "win32", linux: "linux" } as const)[os];
 
 // A sidebar view contributed by a plugin. The frame and the title are ours, so
 // every plugin's view sits in the sidebar like the built-in ones; the body is an
@@ -50,7 +71,7 @@ export default function PluginView(props: { viewKey: PluginViewKey; onClose: () 
       document.head.appendChild(stylesheet);
     }
     const api: PluginPanelApi = {
-      apiVersion: 1,
+      apiVersion: "1.1",
       pluginId: plugin.id,
       viewId: view.id,
       invoke: (method, ...args) => invokePlugin(plugin.id, method, args),
@@ -63,6 +84,20 @@ export default function PluginView(props: { viewKey: PluginViewKey; onClose: () 
         };
       },
       close: () => props.onClose(),
+      onReveal(cb) {
+        const off = onPluginReveal(plugin.id, cb);
+        unsubscribes.add(off);
+        return () => {
+          off();
+          unsubscribes.delete(off);
+        };
+      },
+      renderMarkdown: (source) => renderMarkdown(String(source ?? "")),
+      platform: PLATFORM,
+      openExternal(url) {
+        if (!/^https?:\/\//i.test(String(url))) return;
+        void getBackend().then((backend) => backend.openExternal(String(url)));
+      },
     };
     try {
       const mod = await import(/* @vite-ignore */ panelUrl);
@@ -100,9 +135,11 @@ export default function PluginView(props: { viewKey: PluginViewKey; onClose: () 
       aria-label={found?.view.title ?? "Plugin"}
       data-plugin={found?.plugin.id}
     >
-      <div class="plugin-view-header">
-        <span class="plugin-view-title">{found?.view.title ?? "Plugin"}</span>
-      </div>
+      <Show when={!found?.view.ownHeader}>
+        <div class="plugin-view-header">
+          <span class="plugin-view-title">{found?.view.title ?? "Plugin"}</span>
+        </div>
+      </Show>
       <Show when={error()}>
         <div class="plugin-view-error">{error()}</div>
       </Show>

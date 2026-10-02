@@ -24,9 +24,14 @@
 const fs = require("fs");
 const path = require("path");
 
-// The plugin API major version this build implements. A manifest asks for one
-// with `engines.specterm: "^1"`; anything else is listed but cannot be enabled.
-const API_VERSION = 1;
+// The plugin API version this build implements. A manifest asks for one with a
+// caret range, `engines.specterm: "^1.1"`: same major, and a minor no newer than
+// this one. Anything else is listed with the reason but cannot be enabled.
+//
+//   1.0 — sidebar views, tab-bar button and badge, commands, invoke and events.
+//   1.1 — ctx.toast and api.onReveal, api.renderMarkdown, api.platform,
+//         api.openExternal, and `ownHeader` on a sidebar view.
+const API_VERSION = { major: 1, minor: 1 };
 
 const SCHEME = "specterm-plugin";
 const MANIFEST = "specterm-plugin.json";
@@ -95,9 +100,9 @@ function innerFile(dir, rel, field) {
   return path.relative(dir, full).split(path.sep).join("/");
 }
 
-function engineMajor(range) {
-  const m = typeof range === "string" ? /^\^(\d+)(\.\d+){0,2}$/.exec(range.trim()) : null;
-  return m ? Number(m[1]) : null;
+function engineRange(range) {
+  const m = typeof range === "string" ? /^\^(\d+)(?:\.(\d+))?(?:\.\d+)?$/.exec(range.trim()) : null;
+  return m ? { major: Number(m[1]), minor: Number(m[2] ?? 0) } : null;
 }
 
 // Validated, normalised manifest — or a thrown Error whose message is shown in
@@ -107,10 +112,15 @@ function parseManifest(dir, raw) {
   if (!m || typeof m !== "object") throw new Error("the manifest is not a JSON object");
   if (typeof m.id !== "string" || !ID_RE.test(m.id)) throw new Error(`"id" must match ${ID_RE}`);
   if (m.id !== path.basename(dir)) throw new Error(`"id" must match its folder name (${path.basename(dir)})`);
-  const major = engineMajor(m.engines?.specterm);
-  if (major === null) throw new Error(`"engines.specterm" must be a caret range, like "^${API_VERSION}"`);
-  if (major !== API_VERSION) {
-    throw new Error(`needs plugin API ${major}, this Specterm provides ${API_VERSION}`);
+  const wants = engineRange(m.engines?.specterm);
+  const provides = `${API_VERSION.major}.${API_VERSION.minor}`;
+  if (wants === null) throw new Error(`"engines.specterm" must be a caret range, like "^${provides}"`);
+  if (wants.major !== API_VERSION.major || wants.minor > API_VERSION.minor) {
+    const newer = wants.major > API_VERSION.major || wants.minor > API_VERSION.minor;
+    throw new Error(
+      `needs plugin API ${wants.major}.${wants.minor}, this Specterm provides ${provides}` +
+        (newer ? "; update Specterm" : "")
+    );
   }
 
   const out = {
@@ -139,6 +149,9 @@ function parseManifest(dir, raw) {
       id,
       title: text(v.title, `sidebarViews[${i}].title`),
       icon: name(v.icon, `sidebarViews[${i}].icon`),
+      // The panel draws its own header (a back button, a title that changes)
+      // instead of the one the frame gives it.
+      ownHeader: v.ownHeader === true,
     });
   }
 
@@ -408,12 +421,33 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         sendAll("plugins:badge", msg.id, value);
         return;
       }
+      case "toast": {
+        if (!running(msg.id)) return;
+        const toast = normaliseToast(msg.toast);
+        if (toast) sendAll("plugins:toast", msg.id, toast);
+        return;
+      }
       case "open-external":
         if (running(msg.id) && /^https?:\/\//i.test(String(msg.url))) {
           void shell.openExternal(String(msg.url));
         }
         return;
     }
+  }
+
+  // A toast is a short heads-up under the plugin's button: bounded text, so a
+  // plugin can't paint a wall over the window, and a payload handed to its
+  // panel if the toast is clicked.
+  function normaliseToast(t) {
+    if (!t || typeof t !== "object" || typeof t.title !== "string" || !t.title.trim()) return null;
+    const clip = (v, n) => (typeof v === "string" && v.trim() ? v.trim().slice(0, n) : null);
+    return {
+      title: clip(t.title, 80),
+      tag: clip(t.tag, 40),
+      body: clip(t.body, 300),
+      more: Number.isInteger(t.more) && t.more > 0 ? t.more : 0,
+      payload: t.payload === undefined ? null : t.payload,
+    };
   }
 
   function normaliseBadge(value) {

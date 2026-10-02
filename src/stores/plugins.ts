@@ -6,6 +6,7 @@ import type {
   PluginInfo,
   PluginSidebarView,
   PluginsChanged,
+  PluginToast,
 } from "../backends/types";
 import type { PluginViewKey } from "../types";
 import { cmd } from "../lib/platform";
@@ -109,10 +110,114 @@ function dispatchEvent(pluginId: string, event: string, payload: unknown) {
   }
 }
 
+// --- toasts and reveals ---------------------------------------------------------
+//
+// A toast is a plugin host's heads-up (a new message), shown under the plugin's
+// tab-bar button in this window. One at a time: a newer one replaces it. It is
+// skipped where it adds nothing — the plugin's view is already open here, and
+// the panel picks the news up itself — and for a plugin with no button to hang
+// it from. Clicking it opens the view and hands the toast's payload to the
+// panel through api.onReveal.
+
+export const TOAST_MS = 5000;
+
+export interface ActiveToast {
+  pluginId: string;
+  viewKey: PluginViewKey;
+  toast: PluginToast;
+}
+
+const [pluginToast, setPluginToast] = createSignal<ActiveToast | null>(null);
+export { pluginToast };
+
+let toastTimer: number | undefined;
+let toastRemaining = TOAST_MS;
+let toastStartedAt = 0;
+
+function startToastTimer(ms: number) {
+  window.clearTimeout(toastTimer);
+  toastRemaining = ms;
+  toastStartedAt = Date.now();
+  toastTimer = window.setTimeout(() => setPluginToast(null), ms);
+}
+
+function showToast(pluginId: string, toast: PluginToast) {
+  const button = pluginButtons().find((b) => b.pluginId === pluginId);
+  if (!button || isViewOpenImpl(button.viewKey)) return;
+  setPluginToast({ pluginId, viewKey: button.viewKey, toast });
+  startToastTimer(TOAST_MS);
+}
+
+/** Hold the toast while the pointer is over it. */
+export function pausePluginToast() {
+  if (!pluginToast()) return;
+  window.clearTimeout(toastTimer);
+  toastRemaining = Math.max(0, toastRemaining - (Date.now() - toastStartedAt));
+}
+
+/** Let it run out again once the pointer leaves, with a little grace. */
+export function resumePluginToast() {
+  if (!pluginToast()) return;
+  startToastTimer(Math.max(toastRemaining, 1500));
+}
+
+export function dismissPluginToast() {
+  window.clearTimeout(toastTimer);
+  setPluginToast(null);
+}
+
+// Reveal payloads wait here until the panel they are for has mounted and
+// subscribed; a panel already open gets them straight away.
+const pendingReveals = new Map<string, unknown>();
+const revealListeners = new Map<string, Set<(payload: unknown) => void>>();
+
+function reveal(pluginId: string, payload: unknown) {
+  const listeners = revealListeners.get(pluginId);
+  if (listeners?.size) {
+    for (const cb of [...listeners]) {
+      try {
+        cb(payload);
+      } catch (err) {
+        console.error(`[plugin ${pluginId}] onReveal listener threw:`, err);
+      }
+    }
+  } else {
+    pendingReveals.set(pluginId, payload);
+  }
+}
+
+export function onPluginReveal(pluginId: string, cb: (payload: unknown) => void): () => void {
+  let set = revealListeners.get(pluginId);
+  if (!set) revealListeners.set(pluginId, (set = new Set()));
+  set.add(cb);
+  if (pendingReveals.has(pluginId)) {
+    const payload = pendingReveals.get(pluginId);
+    pendingReveals.delete(pluginId);
+    queueMicrotask(() => {
+      if (set!.has(cb)) cb(payload);
+    });
+  }
+  return () => {
+    set!.delete(cb);
+    if (set!.size === 0) revealListeners.delete(pluginId);
+  };
+}
+
+/** The toast was clicked: open its plugin's view and hand over its payload. */
+export function openPluginToast() {
+  const active = pluginToast();
+  if (!active) return;
+  dismissPluginToast();
+  if (active.toast.payload !== null) reveal(active.pluginId, active.toast.payload);
+  showViewImpl(active.viewKey);
+}
+
 // --- shortcuts ---------------------------------------------------------------
 
 let registeredIds = new Set<string>();
 let toggleViewImpl: (key: PluginViewKey) => void = () => {};
+let showViewImpl: (key: PluginViewKey) => void = () => {};
+let isViewOpenImpl: (key: PluginViewKey) => boolean = () => false;
 
 // Plugin rows go in after the core's and the dispatcher takes the first match,
 // so a plugin can never take a chord the app already answers to.
@@ -148,10 +253,16 @@ let initialized = false;
  * the core keymap is registered. Nothing here blocks: the shortcuts come from
  * the boot answer, and the subscriptions resolve whenever they resolve.
  */
-export function initPlugins(opts: { toggleView: (key: PluginViewKey) => void }) {
+export function initPlugins(opts: {
+  toggleView: (key: PluginViewKey) => void;
+  showView: (key: PluginViewKey) => void;
+  isViewOpen: (key: PluginViewKey) => boolean;
+}) {
   if (initialized) return;
   initialized = true;
   toggleViewImpl = opts.toggleView;
+  showViewImpl = opts.showView;
+  isViewOpenImpl = opts.isViewOpen;
   syncBindings(contributions());
 
   const applyChange = (change: PluginsChanged) => {
@@ -161,9 +272,12 @@ export function initPlugins(opts: { toggleView: (key: PluginViewKey) => void }) 
       syncBindings(change.contributions);
     }
     setPluginList(change.plugins);
-    // A plugin that went away takes its badge with it.
+    // A plugin that went away takes its badge, toast and pending reveal with it.
     const live = new Set(change.contributions.map((p) => p.id));
     setBadges((prev) => Object.fromEntries(Object.entries(prev).filter(([id]) => live.has(id))));
+    const toast = pluginToast();
+    if (toast && !live.has(toast.pluginId)) dismissPluginToast();
+    for (const id of [...pendingReveals.keys()]) if (!live.has(id)) pendingReveals.delete(id);
   };
 
   void getBackend().then(async (backend) => {
@@ -177,6 +291,7 @@ export function initPlugins(opts: { toggleView: (key: PluginViewKey) => void }) 
       })
     );
     await backend.onPluginEvent(dispatchEvent);
+    await backend.onPluginToast(showToast);
     // Catch up on whatever was published before this window was listening:
     // discovery finishing, badges set before it existed. The answer is newer
     // than any event that reached us before it, and events after it are

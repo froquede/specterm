@@ -356,6 +356,11 @@ contextBridge.exposeInMainWorld("specterm", {
     ipcRenderer.on("plugins:badge", handler);
     return () => ipcRenderer.removeListener("plugins:badge", handler);
   },
+  onPluginToast: (cb) => {
+    const handler = (_event, id, toast) => cb(id, toast);
+    ipcRenderer.on("plugins:toast", handler);
+    return () => ipcRenderer.removeListener("plugins:toast", handler);
+  },
   onPluginsChanged: (cb) => {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("plugins:changed", handler);

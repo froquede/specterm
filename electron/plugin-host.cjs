@@ -39,7 +39,7 @@ function makeContext(id, storagePath, entry) {
   };
   return {
     id,
-    apiVersion: 1,
+    apiVersion: "1.1",
     storagePath,
     // A method the plugin's panel can call: `api.invoke(method, ...args)`.
     handle(method, fn) {
@@ -55,6 +55,12 @@ function makeContext(id, storagePath, entry) {
     // A positive number, "dot", or null to clear it.
     setBadge(value) {
       post({ type: "badge", id, value });
+    },
+    // A heads-up under the plugin's tab-bar button, in every window where the
+    // plugin's view isn't already open: { title, tag?, body?, more?, payload? }.
+    // Clicking it opens the view and hands `payload` to api.onReveal.
+    toast(toast) {
+      post({ type: "toast", id, toast });
     },
     openExternal(url) {
       post({ type: "open-external", id, url: String(url) });

@@ -17,6 +17,7 @@ import type {
   PluginInfo,
   PluginsChanged,
   PluginsState,
+  PluginToast,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -117,6 +118,7 @@ interface SpectermAPI {
   pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
   onPluginEvent(cb: (id: string, event: string, payload: unknown) => void): () => void;
   onPluginBadge(cb: (id: string, value: PluginBadge) => void): () => void;
+  onPluginToast(cb: (id: string, toast: PluginToast) => void): () => void;
   onPluginsChanged(cb: (change: PluginsChanged) => void): () => void;
 }
 
@@ -488,6 +490,10 @@ export class ElectronBackend implements Backend {
 
   async onPluginBadge(cb: (id: string, value: PluginBadge) => void): Promise<UnlistenFn> {
     return this.api.onPluginBadge(cb);
+  }
+
+  async onPluginToast(cb: (id: string, toast: PluginToast) => void): Promise<UnlistenFn> {
+    return this.api.onPluginToast(cb);
   }
 
   async onPluginsChanged(cb: (change: PluginsChanged) => void): Promise<UnlistenFn> {

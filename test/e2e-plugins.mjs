@@ -5,8 +5,9 @@
 //   hello  — every part of the contract: a host module (a method, a badge, a
 //            timer that emits events), a panel module with a stylesheet, a
 //            sidebar view, a tab-bar button and a shortcut.
-//   future — asks for a plugin API this build does not provide, so it must be
-//            listed with the reason and impossible to turn on.
+//   future — asks for a plugin API major this build does not provide, so it must
+//            be listed with the reason and impossible to turn on.
+//   newer  — the same, for a newer minor of the API this build does provide.
 //
 // What is checked is the contract's promises: nothing runs until the user turns
 // a plugin on, turning it off undoes everything (view, stylesheet, listeners,
@@ -26,6 +27,7 @@ const root = path.resolve(__dirname, "..");
 const MAC = process.platform === "darwin";
 // The fixture's shortcut: { key: "y", shift: true } through cmd().
 const HELLO_KEY = MAC ? "Meta+Shift+Y" : "Control+Alt+Y";
+const BARE_KEY = MAC ? "Meta+Shift+J" : "Control+Alt+J";
 
 const started = Date.now();
 const elapsed = () => ((Date.now() - started) / 1000).toFixed(1).padStart(6);
@@ -93,13 +95,19 @@ writePlugin("hello", {
     id: "hello",
     name: "Hello",
     version: "1.0.0",
-    engines: { specterm: "^1" },
+    engines: { specterm: "^1.1" },
     host: "host.cjs",
     panel: "panel.js",
     style: "panel.css",
-    sidebarViews: [{ id: "main", title: "Hello view", icon: "inbox" }],
+    sidebarViews: [
+      { id: "main", title: "Hello view", icon: "inbox" },
+      { id: "bare", title: "Bare view", icon: "bell", ownHeader: true },
+    ],
     tabBarButton: { view: "main", icon: "inbox", title: "Hello" },
-    commands: [{ id: "toggle", title: "Toggle Hello", key: "y", shift: true, toggleView: "main" }],
+    commands: [
+      { id: "toggle", title: "Toggle Hello", key: "y", shift: true, toggleView: "main" },
+      { id: "bare", title: "Toggle bare", key: "j", shift: true, toggleView: "bare" },
+    ],
   },
   "host.cjs": `
     const fs = require("fs");
@@ -110,6 +118,15 @@ writePlugin("hello", {
       ctx.handle("ping", (x) => "pong:" + x);
       let n = 0;
       ctx.setInterval(() => ctx.emit("tick", ++n), 100);
+      ctx.handle("toast", () =>
+        ctx.toast({
+          title: "Ana Example",
+          tag: "TECH-1",
+          body: "A message long enough to need two lines in a three hundred pixel toast, and then some more so it has to be clamped.",
+          more: 2,
+          payload: { thread: "t1" },
+        })
+      );
     };
   `,
   "panel.js": `
@@ -119,8 +136,15 @@ writePlugin("hello", {
       const ticks = document.createElement("div");
       ticks.className = "hello-ticks";
       el.append(out, ticks);
+      const revealed = document.createElement("div");
+      revealed.className = "hello-reveal";
+      const md = document.createElement("div");
+      md.className = "hello-md";
+      md.innerHTML = api.renderMarkdown("**b** <i>x</i>");
+      el.append(revealed, md);
       api.invoke("ping", "x").then((v) => (out.textContent = v));
       api.on("tick", (n) => (ticks.textContent = String(n)));
+      api.onReveal((p) => (revealed.textContent = JSON.stringify(p)));
       return () => {
         window.__helloDisposed = (window.__helloDisposed || 0) + 1;
       };
@@ -135,6 +159,15 @@ writePlugin("future", {
     name: "Future",
     version: "1.0.0",
     engines: { specterm: "^2" },
+  },
+});
+
+writePlugin("newer", {
+  "specterm-plugin.json": {
+    id: "newer",
+    name: "Newer",
+    version: "1.0.0",
+    engines: { specterm: "^1.9" },
   },
 });
 
@@ -188,6 +221,15 @@ try {
     "and cannot be turned on",
     await win.locator('.plugins-settings-item[data-plugin="future"] input').isDisabled()
   );
+  const newerError = await win
+    .locator('.plugins-settings-item[data-plugin="newer"] .settings-error')
+    .textContent()
+    .catch(() => "");
+  check(
+    "a plugin needing a newer minor says to update",
+    /needs plugin API 1\.9.*update Specterm/.test(newerError ?? ""),
+    String(newerError)
+  );
 
   // 3. Turning it on: button, badge from the host.
   await win.locator('.plugins-settings-item[data-plugin="hello"] input').click();
@@ -222,6 +264,16 @@ try {
     .evaluate((el) => getComputedStyle(el).color)
     .catch(() => "");
   check("the plugin's stylesheet applies", colour === "rgb(1, 2, 3)", colour);
+  const md = await win.locator(".hello-md").innerHTML().catch(() => "");
+  check(
+    "renderMarkdown renders markdown and escapes raw HTML",
+    md.includes("<strong>b</strong>") && md.includes("&lt;i&gt;") && !md.includes("<i>"),
+    md
+  );
+  check(
+    "the frame draws the view's header",
+    (await view.locator(".plugin-view-header").textContent().catch(() => "")) === "Hello view"
+  );
 
   // 5. Its shortcut closes the view, and closing undoes the panel.
   await win.keyboard.press(HELLO_KEY);
@@ -234,10 +286,48 @@ try {
     "its stylesheet is removed",
     (await win.locator('link[data-plugin="hello"]').count()) === 0
   );
+
+  // 6. A toast from the host, under the button; clicking it opens the view and
+  //    hands its payload to the panel.
+  await win.evaluate(() => window.specterm.pluginInvoke("hello", "toast", []));
+  const toast = win.locator('.plugin-toast[data-plugin="hello"]');
+  check("a host toast shows while the view is closed", await until("toast", () => toast.isVisible()));
+  check(
+    "with its title and the count of the rest",
+    (await toast.locator(".plugin-toast-title").textContent()) === "Ana Example" &&
+      (await toast.locator(".plugin-toast-more").textContent()) === "+2"
+  );
+  const [tBox, bBox] = [await toast.boundingBox(), await button.boundingBox()];
+  check(
+    "it hangs under the plugin's button",
+    tBox && bBox && tBox.y >= bBox.y + bBox.height && tBox.x <= bBox.x && tBox.x + tBox.width >= bBox.x + bBox.width,
+    JSON.stringify({ tBox, bBox })
+  );
+  const clipped = await toast
+    .locator(".plugin-toast-body")
+    .evaluate((el) => el.scrollHeight > el.clientHeight && el.getBoundingClientRect().right <= el.parentElement.getBoundingClientRect().right)
+    .catch(() => false);
+  check("its body is clamped inside the toast", clipped);
+  await toast.click();
+  check("clicking it opens the view", await until("view via toast", () => view.isVisible()));
+  check(
+    "and hands the payload to the panel",
+    await until("reveal", async () => (await win.locator(".hello-reveal").textContent()) === '{"thread":"t1"}')
+  );
+  await win.evaluate(() => window.specterm.pluginInvoke("hello", "toast", []));
+  await new Promise((r) => setTimeout(r, 400));
+  check("no toast while the view is open", (await toast.count()) === 0);
+
+  // 7. A view that draws its own header gets no frame header.
+  await win.keyboard.press(BARE_KEY);
+  const bare = win.locator('.plugin-view[data-plugin="hello"]');
+  await until("bare view", async () => (await bare.getAttribute("aria-label")) === "Bare view");
+  check("an ownHeader view has no frame header", (await bare.locator(".plugin-view-header").count()) === 0);
+  await win.keyboard.press(BARE_KEY);
   await win.keyboard.press(HELLO_KEY);
   check("and opens it again", await until("view back", () => view.isVisible()));
 
-  // 6. Turning it off undoes everything, down to the process.
+  // 8. Turning it off undoes everything, down to the process.
   await win.locator(".tab-settings").click();
   await win.locator('.plugins-settings-item[data-plugin="hello"] input').click();
   check("turning it off removes the button", await until("no button", async () => (await button.count()) === 0));
@@ -250,7 +340,7 @@ try {
   await new Promise((r) => setTimeout(r, 300));
   check("and its shortcut is gone", (await view.count()) === 0);
 
-  // 7. On again, then a new launch: the button is on the first frame.
+  // 9. On again, then a new launch: the button is on the first frame.
   await win.locator(".tab-settings").click();
   await win.locator('.plugins-settings-item[data-plugin="hello"] input').click();
   await until("the button", () => button.isVisible());

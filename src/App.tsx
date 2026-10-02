@@ -441,7 +441,11 @@ export default function App() {
 
     // Plugin shortcuts go in after the core's, so a plugin can never take a
     // chord the app already uses. Drawn from the boot answer, nothing awaited.
-    initPlugins({ toggleView: togglePluginView });
+    initPlugins({
+      toggleView: togglePluginView,
+      showView: (key) => store.showSidebar(key),
+      isViewOpen: (key) => store.state.sidebarView === key,
+    });
 
     initKeybindings();
 

@@ -2211,3 +2211,87 @@ body.resizing-sidebar .xterm {
   color: var(--fg-muted);
   font-variant-numeric: tabular-nums;
 }
+
+/* A plugin's heads-up (a new message), under its tab-bar button — above it when
+   the bar sits at the bottom. Portalled to <body> and placed by TabBar from the
+   button's rect; see the comment there. Clicking it opens the plugin's view. */
+.plugin-toast {
+  position: fixed;
+  z-index: 900;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 300px;
+  padding: 8px 11px 9px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--bg-chrome);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28);
+  animation: plugin-toast-in 0.18s ease-out;
+}
+
+.plugin-toast.is-above {
+  animation-name: plugin-toast-in-above;
+}
+
+.plugin-toast:hover {
+  background: var(--bg-hover);
+}
+
+.plugin-toast-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.plugin-toast-title {
+  min-width: 0;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugin-toast-tag,
+.plugin-toast-more {
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-size: 11px;
+}
+
+.plugin-toast-more {
+  margin-left: auto;
+}
+
+.plugin-toast-body {
+  width: 100%;
+  color: var(--fg);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@keyframes plugin-toast-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes plugin-toast-in-above {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plugin-toast { animation: none; }
+}

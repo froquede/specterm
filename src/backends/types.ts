@@ -154,6 +154,19 @@ export interface PluginSidebarView {
   id: string;
   title: string;
   icon: string;
+  // The panel draws its own header instead of the frame's.
+  ownHeader?: boolean;
+}
+
+// A heads-up from a plugin's host, shown under its tab-bar button.
+export interface PluginToast {
+  title: string;
+  tag: string | null;
+  body: string | null;
+  // How many more of the same arrived with it.
+  more: number;
+  // Handed to the panel's onReveal if the toast is clicked.
+  payload: unknown;
 }
 
 export interface PluginCommand {
@@ -567,5 +580,6 @@ export interface Backend {
     cb: (id: string, event: string, payload: unknown) => void
   ): Promise<UnlistenFn>;
   onPluginBadge(cb: (id: string, value: PluginBadge) => void): Promise<UnlistenFn>;
+  onPluginToast(cb: (id: string, toast: PluginToast) => void): Promise<UnlistenFn>;
   onPluginsChanged(cb: (change: PluginsChanged) => void): Promise<UnlistenFn>;
 }
