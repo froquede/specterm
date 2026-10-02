@@ -2252,7 +2252,10 @@ body.resizing-sidebar .xterm {
   min-width: 0;
 }
 
+/* Who it is from comes first: when the title and the tag don't both fit, the
+   tag (a task label, often long) gives up its width several times faster. */
 .plugin-toast-title {
+  flex: 0 1 auto;
   min-width: 0;
   font-weight: 600;
   overflow: hidden;
@@ -2265,6 +2268,14 @@ body.resizing-sidebar .xterm {
   flex-shrink: 0;
   color: var(--fg-muted);
   font-size: 11px;
+}
+
+.plugin-toast-tag {
+  flex: 0 4 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plugin-toast-more {
