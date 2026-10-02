@@ -162,6 +162,14 @@ writePlugin("future", {
   },
 });
 
+// A plugin developed in place: its folder lives elsewhere and is symlinked in.
+const linkedSource = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-linked-plugin-"));
+fs.writeFileSync(
+  path.join(linkedSource, "specterm-plugin.json"),
+  JSON.stringify({ id: "linked", name: "Linked", version: "1.0.0", engines: { specterm: "^1" } })
+);
+fs.symlinkSync(linkedSource, path.join(pluginsDir, "linked"), "dir");
+
 writePlugin("newer", {
   "specterm-plugin.json": {
     id: "newer",
@@ -205,6 +213,10 @@ try {
     !(await win.locator('.plugins-settings-item[data-plugin="hello"] input').isChecked())
   );
   check("nothing of it is drawn while off", (await win.locator(".tab-plugin").count()) === 0);
+  check(
+    "a symlinked plugin folder is found",
+    (await win.locator('.plugins-settings-item[data-plugin="linked"]').count()) === 1
+  );
   check("its host code has not run", !fs.existsSync(pidFile));
 
   // 2. A plugin for a newer API says why and cannot be turned on.
@@ -368,7 +380,7 @@ try {
   results.push({ name: "suite ran", pass: false, skipped: false });
 } finally {
   await quit(app);
-  for (const dir of [userDataDir, fakeHome]) {
+  for (const dir of [userDataDir, fakeHome, linkedSource]) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch {}

@@ -314,9 +314,18 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     } catch (_) {
       return; // no plugins folder: nothing installed
     }
+    // A symlinked folder counts: it is how a plugin is developed in place, from
+    // the repo it lives in.
+    const isFolder = async (e) =>
+      e.isDirectory() ||
+      (e.isSymbolicLink() &&
+        (await fs.promises.stat(path.join(pluginsDir, e.name)).then((s) => s.isDirectory(), () => false)));
+    const folders = [];
+    for (const e of entries) {
+      if (!e.name.startsWith(".") && (await isFolder(e))) folders.push(e);
+    }
     await Promise.all(
-      entries
-        .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+      folders
         .map(async (e) => {
           const dir = path.join(pluginsDir, e.name);
           try {
