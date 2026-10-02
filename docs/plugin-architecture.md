@@ -90,23 +90,33 @@ Bundled plugins update with the app. For external plugins, the updater copies th
 - **Installing never touches the running copy until the new one is ready.** The tag is fetched and checked out into `<id>.next`, and its manifest is validated. Then the plugin is disabled (its disposal list is emptied and its host module is unloaded), the folders are swapped, and the plugin is enabled again. There is no app restart. If the new version fails to activate, the previous copy (kept as `<id>.prev` until then) comes back and the error shows in Settings.
 - **Trust.** `auto` means trusting everyone who can push a tag to that repo, from then on. Settings says so next to the option, which is why it is not the default.
 
-## Status (branch `feat/plugins`)
+## Status
 
-Built and covered by `test/e2e-plugins.mjs` (23 checks, part of `run-all`):
-- discovery and manifest validation (`electron/plugins.cjs`);
+Plugin API **1.1**, built and covered by `test/e2e-plugins.mjs` (35 checks, part of `run-all`):
+- discovery (symlinked folders included) and manifest validation (`electron/plugins.cjs`);
 - the shared plugin host process (`electron/plugin-host.cjs`), started on the first enable and killed when the last plugin is turned off;
-- the bridge (`plugin.invoke`, events, badge) and the `specterm-plugin://` scheme, which serves only the files the manifest names;
-- sidebar views (`PluginView`), tab-bar buttons with badges, declarative shortcuts;
+- the bridge (`invoke`, events, badge, toast) and the `specterm-plugin://` scheme, which serves only the files the manifest names;
+- sidebar views (`PluginView`, with or without the frame's header), tab-bar buttons with badges, toasts under the button, declarative shortcuts;
 - Settings > Plugins with the on/off switch;
 - the boot answer in `plugins.json`, collected synchronously only when the `hasPlugins` flag is set.
 
-Measured on Linux, 7 launches each, median time to the first terminal paint: 642 ms without plugins and 636 ms with one enabled (wall clock); 300 ms and 314 ms inside the page. The button was on the first frame in all 7 launches.
+Measured on Linux (API 1.0), 7 launches each, median time to the first terminal paint: 642 ms without plugins and 636 ms with one enabled (wall clock); 300 ms and 314 ms inside the page. The button was on the first frame in all 7 launches.
 
-Not built yet: toast, file-tree and palette points, `api.storage`, updates and the install command.
+The first external plugin is the Sprint Platform inbox, in `nexfar/nf-sprint-planner` at `apps/specterm-inbox`.
+
+Not built yet: the file-tree and palette points, `api.storage`, updates and the install command.
+
+## Reference (API 1.1)
+
+**Manifest** (`specterm-plugin.json`): `id` (the folder's name), `name`, `version`, `engines.specterm` (a caret range such as `"^1.1"`), and optionally `host`, `panel`, `style` (paths inside the plugin), `sidebarViews: [{ id, title, icon, ownHeader? }]`, `tabBarButton: { view, icon, title }`, `commands: [{ id, title, key, shift?, toggleView | invoke }]`. Icons are names from `src/lib/plugin-icons.ts`.
+
+**Host module** (CommonJS, `exports.activate(ctx)`, optional `exports.deactivate()`). `ctx` has `handle(method, fn)`, `emit(event, payload)`, `setBadge(count | "dot" | null)`, `toast({ title, tag?, body?, more?, payload? })` (1.1), `openExternal(url)`, `setInterval`, `setTimeout`, `clearTimer`, `onDispose(fn)` and `storagePath`. Everything registered through `ctx` is undone when the plugin is turned off.
+
+**Panel module** (ES module, `export function mount(element, api)`, returning a dispose function). `api` has `invoke(method, ...args)`, `on(event, cb)`, `close()`, and from 1.1 `onReveal(cb)`, `renderMarkdown(source)`, `platform` and `openExternal(url)`. The panel brings its own framework; the theme comes from the core's CSS variables.
 
 ## Order of work
 
-1. **Contract and plugin host, proven with GitHub as a bundled plugin.** GitHub has every basic part: host handlers (`gh-status`, `gh-repo-snapshot`), polling that runs only while the panel is open (`startGithubPolling`), a sidebar view and a button.
-2. **Inbox as an external plugin.** Port #84: `inbox.cjs` becomes the host module, and `InboxPanel` plus `stores/inbox.ts` become the panel. This is the first test of external loading. It includes a visual review of the panel, starting with long text that runs past the panel's padding instead of being cut at it.
+1. **GitHub as a bundled plugin.** The contract and plugin host are built; moving GitHub onto them is what is left of this step. GitHub has every basic part: host handlers (`gh-status`, `gh-repo-snapshot`), polling that runs only while the panel is open (`startGithubPolling`), a sidebar view and a button.
+2. **Inbox as an external plugin.** Done: #84 ported to `apps/specterm-inbox` in `nexfar/nf-sprint-planner`, which needed API 1.1 (toast, reveal, markdown, own header). Its e2e measures that nothing in the panel runs past its padding; that caught the conversation rows' summaries overflowing (Chromium's `align-items: flex-start` on `<button>`).
 3. **Vault as a bundled plugin.** This adds the file-tree, palette, active-file, markdown and reveal-heading points. It goes last because those points are the largest addition to the contract, and they should be shaped by a working base, not designed up front.
 4. **Install command.** `specterm plugin add <git-url>[#tag] [--path <dir>]` clones the repo, checks out the tag and records the commit hash. `specterm plugin update <id>` lists the newer tags and moves only when the user confirms. Until this exists, installing is a manual clone plus checkout of a tag.

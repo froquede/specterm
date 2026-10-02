@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.27.0 — 2026-10-02
+
+### Added
+- **Plugin API 1.1.** What a plugin can do now, besides 1.0's views,
+  buttons and shortcuts:
+  - **Toasts.** A plugin can show a short heads-up under its tab-bar button,
+    such as a new message, in every window where its view isn't open.
+    Clicking it opens the view on the thing it was about.
+  - **Panels that draw their own header**, for views with a back button or
+    a title that changes.
+  - **Markdown rendered by Specterm's own renderer**, with raw HTML escaped.
+  - A plugin folder can be a **symlink**, so a plugin can be developed in
+    place, from its own repo.
+  - A plugin that needs a newer plugin API than this Specterm has says
+    *update Specterm* in *Settings → Plugins* instead of failing.
+
 ## 0.26.0 — 2026-10-02
 
 ### Added
