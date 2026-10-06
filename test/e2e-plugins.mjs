@@ -9,6 +9,9 @@
 //            be listed with the reason and impossible to turn on.
 //   newer  — the same, for a newer minor of the API this build does provide.
 //
+// And a git repository, not in the plugins folder, with a plugin ("greet") in
+// a subfolder and two release tags: what Settings > Plugins adds from a URL.
+//
 // What is checked is the contract's promises: nothing runs until the user turns
 // a plugin on, turning it off undoes everything (view, stylesheet, listeners,
 // shortcut, and the plugin host process itself), and once on, its button is
@@ -17,7 +20,8 @@
 // Run: node test/e2e-plugins.mjs   (after `vite build`)
 import { _electron as electron } from "playwright";
 import { launchOptions } from "./launch.mjs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
@@ -169,6 +173,39 @@ fs.writeFileSync(
   JSON.stringify({ id: "linked", name: "Linked", version: "1.0.0", engines: { specterm: "^1" } })
 );
 fs.symlinkSync(linkedSource, path.join(pluginsDir, "linked"), "dir");
+
+// A repository to add a plugin from, as a user would paste its URL: the plugin
+// sits in apps/greet and is released as greet-v1.0.0 and greet-v1.1.0.
+const greetRepo = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-greet-repo-"));
+{
+  const git = (...args) => execFileSync("git", args, { cwd: greetRepo, stdio: "pipe" });
+  const write = (rel, body) => {
+    const p = path.join(greetRepo, "apps", "greet", rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, typeof body === "string" ? body : JSON.stringify(body, null, 2));
+  };
+  const manifest = (version) => ({
+    id: "greet",
+    name: "Greet",
+    version,
+    engines: { specterm: "^1.1" },
+    panel: "panel.js",
+    sidebarViews: [{ id: "main", title: "Greet", icon: "bell" }],
+    tabBarButton: { view: "main", icon: "bell", title: "Greet" },
+  });
+  git("init", "-q");
+  git("config", "user.email", "e2e@specterm.test");
+  git("config", "user.name", "e2e");
+  write("panel.js", `export function mount(el) { el.textContent = "greetings"; return () => {}; }`);
+  write("specterm-plugin.json", manifest("1.0.0"));
+  git("add", ".");
+  git("commit", "-qm", "greet 1.0.0");
+  git("tag", "greet-v1.0.0");
+  write("specterm-plugin.json", manifest("1.1.0"));
+  git("commit", "-qam", "greet 1.1.0");
+  git("tag", "greet-v1.1.0");
+}
+const greetUrl = `${pathToFileURL(greetRepo).href}#:apps/greet`;
 
 writePlugin("newer", {
   "specterm-plugin.json": {
@@ -478,13 +515,87 @@ try {
   const saved = JSON.parse(fs.readFileSync(path.join(userDataDir, "plugins.json"), "utf-8"));
   check("and is remembered", saved.disabled?.github === true, JSON.stringify(saved.disabled));
 
+  // 12. Adding a plugin from its git URL, and removing it again.
+  const addInput = win.locator("#plugins-settings-add-url");
+  const addButton = win.locator(".plugins-settings-add-button");
+  check(
+    "built-in and external plugins are listed apart",
+    (await win.locator('[data-group="built-in"] .plugins-settings-item[data-plugin="github"]').count()) === 1 &&
+      (await win.locator('[data-group="external"] .plugins-settings-item[data-plugin="hello"]').count()) === 1
+  );
+  check(
+    "a plugin copied in by hand cannot be removed from Settings",
+    (await win.locator('.plugins-settings-item[data-plugin="hello"] .plugins-settings-remove').count()) === 0
+  );
+  await addInput.fill("example.com/owner/repo");
+  await addButton.click();
+  check(
+    "a pasted string that is not a git URL is refused, with the reason",
+    await until("the error", async () =>
+      /not a git repository URL/.test((await win.locator(".plugins-settings-add-error").textContent()) ?? "")
+    )
+  );
+  await addInput.fill(greetUrl);
+  await addButton.click();
+  const greetItem = win.locator('[data-group="external"] .plugins-settings-item[data-plugin="greet"]');
+  check("a plugin added from its URL is listed under External", await until("greet listed", () => greetItem.isVisible(), { timeout: 30000 }));
+  check("and is on", await greetItem.locator("input").isChecked());
+  check(
+    "without a tag, the newest release is installed",
+    ((await greetItem.locator(".plugins-settings-version").textContent()) ?? "").trim() === "1.1.0"
+  );
+  check(
+    "its button is in the tab bar",
+    await until("greet button", () => win.locator('.tab-plugin[data-plugin="greet"]').isVisible())
+  );
+  check("the field empties after it is added", (await addInput.inputValue()) === "");
+  const greetDir = path.join(pluginsDir, "greet");
+  check(
+    "the plugin's folder is installed without the repository's history",
+    fs.existsSync(path.join(greetDir, "specterm-plugin.json")) && !fs.existsSync(path.join(greetDir, ".git"))
+  );
+  check(
+    "nothing is left of the clone it came from",
+    fs.readdirSync(pluginsDir).every((n) => !n.startsWith(".install-")),
+    fs.readdirSync(pluginsDir).join(",")
+  );
+  const record = JSON.parse(fs.readFileSync(path.join(userDataDir, "plugins.json"), "utf-8")).installed?.greet;
+  check(
+    "where it came from is recorded",
+    record?.ref === "greet-v1.1.0" && record?.source === greetUrl && /^[0-9a-f]{40}$/.test(record?.commit ?? ""),
+    JSON.stringify(record)
+  );
+  await addInput.fill(greetUrl.replace("#:", "#greet-v1.0.0:"));
+  await addButton.click();
+  check(
+    "adding a plugin that is already installed is refused",
+    await until("already installed", async () =>
+      /already installed/.test((await win.locator(".plugins-settings-add-error").textContent()) ?? "")
+    , { timeout: 30000 })
+  );
+  await win.locator(".plugins-settings-add").scrollIntoViewIfNeeded();
+  await win.screenshot({ path: path.join(root, "test", "shot-plugins-add.png") });
+  await addInput.fill("");
+
+  await greetItem.locator(".plugins-settings-remove").click();
+  await greetItem.locator(".plugins-settings-remove-confirm").click();
+  check(
+    "removing it takes it off the list",
+    await until("greet gone", async () => (await win.locator('.plugins-settings-item[data-plugin="greet"]').count()) === 0)
+  );
+  check(
+    "and its button off the tab bar",
+    await until("greet button gone", async () => (await win.locator('.tab-plugin[data-plugin="greet"]').count()) === 0)
+  );
+  check("and deletes its folder", !fs.existsSync(greetDir));
+
   await win.screenshot({ path: path.join(root, "test", "shot-plugins.png") });
 } catch (err) {
   console.error("[plugins] ERROR:", err?.stack || err);
   results.push({ name: "suite ran", pass: false, skipped: false });
 } finally {
   await quit(app);
-  for (const dir of [userDataDir, fakeHome, linkedSource]) {
+  for (const dir of [userDataDir, fakeHome, linkedSource, greetRepo]) {
     try {
       fs.rmSync(dir, { recursive: true, force: true });
     } catch {}

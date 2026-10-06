@@ -97,7 +97,8 @@ Plugin API **1.3**, built and covered by `test/e2e-plugins.mjs` (50 checks) and 
 - the shared plugin host process (`electron/plugin-host.cjs`), started on the first enable and killed when the last plugin is turned off;
 - the bridge (`invoke`, events, badge, toast) and the `specterm-plugin://` scheme, which serves only the files the manifest names;
 - sidebar views (`PluginView`, with or without the frame's header), tab-bar buttons with badges, toasts under the button, declarative shortcuts;
-- Settings > Plugins with the on/off switch;
+- Settings > Plugins with the on/off switch, built-in and external plugins listed apart;
+- adding an external plugin from its git URL in Settings > Plugins (`electron/plugin-install.cjs`), and removing one added that way;
 - the boot answer in `plugins.json`, collected synchronously only when the `hasPlugins` flag is set;
 - built-in plugins (`plugins/<id>/` in this repo): built by the app's `vite build`, unpacked from the asar in a package, on unless turned off, and read synchronously at boot so their buttons are in the first frame of every launch;
 - `activation: "view"`, so a plugin that only answers its own panel costs no process until that panel is first opened;
@@ -109,7 +110,7 @@ Measured on Linux (API 1.0), 7 launches each, median time to the first terminal 
 
 The first external plugin is the Sprint Platform inbox, in `nexfar/nf-sprint-planner` at `apps/specterm-inbox`.
 
-Not built yet: updates and the install command.
+Not built yet: updates, and the same install from a command line.
 
 ## Reference (API 1.3)
 
@@ -126,4 +127,4 @@ Not built yet: updates and the install command.
 1. **GitHub as a built-in plugin.** Done (`plugins/github/`). It needed API 1.2: built-in plugins, `activation: "view"`, `onActiveCwd`, `openFile` and `storage` (the watchlist moved there from the app's settings, carried over on first run).
 2. **Inbox as an external plugin.** Done: #84 ported to `apps/specterm-inbox` in `nexfar/nf-sprint-planner`, which needed API 1.1 (toast, reveal, markdown, own header). Its e2e measures that nothing in the panel runs past its padding; that caught the conversation rows' summaries overflowing (Chromium's `align-items: flex-start` on `<button>`).
 3. **Vault as a built-in plugin.** Done (`plugins/vault/`), with API 1.3: overlays for quick open, the renderer module for the folder menu item and the Obsidian banner, and `onActiveFile`, `revealHeading` and `noteStructure` for the outline. The vault list, an open Vault sidebar and rebound Vault shortcuts carry over on first run.
-4. **Install command.** `specterm plugin add <git-url>[#tag] [--path <dir>]` clones the repo, checks out the tag and records the commit hash. `specterm plugin update <id>` lists the newer tags and moves only when the user confirms. Until this exists, installing is a manual clone plus checkout of a tag.
+4. **Install from a URL.** Done in Settings > Plugins: the user pastes the repo's URL, `<url>#<tag>`, `<url>#<tag>:<folder>`, or a browser link to the folder (`…/tree/<tag>/<folder>`). Without a tag the newest release tag with the plugin's prefix is taken (`v<semver>` at the root, `<folder>-v<semver>` in a subfolder), and a repo with none installs its default branch. The clone is shallow, with symlinks checked out as plain files, made in a hidden `.install-*` folder next to the plugins and moved into place only once its manifest validates; its `.git` is dropped. `plugins.json` records `installed[id] = { source, ref, commit, installedAt }`, which is what the update check will read and what makes the plugin removable from Settings (a folder put there by hand is never deleted by the app). Adding a plugin turns it on: pasting the URL is the opt-in. Still to come: `specterm plugin add` on the command line, and `update`, which lists the newer tags and moves only when the user confirms.

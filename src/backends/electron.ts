@@ -11,6 +11,7 @@ import type {
   WindowInit,
   PluginBadge,
   PluginInfo,
+  PluginInstallResult,
   PluginsChanged,
   PluginsState,
   PluginToast,
@@ -100,6 +101,8 @@ interface SpectermAPI {
   onUpdaterEvent(cb: (event: UpdaterEvent) => void): () => void;
   pluginsList(): Promise<PluginInfo[]>;
   pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]>;
+  pluginsInstall(source: string): Promise<PluginInstallResult>;
+  pluginsRemove(id: string): Promise<PluginInfo[]>;
   pluginsState(): Promise<PluginsState>;
   pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
   onPluginEvent(cb: (id: string, event: string, payload: unknown) => void): () => void;
@@ -427,6 +430,14 @@ export class ElectronBackend implements Backend {
 
   async pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]> {
     return this.api.pluginsSetEnabled(id, enabled);
+  }
+
+  async pluginsInstall(source: string): Promise<PluginInstallResult> {
+    return this.api.pluginsInstall(source);
+  }
+
+  async pluginsRemove(id: string): Promise<PluginInfo[]> {
+    return this.api.pluginsRemove(id);
   }
 
   async pluginsState(): Promise<PluginsState> {

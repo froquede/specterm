@@ -2212,6 +2212,93 @@ body.resizing-sidebar .xterm {
   font-variant-numeric: tabular-nums;
 }
 
+/* Built in and External: two lists under one category, so their headings sit a
+   step below the category's (sentence case, no tracking) with a rule under
+   each to say where its list starts. */
+.plugins-settings {
+  gap: 22px;
+}
+
+.plugins-settings-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.plugins-settings-group-title {
+  margin: 0 0 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--fg-muted);
+}
+
+.plugins-settings-empty {
+  margin-top: 0;
+}
+
+/* Where an added plugin came from, and the way to take it out again. The URL
+   is cut short rather than wrapped: the full text is in its tooltip. */
+.plugins-settings-source {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--fg-muted);
+}
+
+.plugins-settings-source-url {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugins-settings-confirm {
+  display: flex;
+  gap: 10px;
+}
+
+.plugins-settings-remove-confirm {
+  color: var(--danger);
+}
+
+.plugins-settings-add {
+  display: flex;
+  flex-direction: column;
+  margin-top: 16px;
+}
+
+/* The field and its button stacked, each the sidebar's full width: the URL
+   needs all of it. */
+.plugins-settings-add-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.plugins-settings-add-input {
+  margin: 0;
+}
+
+.plugins-settings-add-input:disabled {
+  opacity: 0.6;
+}
+
+.plugins-settings-add-button {
+  padding: 6px 12px;
+}
+
+.plugins-settings-add-error {
+  margin-bottom: 0;
+  overflow-wrap: anywhere;
+}
+
 /* A plugin's heads-up (a new message), under its tab-bar button — above it when
    the bar sits at the bottom. Portalled to <body> and placed by TabBar from the
    button's rect; see the comment there. Clicking it opens the plugin's view. */
