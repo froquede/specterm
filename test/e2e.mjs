@@ -1070,6 +1070,50 @@ try {
     skip("⌥ into an outer edge keeps focus put", "2×2 grid did not form");
   }
 
+  // 6h') Shift+wheel steps focus through the panes in reading order, wrapping
+  // past either end — on the same 2×2 grid, whose tree order is TL, TR, BL, BR.
+  // Notches are spaced past the 220ms switch cooldown (PANE_WHEEL_THROTTLE_MS in
+  // App.tsx). A plain wheel must keep scrolling and leave focus alone, and the
+  // keyboard has to follow the highlight, as it does for ⌥+arrow.
+  if (grid2x2) {
+    const wheelOver = async (target, dy, shift) => {
+      await win.mouse.move(target.cx, target.cy);
+      if (shift) await win.keyboard.down("Shift");
+      await win.mouse.wheel(0, dy);
+      if (shift) await win.keyboard.up("Shift");
+      await win.waitForTimeout(300);
+      return activePaneId();
+    };
+
+    await focusPaneAt(TL.cx, TL.cy);
+    await win.waitForTimeout(250);
+
+    const plain = await wheelOver(BR, 100, false);
+    check("plain wheel leaves pane focus alone", plain === TL.id, `active=${plain} expected TL=${TL.id}`);
+
+    const down = [];
+    for (let i = 0; i < 4; i++) down.push(await wheelOver(BR, 100, true));
+    const expectDown = [TR.id, BL.id, BR.id, TL.id];
+    check(
+      "⇧+wheel down walks the panes in order and wraps",
+      down.join() === expectDown.join(),
+      `got=${down.join()} expected=${expectDown.join()}`
+    );
+
+    const up = await wheelOver(BR, -100, true);
+    check("⇧+wheel up from the first pane wraps to the last", up === BR.id, `active=${up} expected BR=${BR.id}`);
+
+    const keyboardFollows = await win.evaluate(
+      () => !!document.activeElement?.closest(".pane-active")
+    );
+    check("⇧+wheel moves keyboard focus with the highlight", keyboardFollows);
+  } else {
+    skip("plain wheel leaves pane focus alone", "2×2 grid did not form");
+    skip("⇧+wheel down walks the panes in order and wraps", "2×2 grid did not form");
+    skip("⇧+wheel up from the first pane wraps to the last", "2×2 grid did not form");
+    skip("⇧+wheel moves keyboard focus with the highlight", "2×2 grid did not form");
+  }
+
   // 6i) Closing the active pane hands focus back to the pane it came from.
   // Regression guard: closePane used to call firstLeafId(newRoot), so splitting
   // off a pane and closing it dropped you on the tree's *first* leaf — with a

@@ -21,6 +21,7 @@ import {
   moveLeafToRootEdge,
   findParentSplit,
   findPaneInDirection,
+  stepPane,
   setSplitDirection,
   toggleSplitDirection,
   equalizeSplits,
@@ -1092,6 +1093,24 @@ export function useTabStore() {
 
       const tab = s.tabs[idx];
       const nextId = findPaneInDirection(tab.root, tab.activePaneId, dir);
+      if (!nextId || nextId === tab.activePaneId) return;
+
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t, i) => (i === idx ? focusPaneInTab(t, nextId) : t)),
+      }));
+    },
+
+    // Move focus to the next (step 1) or previous (step -1) pane of the active
+    // tab in reading order, wrapping around — the wheel's counterpart to
+    // focusDirectionalPane, where every notch has somewhere to go.
+    focusSteppedPane(step: 1 | -1) {
+      const s = state();
+      const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
+      if (idx === -1) return;
+
+      const tab = s.tabs[idx];
+      const nextId = stepPane(tab.root, tab.activePaneId, step);
       if (!nextId || nextId === tab.activePaneId) return;
 
       update(() => ({

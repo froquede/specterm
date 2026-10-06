@@ -62,6 +62,11 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PluginView = lazy(() => import("./components/PluginView"));
+
+// Cooldown between Shift+wheel pane switches — the same reasoning and value as
+// the tab strip's wheel (see WHEEL_SWITCH_THROTTLE_MS in TabBar): a trackpad
+// swipe is dozens of wheel events, and one swipe should move one pane.
+const PANE_WHEEL_THROTTLE_MS = 220;
 import type { PaneId, PluginViewKey } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
@@ -408,6 +413,33 @@ export default function App() {
     }
   }
 
+  // Shift+wheel anywhere over the panes steps focus through them in reading
+  // order: down/right to the next pane, up/left to the previous, wrapping past
+  // either end like the tab strip's wheel. Listened for in the capture phase so
+  // the terminal under the pointer never sees it — otherwise a program with
+  // mouse tracking on (Claude Code, vim) would also get a scroll report.
+  // Shift is free for this: xterm's fast-scroll modifier is Alt. macOS turns a
+  // mouse's Shift+wheel into a horizontal scroll, hence reading either axis.
+  // With a single pane there is nowhere to go, so the event is left alone and
+  // keeps its usual job (horizontal scroll in the markdown and text views).
+  let splitRootEl: HTMLDivElement | undefined;
+  let lastPaneWheelAt = 0;
+  function onPaneWheel(e: WheelEvent) {
+    if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
+    const tab = store.activeTab;
+    if (!tab || collectLeaves(tab.root).length < 2) return;
+    const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const now = Date.now();
+    if (now - lastPaneWheelAt < PANE_WHEEL_THROTTLE_MS) return;
+    lastPaneWheelAt = now;
+    store.focusSteppedPane(delta > 0 ? 1 : -1);
+    focusActivePane();
+  }
+
   onMount(() => {
     // All shortcuts live in the keymap (src/stores/keymap.ts) — a single
     // declarative table, authored macOS-first and resolved per-OS (with
@@ -433,6 +465,14 @@ export default function App() {
     });
 
     initKeybindings();
+
+    splitRootEl?.addEventListener("wheel", onPaneWheel, {
+      capture: true,
+      passive: false,
+    });
+    onCleanup(() =>
+      splitRootEl?.removeEventListener("wheel", onPaneWheel, { capture: true })
+    );
 
     // Apply persisted appearance settings (e.g. unfocused-pane opacity) to the
     // DOM before the first paint settles.
@@ -823,7 +863,7 @@ export default function App() {
         <Show when={store.state.sidebarView !== null}>
           <SidebarResizeHandle root={store.activeTab?.root} />
         </Show>
-        <div class="app-content" data-split-root>
+        <div class="app-content" data-split-root ref={splitRootEl}>
           <Show when={store.activeTab}>
             {(tab) => (
               <SplitContainer
