@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.30.0 — 2026-10-06
+
+### Added
+- **Add a plugin from its git URL.** *Settings → Plugins* has a field that
+  takes a plugin's repository URL and installs it, turned on. Without a tag
+  it installs the newest release; `#<tag>` picks one, `#<tag>:<folder>` or
+  the browser link to a folder (`…/tree/<tag>/<folder>`) takes a plugin
+  inside a larger repo. Private repos work through your own git
+  credentials. A plugin added this way shows where it came from and can be
+  removed from there; built-in and external plugins are listed apart.
+
 ## 0.29.0 — 2026-10-02
 
 ### Changed
