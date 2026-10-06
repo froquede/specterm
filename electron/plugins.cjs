@@ -23,6 +23,7 @@
 
 const fs = require("fs");
 const path = require("path");
+const { parseSource, describeSource, fetchSource } = require("./plugin-install.cjs");
 
 // The plugin API version this build implements. A manifest asks for one with a
 // caret range, `engines.specterm: "^1.1"`: same major, and a minor no newer than
@@ -274,11 +275,14 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   const statePath = path.join(userData, "plugins.json");
   const dataDir = path.join(userData, "plugin-data");
 
-  // { enabled: { [id]: true }, disabled: { [id]: true }, contributions: [...] }.
-  // `enabled` lists the external plugins the user turned on, `disabled` the
-  // built-in ones they turned off: each kind is recorded only when it differs
-  // from its default. `contributions` is the external half of the next
-  // launch's boot answer.
+  // { enabled: { [id]: true }, disabled: { [id]: true }, installed: {...},
+  // contributions: [...] }. `enabled` lists the external plugins the user
+  // turned on, `disabled` the built-in ones they turned off: each kind is
+  // recorded only when it differs from its default. `installed` is where each
+  // plugin added from Settings came from (`{ source, ref, commit, installedAt }`),
+  // which is also what makes it removable from there: a folder put in place by
+  // hand is the user's, never deleted by us. `contributions` is the external
+  // half of the next launch's boot answer.
   let state = null;
 
   // Built-in plugins: the same contract, shipped inside the app and on by
@@ -306,10 +310,11 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
       state = {
         enabled: map(parsed?.enabled),
         disabled: map(parsed?.disabled),
+        installed: map(parsed?.installed),
         contributions: Array.isArray(parsed?.contributions) ? parsed.contributions : [],
       };
     } catch (_) {
-      state = { enabled: {}, disabled: {}, contributions: [] };
+      state = { enabled: {}, disabled: {}, installed: {}, contributions: [] };
     }
     loadBundled();
     return state;
@@ -378,6 +383,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   }
 
   function list() {
+    const installed = loadState().installed;
     return [...discovered.values()]
       .map((p) => ({
         id: p.id,
@@ -388,6 +394,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         enabled: isEnabled(p.id),
         running: hostStatus.get(p.id) === "active",
         error: p.error ?? hostErrors.get(p.id) ?? null,
+        installed: (!p.builtIn && installed[p.id]) || null,
       }))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -412,14 +419,16 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     sendAll("plugins:changed", { contributions: next, plugins: list() });
   }
 
+  // Read into a new map and swapped in at the end, so a window asking for a
+  // plugin's files while this runs (after an install) never finds it missing.
   async function discover() {
-    discovered.clear();
-    for (const p of loadBundled().values()) discovered.set(p.id, p);
+    const found = new Map();
+    for (const p of loadBundled().values()) found.set(p.id, p);
     let entries = [];
     try {
       entries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
     } catch (_) {
-      return; // no plugins folder: nothing installed
+      entries = []; // no plugins folder: nothing installed
     }
     // A symlinked folder counts: it is how a plugin is developed in place, from
     // the repo it lives in.
@@ -441,7 +450,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
             if (isBuiltIn(manifest.id)) {
               // Listed under its folder name, so it doesn't replace the
               // built-in it collides with.
-              discovered.set(`${e.name} (external)`, {
+              found.set(`${e.name} (external)`, {
                 id: `${e.name} (external)`,
                 dir,
                 manifest: null,
@@ -449,14 +458,16 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
               });
               return;
             }
-            discovered.set(manifest.id, { id: manifest.id, dir, manifest, error: null });
+            found.set(manifest.id, { id: manifest.id, dir, manifest, error: null });
           } catch (err) {
             const error =
               err.code === "ENOENT" ? `no ${MANIFEST} in this folder` : `invalid manifest: ${err.message}`;
-            discovered.set(e.name, { id: e.name, dir, manifest: null, error });
+            found.set(e.name, { id: e.name, dir, manifest: null, error });
           }
         })
     );
+    discovered.clear();
+    for (const [id, p] of found) discovered.set(id, p);
   }
 
   // --- the plugin host process ----------------------------------------------
@@ -714,7 +725,108 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     return request({ type: "invoke", id, method, args: Array.isArray(args) ? args : [] }, INVOKE_TIMEOUT_MS);
   });
 
-  async function start() {
+  // --- adding and removing from Settings --------------------------------------
+
+  // One at a time, and never before the first discovery: each of these ends in
+  // a fresh discovery of its own, and two of them interleaved could each see
+  // the other's half-moved folder.
+  let queue = Promise.resolve();
+  let started = null;
+  const serial = (fn) => {
+    const run = queue.then(() => started).then(fn);
+    queue = run.catch(() => {});
+    return run;
+  };
+
+  // Clone the release into a hidden folder next to the installed plugins (the
+  // same disk, so the last step is a rename), check its manifest as discovery
+  // would, and only then move it into place. Whatever fails leaves nothing
+  // behind. Adding a plugin is the user's opt-in, so it is turned on.
+  async function install(input) {
+    const source = parseSource(input);
+    await fs.promises.mkdir(pluginsDir, { recursive: true });
+    const staging = await fs.promises.mkdtemp(path.join(pluginsDir, ".install-"));
+    try {
+      const fetched = await fetchSource(source, path.join(staging, "clone"));
+      let raw;
+      try {
+        raw = await fs.promises.readFile(path.join(fetched.dir, MANIFEST), "utf-8");
+      } catch (_) {
+        throw new Error(
+          `no ${MANIFEST} in ${source.subdir ? `"${source.subdir}"` : "the repository's root"}` +
+            (source.subdir ? "" : "; for a plugin in a subfolder, add #<tag>:<folder> to the URL")
+        );
+      }
+      let id;
+      try {
+        id = JSON.parse(raw)?.id;
+      } catch (err) {
+        throw new Error(`invalid manifest: ${err.message}`);
+      }
+      if (typeof id !== "string" || !ID_RE.test(id)) throw new Error(`invalid manifest: "id" must match ${ID_RE}`);
+      if (isBuiltIn(id)) throw new Error(`"${id}" is the id of a built-in plugin`);
+      const target = path.join(pluginsDir, id);
+      if (fs.existsSync(target)) throw new Error(`a plugin called "${id}" is already installed; remove it first`);
+
+      const ready = path.join(staging, "ready", id);
+      await fs.promises.mkdir(path.dirname(ready));
+      await fs.promises.rename(fetched.dir, ready);
+      // The repo's history is not part of the plugin: where it came from is
+      // recorded in the state instead.
+      await fs.promises.rm(path.join(ready, ".git"), { recursive: true, force: true, maxRetries: 3 });
+      try {
+        parseManifest(ready, raw);
+      } catch (err) {
+        throw new Error(`invalid manifest: ${err.message}`);
+      }
+      await fs.promises.rename(ready, target);
+
+      const s = loadState();
+      s.installed[id] = {
+        source: describeSource(source),
+        ref: fetched.ref,
+        commit: fetched.commit,
+        installedAt: new Date().toISOString(),
+      };
+      s.enabled[id] = true;
+      writeState();
+      await discover();
+      const p = discovered.get(id);
+      if (p?.manifest?.activation === "startup") await activate(p);
+      publish();
+      return { id, plugins: list() };
+    } finally {
+      await fs.promises.rm(staging, { recursive: true, force: true, maxRetries: 3 }).catch((err) =>
+        console.error("[plugins] could not clean up after an install:", err.message)
+      );
+    }
+  }
+
+  async function remove(id) {
+    const s = loadState();
+    const p = discovered.get(id);
+    if (!p || p.builtIn || !s.installed[id]) throw new Error(`"${id}" was not added from Settings, so it is not removed from here`);
+    await deactivate(id);
+    delete s.enabled[id];
+    delete s.installed[id];
+    writeState();
+    // A symlink is someone's working copy: drop the link, never what it points at.
+    const stat = await fs.promises.lstat(p.dir).catch(() => null);
+    if (stat?.isSymbolicLink()) await fs.promises.unlink(p.dir);
+    else if (stat) await fs.promises.rm(p.dir, { recursive: true, force: true, maxRetries: 3 });
+    await discover();
+    publish();
+    return list();
+  }
+
+  ipcMain.handle("plugins:install", (_event, source) => serial(() => install(source)));
+  ipcMain.handle("plugins:remove", (_event, id) => serial(() => remove(String(id))));
+
+  function start() {
+    return (started ??= discoverAndActivate());
+  }
+
+  async function discoverAndActivate() {
     loadState();
     await discover();
     discoveredOnce = true;

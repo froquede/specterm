@@ -642,3 +642,17 @@ export async function setPluginEnabled(id: string, enabled: boolean): Promise<vo
   const backend = await getBackend();
   setPluginList(await backend.pluginsSetEnabled(id, enabled));
 }
+
+// The plugin's id once it is installed and on. Its buttons and views arrive
+// through onPluginsChanged like any other plugin's.
+export async function installPlugin(source: string): Promise<string> {
+  const backend = await getBackend();
+  const { id, plugins } = await backend.pluginsInstall(source);
+  setPluginList(plugins);
+  return id;
+}
+
+export async function removePlugin(id: string): Promise<void> {
+  const backend = await getBackend();
+  setPluginList(await backend.pluginsRemove(id));
+}

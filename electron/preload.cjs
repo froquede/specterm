@@ -332,6 +332,8 @@ contextBridge.exposeInMainWorld("specterm", {
   // plugin never adds anything here.
   pluginsList: () => ipcRenderer.invoke("plugins:list"),
   pluginsSetEnabled: (id, enabled) => ipcRenderer.invoke("plugins:set-enabled", id, enabled),
+  pluginsInstall: (source) => ipcRenderer.invoke("plugins:install", source),
+  pluginsRemove: (id) => ipcRenderer.invoke("plugins:remove", id),
   pluginsState: () => ipcRenderer.invoke("plugins:state"),
   pluginInvoke: (id, method, args) => ipcRenderer.invoke("plugins:invoke", id, method, args),
   onPluginEvent: (cb) => {

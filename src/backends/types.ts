@@ -204,6 +204,23 @@ export interface PluginInfo {
   // Its host module is running now.
   running?: boolean;
   error: string | null;
+  // Where an external plugin added from Settings came from; null for one put
+  // in the plugins folder by hand. Only these can be removed from Settings.
+  installed?: PluginInstallRecord | null;
+}
+
+export interface PluginInstallRecord {
+  // What to paste to install the same thing again: URL, then #<ref>[:<folder>].
+  source: string;
+  // The tag (or branch) it was installed at; null for the default branch.
+  ref: string | null;
+  commit: string;
+  installedAt: string;
+}
+
+export interface PluginInstallResult {
+  id: string;
+  plugins: PluginInfo[];
 }
 
 // A positive count, a plain dot, or nothing.
@@ -484,6 +501,10 @@ export interface Backend {
   // Plugins. One fixed set of calls for all of them; see electron/plugins.cjs.
   pluginsList(): Promise<PluginInfo[]>;
   pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]>;
+  // Clone a plugin from a git URL into the plugins folder and turn it on.
+  pluginsInstall(source: string): Promise<PluginInstallResult>;
+  // Delete a plugin that was added from Settings.
+  pluginsRemove(id: string): Promise<PluginInfo[]>;
   pluginsState(): Promise<PluginsState>;
   pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
   onPluginEvent(
