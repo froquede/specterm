@@ -765,8 +765,13 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
       }
       if (typeof id !== "string" || !ID_RE.test(id)) throw new Error(`invalid manifest: "id" must match ${ID_RE}`);
       if (isBuiltIn(id)) throw new Error(`"${id}" is the id of a built-in plugin`);
+      // A folder copied in by hand can carry the same id under another name:
+      // installing over it would leave two plugins with one id, and Remove
+      // could then delete the hand-copied one.
       const target = path.join(pluginsDir, id);
-      if (fs.existsSync(target)) throw new Error(`a plugin called "${id}" is already installed; remove it first`);
+      if (fs.existsSync(target) || discovered.has(id)) {
+        throw new Error(`a plugin called "${id}" is already installed; remove it first`);
+      }
 
       const ready = path.join(staging, "ready", id);
       await fs.promises.mkdir(path.dirname(ready));

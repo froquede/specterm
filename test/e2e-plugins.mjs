@@ -204,6 +204,14 @@ const greetRepo = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-greet-repo-"))
   write("specterm-plugin.json", manifest("1.1.0"));
   git("commit", "-qam", "greet 1.1.0");
   git("tag", "greet-v1.1.0");
+  // A second plugin in the same repo whose id is taken by "hello", which is in
+  // the plugins folder by hand.
+  const twin = path.join(greetRepo, "apps", "twin", "specterm-plugin.json");
+  fs.mkdirSync(path.dirname(twin), { recursive: true });
+  fs.writeFileSync(twin, JSON.stringify({ id: "hello", name: "Twin", version: "1.0.0", engines: { specterm: "^1" } }));
+  git("add", ".");
+  git("commit", "-qm", "twin 1.0.0");
+  git("tag", "twin-v1.0.0");
 }
 const greetUrl = `${pathToFileURL(greetRepo).href}#:apps/greet`;
 
@@ -572,6 +580,14 @@ try {
     await until("already installed", async () =>
       /already installed/.test((await win.locator(".plugins-settings-add-error").textContent()) ?? "")
     , { timeout: 30000 })
+  );
+  await addInput.fill(greetUrl.replace("#:apps/greet", "#:apps/twin"));
+  await addButton.click();
+  check(
+    "a plugin whose id a hand-copied folder already uses is refused",
+    await until("id taken", async () =>
+      /"hello" is already installed/.test((await win.locator(".plugins-settings-add-error").textContent()) ?? "")
+    , { timeout: 30000 }) && fs.readdirSync(pluginsDir).every((n) => n !== "twin" && !n.startsWith(".install-"))
   );
   await win.locator(".plugins-settings-add").scrollIntoViewIfNeeded();
   await win.screenshot({ path: path.join(root, "test", "shot-plugins-add.png") });
