@@ -70,16 +70,12 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PluginView = lazy(() => import("./components/PluginView"));
 const PluginsUpdatedDialog = lazy(() => import("./components/PluginsUpdatedDialog"));
-
-// Cooldown between Shift+wheel pane switches — the same reasoning and value as
-// the tab strip's wheel (see WHEEL_SWITCH_THROTTLE_MS in TabBar): a trackpad
-// swipe is dozens of wheel events, and one swipe should move one pane.
-const PANE_WHEEL_THROTTLE_MS = 220;
 import type { PaneId, PluginViewKey } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
 import type { UnlistenFn } from "./backends";
+import { WHEEL_STEP_COOLDOWN_MS, wheelDelta } from "./lib/wheel-step";
 
 export default function App() {
   const store = useTabStore();
@@ -436,23 +432,25 @@ export default function App() {
   // either end like the tab strip's wheel. Listened for in the capture phase so
   // the terminal under the pointer never sees it — otherwise a program with
   // mouse tracking on (Claude Code, vim) would also get a scroll report.
-  // Shift is free for this: xterm's fast-scroll modifier is Alt. macOS turns a
-  // mouse's Shift+wheel into a horizontal scroll, hence reading either axis.
+  // Shift is free in the terminal itself: xterm's fast-scroll modifier is Alt.
   // With a single pane there is nowhere to go, so the event is left alone and
-  // keeps its usual job (horizontal scroll in the markdown and text views).
+  // keeps its usual job. With two or more it is taken over everywhere in the
+  // panes: Shift+wheel no longer reaches vim's page scroll, a text view's
+  // sideways scroll or a diagram's zoom (a trackpad's sideways swipe, with no
+  // Shift, still scrolls sideways).
   let splitRootEl: HTMLDivElement | undefined;
   let lastPaneWheelAt = 0;
   function onPaneWheel(e: WheelEvent) {
     if (!e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return;
     const tab = store.activeTab;
     if (!tab || collectLeaves(tab.root).length < 2) return;
-    const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    const delta = wheelDelta(e);
     if (delta === 0) return;
     e.preventDefault();
     e.stopPropagation();
 
     const now = Date.now();
-    if (now - lastPaneWheelAt < PANE_WHEEL_THROTTLE_MS) return;
+    if (now - lastPaneWheelAt < WHEEL_STEP_COOLDOWN_MS) return;
     lastPaneWheelAt = now;
     store.focusSteppedPane(delta > 0 ? 1 : -1);
     focusActivePane();

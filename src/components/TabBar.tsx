@@ -49,6 +49,7 @@ import {
 import { pluginIcon } from "../lib/plugin-icons";
 import type { PluginViewKey, SidebarView } from "../types";
 import type { Tab } from "../types";
+import { WHEEL_STEP_COOLDOWN_MS, wheelDelta } from "../lib/wheel-step";
 
 interface TabBarProps {
   tabs: Tab[];
@@ -77,12 +78,6 @@ interface TabBarProps {
 // a click. Tabs have no dedicated drag handle (unlike panes' title-bar), so a
 // plain click must not trigger a reorder.
 const DRAG_THRESHOLD = 4;
-
-// Cooldown between wheel-driven tab switches. A trackpad swipe fires dozens of
-// small wheel events for one gesture — without this, a single swipe over the
-// tab strip would flip through half the open tabs instead of moving one at a
-// time the way a physical mouse wheel's notches do.
-const WHEEL_SWITCH_THROTTLE_MS = 220;
 
 // Is anything in this tab waiting on the user, and if so what's the most urgent
 // of it? A tab is only ever a summary of its panes: the dot says "there is
@@ -264,12 +259,12 @@ export default function TabBar(props: TabBarProps) {
   // either end rather than stopping.
   let lastWheelSwitchAt = 0;
   function onTabListWheel(e: WheelEvent) {
-    const delta = Math.abs(e.deltaY) >= Math.abs(e.deltaX) ? e.deltaY : e.deltaX;
+    const delta = wheelDelta(e);
     if (delta === 0) return;
     e.preventDefault();
 
     const now = Date.now();
-    if (now - lastWheelSwitchAt < WHEEL_SWITCH_THROTTLE_MS) return;
+    if (now - lastWheelSwitchAt < WHEEL_STEP_COOLDOWN_MS) return;
 
     const tabs = props.tabs;
     if (tabs.length < 2) return;
