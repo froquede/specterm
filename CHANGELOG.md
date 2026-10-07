@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.31.0 — 2026-10-07
+
+### Added
+- **Plugins update themselves.** A plugin added from its git URL is checked
+  for a new release a minute after launch, every 6 hours, and from *Check for
+  updates* in *Settings → Plugins*. A compatible release (same major; below
+  1.0.0, a patch) is installed on its own, with no restart, and a dialog says
+  which plugins moved. A new major, a moved branch, or everything with
+  *Update automatically* off, waits for an *Update to …* button and a dot on
+  the Settings button.
+  - The new copy is started once before it replaces the old one, even for a
+    plugin whose view is closed; if it cannot start, the old one stays, with
+    the reason. A release that failed is not tried again on its own.
+  - The working copy is never lost: if an update is cut short (a quit, a
+    folder Windows would not let go of), the next launch puts it back.
+  - Checks never open a sign-in window: a repo that needs one shows a note
+    under the plugin instead.
+- **Shift+scroll moves between panes.** Over a split, Shift+scroll down
+  focuses the next pane and up the previous one, in reading order, wrapping
+  around, like the wheel over the tab strip. With two or more panes it takes
+  Shift+scroll over every pane, so vim's Shift+wheel paging, sideways scroll
+  in a text view and zoom in a diagram need a single pane (or, for sideways
+  scroll, a trackpad swipe).
+
 ## 0.30.0 — 2026-10-06
 
 ### Added
