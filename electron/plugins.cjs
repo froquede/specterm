@@ -28,6 +28,7 @@ const {
   describeSource,
   fetchSource,
   releaseVersion,
+  prereleaseVersion,
   remoteTags,
   newestRelease,
   remoteCommit,
@@ -319,6 +320,14 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // automatic update) failed.
   const updates = new Map();
   const updateErrors = new Map();
+  // id -> the release an automatic update could not install. It is not tried
+  // on its own again (each try stops the working copy and restarts it), only
+  // from the button, until a newer release replaces it on offer.
+  const failedAuto = new Map();
+  // id -> the update swapping its folder right now. Turning the plugin on, or
+  // its panel's first call starting it, waits for the swap, so neither starts
+  // a copy that is half moved.
+  const swapping = new Map();
 
   // Read once, synchronously, the first time a window's boot flags are built.
   // One small file, and only the first window pays for it.
@@ -703,6 +712,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   }));
 
   ipcMain.handle("plugins:set-enabled", async (_event, id, enabled) => {
+    await swapping.get(id);
     const p = discovered.get(id);
     if (!p) throw new Error(`no plugin "${id}"`);
     if (enabled && !p.manifest) throw new Error(p.error || `plugin "${id}" cannot be enabled`);
@@ -724,6 +734,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // arrive while it starts wait for the same activation.
   const activating = new Map();
   async function ensureRunning(id) {
+    await swapping.get(id);
     if (hostStatus.get(id) === "active") return;
     const p = discovered.get(id);
     if (!p?.manifest?.host || !isEnabled(id) || p.manifest.activation !== "view" || hostStatus.get(id) === "failed") {
@@ -844,6 +855,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     else if (stat) await fs.promises.rm(p.dir, { recursive: true, force: true, maxRetries: 3 });
     updates.delete(id);
     updateErrors.delete(id);
+    failedAuto.delete(id);
     await discover();
     publish();
     return list();
@@ -857,24 +869,32 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // other tag is offered that ref again once it has moved to another commit.
   //
   // `auto`: whether automatic updates may install it without asking. Only a
-  // minor or patch release of the major version installed: a new major can
-  // change what the plugin does or what it reaches, and a branch is not a
-  // release anyone signed off on. When both exist, the same-major release
-  // comes first; the new major is offered on the check after it.
+  // release semver calls compatible with the installed one (a minor or patch
+  // of the same major; below 1.0.0, only a patch): a new major can change what
+  // the plugin does or what it reaches, and a branch is not a release anyone
+  // signed off on. When both exist, the compatible release comes first; the
+  // new major is offered on the check after it.
   async function findUpdate(record, tagsOf) {
     const source = parseSource(record.source);
     const installed = releaseVersion(record.ref, source.subdir);
-    if (installed || !record.ref) {
+    // At a pre-release, the release it leads to (or a newer one) is offered,
+    // never installed on its own: the pre-release was a choice.
+    const pre = !installed && prereleaseVersion(record.ref, source.subdir);
+    if (installed || pre || !record.ref) {
       const tags = await tagsOf(source.url);
-      const isNewer = (release) =>
-        release && (!installed || newer(releaseVersion(release.tag, source.subdir), installed));
-      const sameMajor = installed && newestRelease(tags, source.subdir, installed[0]);
-      if (isNewer(sameMajor)) return { ref: sameMajor.tag, version: sameMajor.version, auto: true };
+      const isNewer = (release) => {
+        if (!release) return false;
+        const v = releaseVersion(release.tag, source.subdir);
+        if (pre) return !newer(pre, v);
+        return !installed || newer(v, installed);
+      };
+      const compatible = installed && newestRelease(tags, source.subdir, installed);
+      if (isNewer(compatible)) return { ref: compatible.tag, version: compatible.version, auto: true };
       const latest = newestRelease(tags, source.subdir);
       if (isNewer(latest)) return { ref: latest.tag, version: latest.version, auto: false };
-      if (installed) return null;
+      if (installed || pre) return null;
     }
-    const commit = await remoteCommit(source.url, record.ref);
+    const commit = await remoteCommit(source.url, record.ref, { interactive: false });
     return commit && commit !== record.commit ? { ref: record.ref, version: commit.slice(0, 7), auto: false } : null;
   }
 
@@ -899,13 +919,19 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // installed right away. `announce`: a check nobody is watching (at launch,
   // every 6 hours) shows a dialog with what moved; the one from Settings shows
   // it inline instead.
+  //
+  // A check asked for while one runs joins it. If either of them is a
+  // background one, what it installed is announced: a check from the button
+  // that a background one joined must not swallow the dialog.
   let checking = null;
+  let announceChecked = false;
   function checkUpdates({ announce: shouldAnnounce = false } = {}) {
+    if (shouldAnnounce) announceChecked = true;
     checking ??= serial(async () => {
       const s = loadState();
       const tags = new Map();
       const tagsOf = (url) => {
-        if (!tags.has(url)) tags.set(url, remoteTags(url));
+        if (!tags.has(url)) tags.set(url, remoteTags(url, { interactive: false }));
         return tags.get(url);
       };
       const targets = [...discovered.values()].filter((p) => !p.builtIn && s.installed[p.id]);
@@ -915,7 +941,12 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
             const offer = await findUpdate(s.installed[p.id], tagsOf);
             if (offer) updates.set(p.id, offer);
             else updates.delete(p.id);
-            updateErrors.delete(p.id);
+            // The reason an automatic update failed stays next to the offer
+            // for as long as that release is the one on offer.
+            if (failedAuto.get(p.id) !== offer?.ref) {
+              failedAuto.delete(p.id);
+              updateErrors.delete(p.id);
+            }
           } catch (err) {
             updateErrors.set(p.id, `could not check for updates: ${err.message}`);
           }
@@ -924,23 +955,27 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
       const updated = [];
       if (autoUpdates()) {
         for (const [id, offer] of [...updates]) {
-          if (!offer.auto) continue;
+          if (!offer.auto || failedAuto.get(id) === offer.ref) continue;
           const p = discovered.get(id);
           const from = p?.manifest?.version ?? null;
           try {
-            const { version } = await applyUpdate(id);
+            const { version } = await applyUpdate(id, { interactive: false });
             updated.push({ id, name: discovered.get(id)?.manifest?.name ?? id, from, to: version });
           } catch (err) {
             // Still offered, with the reason: the button in Settings retries.
+            failedAuto.set(id, offer.ref);
             updateErrors.set(id, err.message);
           }
         }
       }
       publish();
-      if (shouldAnnounce && updated.length) announce(updated);
       return { plugins: list(), updated };
+    }).then((result) => {
+      if (announceChecked && result.updated.length) announce(result.updated);
+      return result;
     }).finally(() => {
       checking = null;
+      announceChecked = false;
     });
     return checking;
   }
@@ -960,12 +995,18 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
 
   // Moves an added plugin to what the last check offered, without a restart.
   // The release is fetched and its manifest validated before anything running
-  // is touched; then the plugin is turned off, the folders are swapped and it
-  // is turned on again. If the new copy fails to start, the old one goes back
-  // and the error says so. Open views reload, because their URLs carry the
-  // version (see contributionOf). Not queued itself: the IPC handler and the
-  // check, which already runs in the queue, call it.
-  async function applyUpdate(id) {
+  // is touched; then the plugin is turned off, the folders are swapped, and the
+  // new copy is started once to see that it can: every plugin with a host,
+  // including one whose view is not open (it goes back to sleep after). If it
+  // cannot start, the old copy goes back and the error says so. Open views
+  // reload, because their URLs carry the version (see contributionOf). Not
+  // queued itself: the IPC handler and the check, which already runs in the
+  // queue, call it.
+  //
+  // The old copy is only ever deleted once a working copy is confirmed in its
+  // place. If putting it back fails, or the app quits mid-swap, it stays in the
+  // staging folder, and the next launch puts it back (see recoverUpdates).
+  async function applyUpdate(id, { interactive = true } = {}) {
     const s = loadState();
     const p = discovered.get(id);
     const record = s.installed[id];
@@ -974,8 +1015,11 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     if (!offer) throw new Error("no update to install; check for updates first");
     const source = parseSource(record.source);
     const staging = await fs.promises.mkdtemp(path.join(pluginsDir, ".update-"));
+    let keepStaging = false;
+    let doneSwapping;
+    swapping.set(id, new Promise((resolve) => (doneSwapping = resolve)));
     try {
-      const fetched = await fetchSource({ ...source, ref: offer.ref }, path.join(staging, "clone"));
+      const fetched = await fetchSource({ ...source, ref: offer.ref }, path.join(staging, "clone"), { interactive });
       const ready = path.join(staging, "ready", id);
       await fs.promises.mkdir(path.dirname(ready));
       await move(fetched.dir, ready);
@@ -987,14 +1031,28 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         throw new Error(`${offer.version} cannot be installed: ${err.code === "ENOENT" ? `no ${MANIFEST}` : err.message}`);
       }
 
-      // A view-activated plugin whose view was in use starts again now, so a
-      // new copy that cannot start is caught here rather than in its panel.
       const wasRunning = hostStatus.get(id) === "active";
+      // Back to how it was: running if it was, or if it starts with the app.
       const restart = async (plugin) => {
         if (!plugin?.manifest || !isEnabled(id)) return;
         if (plugin.manifest.activation === "startup" || wasRunning) await activate(plugin);
       };
       const previous = path.join(staging, "previous");
+      // The old copy back in place. If that fails too, the plugin is left
+      // without a folder until the next launch restores it from `previous`.
+      const putBack = async () => {
+        try {
+          await move(previous, p.dir);
+        } catch (err) {
+          keepStaging = true;
+          throw new Error(
+            `could not put ${p.manifest?.version ?? "the installed copy"} back (${err.message}); it will be restored the next time Specterm starts`
+          );
+        }
+        await discover();
+        await restart(discovered.get(id));
+      };
+
       await deactivate(id);
       try {
         await move(p.dir, previous);
@@ -1002,26 +1060,39 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         await restart(p);
         throw new Error(`could not move the installed copy aside: ${err.message}`);
       }
+      // From here until a working copy is confirmed, the only good copy is
+      // `previous`: a quit now leaves it for the next launch.
+      keepStaging = true;
       try {
         await move(ready, p.dir);
       } catch (err) {
-        await move(previous, p.dir);
-        await restart(p);
+        await putBack();
+        keepStaging = false;
         throw new Error(`could not put ${offer.version} in place: ${err.message}`);
       }
       await discover();
-      await restart(discovered.get(id));
-
-      if (hostStatus.get(id) === "failed") {
-        const why = hostErrors.get(id);
-        await deactivate(id);
-        await move(p.dir, path.join(staging, "failed"));
-        await move(previous, p.dir);
-        await discover();
-        await restart(discovered.get(id));
-        publish();
-        throw new Error(`${offer.version} did not start (${why}), so ${p.manifest?.version ?? "the installed copy"} was kept`);
+      const fresh = discovered.get(id);
+      // Started once, enabled or not running, to see that it can start.
+      if (fresh?.manifest?.host && isEnabled(id)) {
+        await activate(fresh);
+        if (hostStatus.get(id) === "failed") {
+          const why = hostErrors.get(id);
+          await deactivate(id);
+          try {
+            await move(p.dir, path.join(staging, "failed"));
+          } catch (err) {
+            // The broken copy is stuck in place; `previous` waits for the
+            // next launch, which keeps whichever copy is in the folder.
+            throw new Error(`${offer.version} did not start (${why}), and could not be moved aside: ${err.message}`);
+          }
+          await putBack();
+          keepStaging = false;
+          publish();
+          throw new Error(`${offer.version} did not start (${why}), so ${p.manifest?.version ?? "the installed copy"} was kept`);
+        }
+        if (!(fresh.manifest.activation === "startup" || wasRunning)) await deactivate(id);
       }
+      keepStaging = false;
 
       s.installed[id] = {
         ...record,
@@ -1033,21 +1104,68 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         updatedAt: new Date().toISOString(),
       };
       writeState();
+      // Recorded: from here a quit keeps the new copy (see recoverUpdates).
+      await fs.promises.writeFile(path.join(staging, "done"), "").catch(() => {});
       updates.delete(id);
       updateErrors.delete(id);
+      failedAuto.delete(id);
       publish();
       return { version: manifest.version, plugins: list() };
     } finally {
-      await fs.promises.rm(staging, { recursive: true, force: true, maxRetries: 3 }).catch((err) =>
-        console.error("[plugins] could not clean up after an update:", err.message)
-      );
+      swapping.delete(id);
+      doneSwapping();
+      if (!keepStaging) {
+        await fs.promises.rm(staging, { recursive: true, force: true, maxRetries: 3 }).catch((err) =>
+          console.error("[plugins] could not clean up after an update:", err.message)
+        );
+      }
+    }
+  }
+
+  // At launch, before discovery: what an update or an install left behind when
+  // the app quit (or a rename failed) in the middle. Until an update writes
+  // `done` (after its record is saved), its `previous` is the plugin's working
+  // copy, the one plugins.json describes: it goes back in place, and whatever
+  // is in the plugin's folder (nothing, or a copy that was never validated)
+  // goes. Either way the staging folder goes. Only the hidden folders this file
+  // creates are looked at, so a launch with nothing left behind costs one
+  // readdir.
+  async function recoverUpdates() {
+    let entries = [];
+    try {
+      entries = await fs.promises.readdir(pluginsDir, { withFileTypes: true });
+    } catch (_) {
+      return;
+    }
+    for (const e of entries) {
+      if (!e.isDirectory() || !/^\.(update|install)-/.test(e.name)) continue;
+      const staging = path.join(pluginsDir, e.name);
+      const previous = path.join(staging, "previous");
+      try {
+        const unfinished =
+          e.name.startsWith(".update-") &&
+          !fs.existsSync(path.join(staging, "done")) &&
+          fs.existsSync(path.join(previous, MANIFEST));
+        if (unfinished) {
+          const id = JSON.parse(await fs.promises.readFile(path.join(previous, MANIFEST), "utf-8"))?.id;
+          if (typeof id === "string" && ID_RE.test(id)) {
+            const dir = path.join(pluginsDir, id);
+            if (fs.existsSync(dir)) await move(dir, path.join(staging, "unfinished"));
+            await move(previous, dir);
+            console.warn(`[plugins] restored "${id}" from an update that did not finish`);
+          }
+        }
+        await fs.promises.rm(staging, { recursive: true, force: true, maxRetries: 3 });
+      } catch (err) {
+        console.error(`[plugins] could not clean up ${e.name}:`, err.message);
+      }
     }
   }
 
   ipcMain.handle("plugins:install", (_event, source) => serial(() => install(source)));
   ipcMain.handle("plugins:remove", (_event, id) => serial(() => remove(String(id))));
   ipcMain.handle("plugins:check-updates", () => checkUpdates());
-  ipcMain.handle("plugins:update", (_event, id) => serial(() => applyUpdate(String(id))));
+  ipcMain.handle("plugins:update", (_event, id) => serial(() => applyUpdate(String(id), { interactive: true })));
   ipcMain.handle("plugins:auto-update", () => autoUpdates());
   ipcMain.handle("plugins:set-auto-update", (_event, on) => {
     const s = loadState();
@@ -1074,6 +1192,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
 
   async function discoverAndActivate() {
     loadState();
+    await recoverUpdates();
     await discover();
     discoveredOnce = true;
     await Promise.all(

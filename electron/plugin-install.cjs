@@ -78,7 +78,38 @@ function describeSource({ url, ref, subdir }) {
   return `${url}#${ref ?? ""}${subdir ? `:${subdir}` : ""}`;
 }
 
-function git(args, { cwd } = {}) {
+// The ssh command git would use, so the non-interactive one below can add to
+// it rather than replace a user's own (a jump host, a key, a wrapper). Asked
+// once per process, and only the first time an update runs unattended.
+let sshCommand = null;
+async function configuredSshCommand() {
+  if (process.env.GIT_SSH_COMMAND) return process.env.GIT_SSH_COMMAND;
+  sshCommand ??= git(["config", "--get", "core.sshCommand"]).then(
+    (out) => out.trim() || "ssh",
+    () => "ssh"
+  );
+  return sshCommand;
+}
+
+// No terminal to answer a prompt in: git would wait forever. With
+// `interactive` (an install or an update the user just asked for), a
+// credential helper with its own window (Git Credential Manager) still works.
+// Without it (the update check, and what it installs on its own), nothing may
+// ask: Git Credential Manager is told not to, and ssh runs in batch mode, so a
+// repo that needs a sign-in fails with the reason instead of opening a window
+// nobody asked for.
+async function gitEnv(interactive) {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat", LC_ALL: "C" };
+  if (interactive) return env;
+  return {
+    ...env,
+    GCM_INTERACTIVE: "never",
+    GIT_SSH_COMMAND: `${await configuredSshCommand()} -o BatchMode=yes`,
+  };
+}
+
+async function git(args, { cwd, interactive = true } = {}) {
+  const env = await gitEnv(interactive);
   return new Promise((resolve, reject) => {
     execFile(
       "git",
@@ -88,10 +119,7 @@ function git(args, { cwd } = {}) {
         windowsHide: true,
         timeout: GIT_TIMEOUT_MS,
         maxBuffer: 8 * 1024 * 1024,
-        // No terminal to answer a prompt in: git would wait forever. A
-        // credential helper with its own window (Git Credential Manager) still
-        // works, since the user asked for this install.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_PAGER: "cat", LC_ALL: "C" },
+        env,
       },
       (err, stdout, stderr) => {
         if (!err) return resolve(stdout);
@@ -132,10 +160,20 @@ function releaseVersion(tag, subdir) {
   return m ? m.slice(1).map(Number) : null;
 }
 
+// The release a pre-release tag leads up to (`v2.0.0-rc.1` -> [2, 0, 0]), or
+// null. A plugin installed at one is offered that release, or a newer one,
+// once it is out.
+function prereleaseVersion(tag, subdir) {
+  const prefix = tagPrefix(subdir);
+  if (typeof tag !== "string" || !tag.startsWith(prefix)) return null;
+  const m = /^(\d+)\.(\d+)\.(\d+)-[0-9A-Za-z.-]+$/.exec(tag.slice(prefix.length));
+  return m ? m.slice(1).map(Number) : null;
+}
+
 // Every tag in the repo, as git ls-remote lists them. The update check asks
 // once per repo, however many plugins live in it.
-async function remoteTags(url) {
-  const out = await git(["ls-remote", "--tags", "--refs", "--", url]);
+async function remoteTags(url, { interactive = true } = {}) {
+  const out = await git(["ls-remote", "--tags", "--refs", "--", url], { interactive });
   return out
     .split("\n")
     .map((line) => line.split("\trefs/tags/")[1]?.trim())
@@ -143,33 +181,44 @@ async function remoteTags(url) {
 }
 
 // The newest release tag for a plugin at `subdir` among `tags`, as
-// { tag, version: "1.2.3" }, or null. With `major`, only that major's.
-function newestRelease(tags, subdir, major = null) {
+// { tag, version: "1.2.3" }, or null. With `compatibleWith` (a version), only
+// the releases semver says are compatible with it: the same major, and below
+// 1.0.0 the same minor too, since there a minor is allowed to break.
+function newestRelease(tags, subdir, compatibleWith = null) {
+  const compatible = (v) =>
+    !compatibleWith || (v[0] === compatibleWith[0] && (compatibleWith[0] !== 0 || v[1] === compatibleWith[1]));
   let best = null;
   for (const tag of tags) {
     const v = releaseVersion(tag, subdir);
-    if (v && (major === null || v[0] === major) && (!best || newer(v, best.v))) best = { tag, v };
+    if (v && compatible(v) && (!best || newer(v, best.v))) best = { tag, v };
   }
   return best && { tag: best.tag, version: best.v.join(".") };
 }
 
-async function newestTag(url, subdir) {
-  return newestRelease(await remoteTags(url), subdir)?.tag ?? null;
+async function newestTag(url, subdir, opts) {
+  return newestRelease(await remoteTags(url, opts), subdir)?.tag ?? null;
 }
 
 // The commit a branch or tag (or, with no ref, the default branch) is at now.
-async function remoteCommit(url, ref) {
-  const out = await git(["ls-remote", "--", url, ref ?? "HEAD"]);
-  const lines = out
+async function remoteCommit(url, ref, { interactive = true } = {}) {
+  const out = await git(["ls-remote", "--", url, ref ?? "HEAD"], { interactive });
+  return pickCommit(out, ref);
+}
+
+// ls-remote matches its pattern against the end of every ref name, so asking
+// for `v1` also lists `refs/heads/feature/v1`. Only an exact name counts. A
+// name can match a branch and a tag; the branch wins, as in `git clone
+// --branch`. An annotated tag's peeled line (^{}) is its commit; a lightweight
+// tag has only the one line.
+function pickCommit(out, ref) {
+  const lines = String(out)
     .split("\n")
     .map((l) => l.trim().split("\t"))
     .filter((l) => l.length === 2);
-  // A name can match a branch and a tag; the branch wins, as in `git clone
-  // --branch`. An annotated tag's peeled line (^{}) is its commit.
-  const pick =
-    lines.find(([, name]) => name === `refs/heads/${ref}`) ??
-    lines.find(([, name]) => name === `refs/tags/${ref}^{}`) ??
-    lines[0];
+  const named = (name) => lines.find(([, n]) => n === name);
+  const pick = ref
+    ? named(`refs/heads/${ref}`) ?? named(`refs/tags/${ref}^{}`) ?? named(`refs/tags/${ref}`)
+    : named("HEAD");
   return pick?.[0] ?? null;
 }
 
@@ -182,12 +231,12 @@ function newer(a, b) {
 // plugin is in plus the ref and commit it was installed at. Symlinks in the
 // repo are checked out as plain files: the plugin scheme serves files from the
 // plugin's folder, and a link would let it serve any file on disk.
-async function fetchSource(source, dest) {
-  const ref = source.ref ?? (await newestTag(source.url, source.subdir));
+async function fetchSource(source, dest, { interactive = true } = {}) {
+  const ref = source.ref ?? (await newestTag(source.url, source.subdir, { interactive }));
   const args = ["-c", "core.symlinks=false", "clone", "--depth", "1", "--quiet"];
   if (ref) args.push("--branch", ref);
   args.push("--", source.url, dest);
-  await git(args);
+  await git(args, { interactive });
   const commit = (await git(["rev-parse", "HEAD"], { cwd: dest })).trim();
   const dir = source.subdir ? path.join(dest, ...source.subdir.split("/")) : dest;
   const stat = await fs.promises.stat(dir).catch(() => null);
@@ -200,8 +249,10 @@ module.exports = {
   describeSource,
   fetchSource,
   releaseVersion,
+  prereleaseVersion,
   remoteTags,
   newestRelease,
   remoteCommit,
+  pickCommit,
   newer,
 };

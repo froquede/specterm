@@ -57,6 +57,9 @@ const SUITES = [
   // Not an Electron suite either — the argv classifier from
   // electron/open-paths.cjs, required straight in. Milliseconds.
   { name: "open-paths", file: "open-paths.mjs" },
+  // How plugin releases are read for updates (electron/plugin-install.cjs):
+  // tag rules, what may install on its own, ref-to-commit. One local git repo.
+  { name: "plugin-install", file: "plugin-install.mjs" },
   // Same shape as paste: the matcher behind click-to-copy, pure and DOM-free.
   { name: "path-links", file: "path-links.mjs", node: ["--experimental-strip-types"] },
   // And the mermaid fence renderer from src/lib/markdown.ts: escaping only,

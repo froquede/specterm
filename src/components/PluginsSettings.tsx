@@ -25,6 +25,10 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
 // everyone else's code, so they are listed apart and the hint under them says
 // plainly what turning one on means. Adding a plugin from its URL is the user
 // opting in, so it is on once it is added.
+// The check itself failed (see checkUpdates in electron/plugins.cjs), as
+// opposed to an update that was tried and failed.
+const checkFailed = (text: string | null | undefined) => !!text?.startsWith("could not check for updates");
+
 export default function PluginsSettings() {
   const [busy, setBusy] = createSignal<string | null>(null);
   const [failure, setFailure] = createSignal<{ id: string; message: string } | null>(null);
@@ -213,10 +217,16 @@ export default function PluginsSettings() {
           when={
             plugin().error ??
             (failure()?.id === plugin().id ? failure()!.message : null) ??
-            plugin().updateError
+            (checkFailed(plugin().updateError) ? null : plugin().updateError)
           }
         >
           {(text) => <div class="settings-error">{text()}</div>}
+        </Show>
+        {/* A check that could not reach the repo (offline, a sign-in it may not
+            ask for) is a note, not an error: nothing is broken, and the next
+            check tries again. */}
+        <Show when={!plugin().error && checkFailed(plugin().updateError)}>
+          <p class="settings-hint plugins-settings-check-failed">{plugin().updateError}</p>
         </Show>
       </div>
     );

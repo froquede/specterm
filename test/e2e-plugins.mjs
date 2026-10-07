@@ -241,6 +241,27 @@ async function quit(app) {
   } catch {}
 }
 
+// What a quit in the middle of an update leaves behind. "rescued": the app
+// quit after the old copy was moved aside and before the new one went in, so
+// the plugin has no folder. "halfway": the new copy went in but was never
+// validated or recorded, so the old one is still the one plugins.json means.
+// "finished": the update was recorded (`done`) and only the cleanup was cut
+// short, so the new copy stays. And a stale install's staging folder.
+const manifestAt = (id, version) => ({ id, name: id, version, engines: { specterm: "^1" } });
+const stage = (name, files) => {
+  for (const [rel, body] of Object.entries(files)) {
+    const p = path.join(pluginsDir, name, rel);
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    fs.writeFileSync(p, typeof body === "string" ? body : JSON.stringify(body));
+  }
+};
+stage(".update-rescued", { "previous/specterm-plugin.json": manifestAt("rescued", "1.0.0") });
+writePlugin("halfway", { "specterm-plugin.json": manifestAt("halfway", "2.0.0") });
+stage(".update-halfway", { "previous/specterm-plugin.json": manifestAt("halfway", "1.0.0") });
+writePlugin("finished", { "specterm-plugin.json": manifestAt("finished", "2.0.0") });
+stage(".update-finished", { "previous/specterm-plugin.json": manifestAt("finished", "1.0.0"), done: "" });
+stage(".install-stale", { "clone/README": "half a clone" });
+
 // --- run -------------------------------------------------------------------
 
 let app;
@@ -256,6 +277,22 @@ try {
     win.locator('.plugins-settings-item[data-plugin="hello"]').isVisible()
   );
   check("installed plugins are listed in Settings", listed);
+
+  // 0. What an update or an install left behind is sorted out at launch.
+  const versionOf = async (id) =>
+    (await win.evaluate(() => window.specterm.pluginsState())).plugins.find((p) => p.id === id)?.version ?? null;
+  check("a plugin left without a folder by an unfinished update is put back", (await versionOf("rescued")) === "1.0.0");
+  check(
+    "an update that was never recorded is undone",
+    (await versionOf("halfway")) === "1.0.0" &&
+      JSON.parse(fs.readFileSync(path.join(pluginsDir, "halfway", "specterm-plugin.json"), "utf-8")).version === "1.0.0"
+  );
+  check("one that was recorded keeps the new copy", (await versionOf("finished")) === "2.0.0");
+  check(
+    "and no staging folder is left",
+    fs.readdirSync(pluginsDir).every((n) => !/^\.(update|install)-/.test(n)),
+    fs.readdirSync(pluginsDir).join(",")
+  );
   check(
     "a newly found plugin starts off",
     !(await win.locator('.plugins-settings-item[data-plugin="hello"] input').isChecked())
@@ -712,6 +749,54 @@ try {
   await greetItem.scrollIntoViewIfNeeded();
   await win.screenshot({ path: path.join(root, "test", "shot-plugins-update.png") });
 
+  // A view-activated plugin whose view is not open is still started once on
+  // the new copy, so a release that cannot start is caught and rolled back
+  // rather than found broken the next time its panel opens. And an automatic
+  // update that failed is not tried again on every check.
+  const viewRelease = (version, host) => {
+    const files = greetRelease(version, host);
+    files["specterm-plugin.json"] = { ...files["specterm-plugin.json"], activation: "view" };
+    return files;
+  };
+  release("1.3.1", viewRelease("1.3.1", "exports.activate = () => {};"));
+  await win.evaluate(() => window.specterm.pluginsCheckUpdatesBackground());
+  check(
+    "a view-activated release installs on its own",
+    await until("1.3.1 installed", async () => (await greetInfo())?.version === "1.3.1", { timeout: 30000 })
+  );
+  await until("1.3.1 dialog", () => win.locator(".plugins-updated").isVisible());
+  await win.locator(".plugins-updated-ok").click();
+  // Off and on again: a view plugin then sleeps until its view is opened.
+  const greetToggle = greetItem.locator('input[type="checkbox"]').first();
+  await greetToggle.click();
+  await until("greet off", async () => (await greetInfo())?.enabled === false);
+  await greetToggle.click();
+  await until("greet on", async () => (await greetInfo())?.enabled === true);
+  check("its host is not running while its view is closed", (await greetInfo())?.running === false);
+  const brokenRuns = path.join(userDataDir, "greet-broken-runs");
+  release(
+    "1.3.2",
+    viewRelease(
+      "1.3.2",
+      `exports.activate = () => { require("fs").appendFileSync(${JSON.stringify(brokenRuns)}, "x"); throw new Error("broken view release"); };`
+    )
+  );
+  await win.evaluate(() => window.specterm.pluginsCheckUpdatesBackground());
+  check(
+    "a release that cannot start is caught though its view is closed, and rolled back",
+    await until("rolled back 1.3.1", async () => /did not start .*broken view release.*1\.3\.1 was kept/.test((await greetInfo())?.updateError ?? ""), { timeout: 30000 }) &&
+      (await greetInfo())?.version === "1.3.1" &&
+      JSON.parse(fs.readFileSync(path.join(greetDir, "specterm-plugin.json"), "utf-8")).version === "1.3.1",
+    (await greetInfo())?.updateError ?? ""
+  );
+  check("and it goes back to sleep", (await greetInfo())?.running === false);
+  await win.evaluate(() => window.specterm.pluginsCheckUpdatesBackground());
+  check(
+    "the failed release is not tried again on the next check",
+    fs.readFileSync(brokenRuns, "utf-8") === "x" && /broken view release/.test((await greetInfo())?.updateError ?? ""),
+    `runs=${fs.readFileSync(brokenRuns, "utf-8").length}`
+  );
+
   // Off, a minor release is offered rather than installed. It comes before
   // the new major, which is offered once it is in.
   await autoSwitch.click();
@@ -719,12 +804,12 @@ try {
     "turning automatic updates off is remembered",
     await until("saved", () => JSON.parse(fs.readFileSync(path.join(userDataDir, "plugins.json"), "utf-8")).autoUpdate === false)
   );
-  release("1.3.1", greetRelease("1.3.1", "exports.activate = () => {};"));
+  release("1.3.3", viewRelease("1.3.3", "exports.activate = () => {};"));
   await checkButton.click();
   check(
     "with them off, a minor release is offered, ahead of the new major",
-    await until("1.3.1 offered", async () => ((await updateButton.textContent().catch(() => "")) ?? "").includes("1.3.1"), { timeout: 30000 }) &&
-      ((await greetItem.locator(".plugins-settings-version").textContent()) ?? "").trim() === "1.3.0"
+    await until("1.3.3 offered", async () => ((await updateButton.textContent().catch(() => "")) ?? "").includes("1.3.3"), { timeout: 30000 }) &&
+      ((await greetItem.locator(".plugins-settings-version").textContent()) ?? "").trim() === "1.3.1"
   );
 
   await greetItem.locator(".plugins-settings-remove").click();
