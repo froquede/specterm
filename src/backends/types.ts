@@ -207,6 +207,40 @@ export interface PluginInfo {
   // Where an external plugin added from Settings came from; null for one put
   // in the plugins folder by hand. Only these can be removed from Settings.
   installed?: PluginInstallRecord | null;
+  // What the last update check found for an added plugin, and why the check
+  // failed when it did. Checked a minute after launch, every 6 hours, and from
+  // the button in Settings.
+  update?: PluginUpdate | null;
+  updateError?: string | null;
+}
+
+export interface PluginUpdate {
+  // The tag (or branch) it would move to.
+  ref: string | null;
+  // The release's version, or the new commit's short hash for a branch.
+  version: string;
+  // Automatic updates may install it without asking: a minor or patch release
+  // of the major version installed. A new major or a moved branch waits.
+  auto: boolean;
+}
+
+export interface PluginUpdateResult {
+  version: string;
+  plugins: PluginInfo[];
+}
+
+// A plugin an automatic update moved, for the dialog that says so.
+export interface PluginAutoUpdated {
+  id: string;
+  name: string;
+  from: string | null;
+  to: string;
+}
+
+export interface PluginCheckResult {
+  plugins: PluginInfo[];
+  // What automatic updates installed during the check.
+  updated: PluginAutoUpdated[];
 }
 
 export interface PluginInstallRecord {
@@ -216,6 +250,7 @@ export interface PluginInstallRecord {
   ref: string | null;
   commit: string;
   installedAt: string;
+  updatedAt?: string;
 }
 
 export interface PluginInstallResult {
@@ -505,6 +540,15 @@ export interface Backend {
   pluginsInstall(source: string): Promise<PluginInstallResult>;
   // Delete a plugin that was added from Settings.
   pluginsRemove(id: string): Promise<PluginInfo[]>;
+  // Ask the repos of the plugins added from Settings for newer releases, and
+  // with automatic updates on, install the ones that need no asking.
+  pluginsCheckUpdates(): Promise<PluginCheckResult>;
+  // Move a plugin to what the last check offered, and reload it.
+  pluginsUpdate(id: string): Promise<PluginUpdateResult>;
+  pluginsAutoUpdate(): Promise<boolean>;
+  pluginsSetAutoUpdate(on: boolean): Promise<boolean>;
+  // What a background check installed, told to one window.
+  onPluginsAutoUpdated(cb: (updated: PluginAutoUpdated[]) => void): Promise<UnlistenFn>;
   pluginsState(): Promise<PluginsState>;
   pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
   onPluginEvent(

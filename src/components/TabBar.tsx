@@ -43,6 +43,7 @@ import {
   pluginBadges,
   pluginButtons,
   pluginToast,
+  pluginUpdatesPending,
   resumePluginToast,
 } from "../stores/plugins";
 import { pluginIcon } from "../lib/plugin-icons";
@@ -157,10 +158,12 @@ function TabTitleInput(props: {
 export default function TabBar(props: TabBarProps) {
   // Found, downloading or downloaded but not yet installed: anything short of
   // "you're on the latest" is worth the dot.
-  const updatePending = () => {
+  const appUpdatePending = () => {
     const phase = updaterPhase();
     return phase === "available" || phase === "downloading" || phase === "downloaded";
   };
+  // A plugin added from Settings with a newer release counts too.
+  const updatePending = () => appUpdatePending() || pluginUpdatesPending();
   // Set right before a completed drag's reorder call, so the click event that
   // follows pointerup doesn't also re-select a tab out from under the drag.
   let suppressClick = false;
@@ -389,7 +392,7 @@ export default function TabBar(props: TabBarProps) {
           aria-pressed={props.settingsOpen}
           title={
             updatePending()
-              ? `Update available${updaterVersion() ? ` (v${updaterVersion()})` : ""} · ${props.settingsOpen ? "hide" : "open"} settings (${settingsKey()})`
+              ? `${appUpdatePending() ? `Update available${updaterVersion() ? ` (v${updaterVersion()})` : ""}` : "Plugin update available"} · ${props.settingsOpen ? "hide" : "open"} settings (${settingsKey()})`
               : `${props.settingsOpen ? "Hide" : "Open"} settings (${settingsKey()})`
           }
         >

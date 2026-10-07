@@ -2267,6 +2267,136 @@ body.resizing-sidebar .xterm {
   color: var(--danger);
 }
 
+/* The dialog after automatic plugin updates (PluginsUpdatedDialog): which
+   plugins moved, from which version to which. */
+.plugins-updated-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  padding-top: 16vh;
+  background: rgba(0, 0, 0, 0.25);
+}
+
+.plugins-updated {
+  width: min(380px, calc(100vw - 32px));
+  padding: 14px 16px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-chrome);
+  color: var(--fg);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.4);
+}
+
+.plugins-updated-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--accent);
+}
+
+.plugins-updated-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.plugins-updated-list {
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plugins-updated-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  font-size: 12px;
+}
+
+.plugins-updated-item + .plugins-updated-item {
+  border-top: 1px solid var(--border);
+}
+
+.plugins-updated-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plugins-updated-versions {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex-shrink: 0;
+  color: var(--fg-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.plugins-updated-to {
+  color: var(--fg);
+}
+
+.plugins-updated-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+.plugins-updated-ok {
+  flex: 0 0 auto;
+  padding: 5px 16px;
+}
+
+/* A newer release of an added plugin: what it is and the button that moves to
+   it, under the plugin's source line. */
+.plugins-settings-update {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.plugins-settings-update-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.plugins-settings-update-button {
+  flex-shrink: 0;
+  padding: 3px 10px;
+}
+
+.plugins-settings-updated {
+  margin: 4px 0 0;
+}
+
+.plugins-settings-check {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-top: 12px;
+  font-size: 11px;
+}
+
+.plugins-settings-up-to-date {
+  color: var(--fg-muted);
+}
+
+.plugins-settings-auto {
+  margin-top: 10px;
+}
+
 .plugins-settings-add {
   display: flex;
   flex-direction: column;

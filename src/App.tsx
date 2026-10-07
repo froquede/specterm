@@ -38,7 +38,14 @@ import {
 } from "./stores/attention";
 import { initTheme, importBase16Theme } from "./stores/theme";
 import { initUpdater } from "./stores/updater";
-import { closeOverlay, findPluginView, initPlugins, openOverlay } from "./stores/plugins";
+import {
+  closeOverlay,
+  findPluginOverlay,
+  findPluginView,
+  initPlugins,
+  openOverlay,
+  pluginsAutoUpdated,
+} from "./stores/plugins";
 import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
@@ -62,6 +69,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 // *load* lazily too, which is the half that was actually costing anything.
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PluginView = lazy(() => import("./components/PluginView"));
+const PluginsUpdatedDialog = lazy(() => import("./components/PluginsUpdatedDialog"));
 import type { PaneId, PluginViewKey } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
@@ -101,6 +109,16 @@ export default function App() {
     const view = store.state.sidebarView;
     if (view?.startsWith("plugin:") && !findPluginView(view)) store.closeSidebar();
   });
+
+  // An open plugin view is keyed on its plugin's version as well as on the
+  // view, so updating the plugin remounts it with the new panel module (whose
+  // URL carries the version). A string, so the keyed Show only remounts when
+  // one of the two changes.
+  const versioned = (key: PluginViewKey | null) => {
+    const plugin = key && (findPluginView(key)?.plugin ?? findPluginOverlay(key)?.plugin);
+    return plugin ? `${plugin.version}\n${key}` : null;
+  };
+  const viewKeyOf = (instance: string) => instance.slice(instance.indexOf("\n") + 1) as PluginViewKey;
 
   function closePluginOverlay() {
     closeOverlay();
@@ -747,10 +765,15 @@ export default function App() {
           see TitleStrip, which decides for itself and renders nothing
           otherwise. */}
       <TitleStrip />
-      <Show when={openOverlay()} keyed>
-        {(key) => (
+      <Show when={pluginsAutoUpdated()}>
+        <Suspense>
+          <PluginsUpdatedDialog />
+        </Suspense>
+      </Show>
+      <Show when={versioned(openOverlay())} keyed>
+        {(instance) => (
           <Suspense>
-            <PluginView viewKey={key} overlay onClose={closePluginOverlay} />
+            <PluginView viewKey={viewKeyOf(instance)} overlay onClose={closePluginOverlay} />
           </Suspense>
         )}
       </Show>
@@ -807,11 +830,11 @@ export default function App() {
             />
           </Suspense>
         </Show>
-        <Show when={openPluginView()} keyed>
-          {(key) => (
+        <Show when={versioned(openPluginView())} keyed>
+          {(instance) => (
             <Suspense>
               <PluginView
-                viewKey={key}
+                viewKey={viewKeyOf(instance)}
                 onClose={() => {
                   store.closeSidebar();
                   focusActivePane();

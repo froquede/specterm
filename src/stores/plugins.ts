@@ -1,6 +1,7 @@
 import { createSignal } from "solid-js";
 import { getBackend, windowBoot } from "../backends";
 import type {
+  PluginAutoUpdated,
   PluginBadge,
   PluginContribution,
   PluginInfo,
@@ -623,6 +624,15 @@ export function initPlugins(opts: {
     );
     await backend.onPluginEvent(dispatchEvent);
     await backend.onPluginToast(showToast);
+    // Two background checks before the dialog is closed: one list, each
+    // plugin from where it was when the dialog opened to where it is now.
+    await backend.onPluginsAutoUpdated((updated) =>
+      setAutoUpdated((prev) => {
+        const byId = new Map((prev ?? []).map((u) => [u.id, u]));
+        for (const u of updated) byId.set(u.id, { ...u, from: byId.get(u.id)?.from ?? u.from });
+        return [...byId.values()];
+      })
+    );
     // Catch up on whatever was published before this window was listening:
     // discovery finishing, badges set before it existed. The answer is newer
     // than any event that reached us before it, and events after it are
@@ -655,4 +665,40 @@ export async function installPlugin(source: string): Promise<string> {
 export async function removePlugin(id: string): Promise<void> {
   const backend = await getBackend();
   setPluginList(await backend.pluginsRemove(id));
+}
+
+// An added plugin has a newer release waiting: the Settings button gets the
+// same dot an app update gives it. Every window hears the check's answer
+// through onPluginsChanged, whichever of them ran it.
+export const pluginUpdatesPending = () => (pluginList() ?? []).some((p) => p.update);
+
+// What the check installed by itself (automatic updates), if anything.
+export async function checkPluginUpdates(): Promise<PluginAutoUpdated[]> {
+  const backend = await getBackend();
+  const { plugins, updated } = await backend.pluginsCheckUpdates();
+  setPluginList(plugins);
+  return updated;
+}
+
+export async function loadPluginAutoUpdate(): Promise<boolean> {
+  return (await getBackend()).pluginsAutoUpdate();
+}
+
+export async function setPluginAutoUpdate(on: boolean): Promise<boolean> {
+  return (await getBackend()).pluginsSetAutoUpdate(on);
+}
+
+// What a background check updated, until the dialog that lists it is closed.
+// Only one window is told (the focused one), so only one dialog opens.
+const [autoUpdated, setAutoUpdated] = createSignal<readonly PluginAutoUpdated[] | null>(null);
+export { autoUpdated as pluginsAutoUpdated };
+export const dismissPluginsAutoUpdated = () => setAutoUpdated(null);
+
+// The version it moved to. Its views reload by themselves: App keys them on
+// the plugin's version.
+export async function updatePlugin(id: string): Promise<string> {
+  const backend = await getBackend();
+  const { version, plugins } = await backend.pluginsUpdate(id);
+  setPluginList(plugins);
+  return version;
 }

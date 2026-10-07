@@ -226,7 +226,10 @@ writePlugin("newer", {
 
 const launch = () =>
   electron.launch(
-    launchOptions(root, userDataDir, { env: { HOME: fakeHome, USERPROFILE: fakeHome } })
+    launchOptions(root, userDataDir, {
+      // The background update check is run on cue below, never by its timer.
+      env: { HOME: fakeHome, USERPROFILE: fakeHome, SPECTERM_PLUGIN_UPDATE_DELAY_MS: "3600000" },
+    })
   );
 
 async function quit(app) {
@@ -592,6 +595,137 @@ try {
   await win.locator(".plugins-settings-add").scrollIntoViewIfNeeded();
   await win.screenshot({ path: path.join(root, "test", "shot-plugins-add.png") });
   await addInput.fill("");
+
+  // 13. Updates, automatic by default: a minor release is installed without a
+  //     restart (its host starts on the new code, an open view remounts with
+  //     the new panel) and a background check says so in a dialog. A new major
+  //     waits for the user, and one that fails to start is rolled back.
+  const greetGit = (...args) => execFileSync("git", args, { cwd: greetRepo, stdio: "pipe" });
+  const release = (version, files) => {
+    for (const [rel, body] of Object.entries(files)) {
+      fs.writeFileSync(path.join(greetRepo, "apps", "greet", rel), typeof body === "string" ? body : JSON.stringify(body, null, 2));
+    }
+    greetGit("add", ".");
+    greetGit("commit", "-qm", `greet ${version}`);
+    greetGit("tag", `greet-v${version}`);
+  };
+  const greetRelease = (version, host) => ({
+    "panel.js": `export function mount(el) { el.textContent = "greetings ${version}"; return () => {}; }`,
+    "host.cjs": host,
+    "specterm-plugin.json": {
+      id: "greet",
+      name: "Greet",
+      version,
+      engines: { specterm: "^1.1" },
+      host: "host.cjs",
+      panel: "panel.js",
+      sidebarViews: [{ id: "main", title: "Greet", icon: "bell" }],
+      tabBarButton: { view: "main", icon: "bell", title: "Greet" },
+    },
+  });
+  const greetInfo = async () =>
+    (await win.evaluate(() => window.specterm.pluginsState())).plugins.find((p) => p.id === "greet");
+  release("1.2.0", greetRelease("1.2.0", "exports.activate = () => {};"));
+
+  // Automatic updates are on by default: the button's check installs a
+  // minor release by itself and says so next to the plugin.
+  const checkButton = win.locator(".plugins-settings-check-button");
+  const autoSwitch = win.locator("#plugins-settings-auto-update");
+  check("an added plugin gets a button to check for updates", (await checkButton.count()) === 1);
+  check("automatic updates are on by default", await autoSwitch.isChecked());
+  await checkButton.click();
+  check(
+    "a check installs a newer minor release by itself",
+    await until("1.2.0 installed", async () =>
+      ((await greetItem.locator(".plugins-settings-version").textContent().catch(() => "")) ?? "").trim() === "1.2.0"
+    , { timeout: 30000 })
+  );
+  check(
+    "and says so next to the plugin",
+    /Updated to 1\.2\.0/.test((await greetItem.locator(".plugins-settings-updated").textContent().catch(() => "")) ?? "")
+  );
+  check("a check from Settings opens no dialog", (await win.locator(".plugins-updated").count()) === 0);
+  check("its new host module is running, with no restart", (await greetInfo())?.running === true);
+  const updateButton = greetItem.locator(".plugins-settings-update-button");
+  check("nothing is left on offer", (await updateButton.count()) === 0 && (await win.locator(".tab-settings .tab-icon-badge").count()) === 0);
+  const updatedRecord = JSON.parse(fs.readFileSync(path.join(userDataDir, "plugins.json"), "utf-8")).installed?.greet;
+  check(
+    "the record points at the new tag",
+    updatedRecord?.ref === "greet-v1.2.0" && updatedRecord?.source === greetUrl && updatedRecord?.commit !== record?.commit,
+    JSON.stringify(updatedRecord)
+  );
+  check(
+    "nothing is left of the update's staging",
+    fs.readdirSync(pluginsDir).every((n) => !n.startsWith(".update-")),
+    fs.readdirSync(pluginsDir).join(",")
+  );
+
+  // A background check (launch, every 6 hours) updates an open view in place
+  // and then says what moved, in one dialog.
+  release("1.3.0", greetRelease("1.3.0", "exports.activate = () => {};"));
+  await win.locator(".tab-settings").click(); // close settings
+  await win.locator('.tab-plugin[data-plugin="greet"]').click();
+  const greetView = win.locator('.plugin-view[data-plugin="greet"]');
+  check("the view shows the installed release", await until("view 1.2.0", async () => ((await greetView.textContent().catch(() => "")) ?? "").includes("greetings 1.2.0")));
+  await win.evaluate(() => window.specterm.pluginsCheckUpdatesBackground());
+  check(
+    "an open view reloads with the new panel",
+    await until("view 1.3.0", async () => ((await greetView.textContent().catch(() => "")) ?? "").includes("greetings 1.3.0"))
+  );
+  const dialog = win.locator(".plugins-updated");
+  check("a dialog says some plugins were updated", await until("dialog", () => dialog.isVisible()));
+  const dialogText = (await dialog.textContent()) ?? "";
+  check(
+    "and lists each one with its versions",
+    dialogText.includes("Some plugins updated to a new version") &&
+      (await dialog.locator('.plugins-updated-item[data-plugin="greet"]').count()) === 1 &&
+      /Greet.*1\.2\.0.*1\.3\.0/.test(dialogText),
+    dialogText
+  );
+  await win.screenshot({ path: path.join(root, "test", "shot-plugins-updated-dialog.png") });
+  await dialog.locator(".plugins-updated-ok").click();
+  check("OK closes it", await until("dialog closed", async () => (await dialog.count()) === 0));
+
+  // A new major waits to be asked for; this one fails to start, so the
+  // previous copy comes back.
+  release("2.0.0", greetRelease("2.0.0", `exports.activate = () => { throw new Error("broken release"); };`));
+  await win.locator(".tab-settings").click();
+  await checkButton.click();
+  check(
+    "a new major version is offered, not installed",
+    await until("2.0.0 offered", async () => ((await updateButton.textContent().catch(() => "")) ?? "").includes("2.0.0"), { timeout: 30000 }) &&
+      ((await greetItem.locator(".plugins-settings-version").textContent()) ?? "").trim() === "1.3.0"
+  );
+  check("and the Settings button gets a dot", (await win.locator(".tab-settings .tab-icon-badge").count()) === 1);
+  await updateButton.click();
+  check(
+    "a release that fails to start is rolled back, with the reason",
+    await until("rolled back", async () => /did not start .*broken release.*1\.3\.0 was kept/.test((await greetItem.locator(".settings-error").textContent().catch(() => "")) ?? ""), { timeout: 30000 }),
+    (await greetItem.locator(".settings-error").textContent().catch(() => "")) ?? ""
+  );
+  check(
+    "and the previous release runs again",
+    ((await greetItem.locator(".plugins-settings-version").textContent()) ?? "").trim() === "1.3.0" &&
+      (await greetInfo())?.running === true &&
+      JSON.parse(fs.readFileSync(path.join(greetDir, "specterm-plugin.json"), "utf-8")).version === "1.3.0"
+  );
+  await greetItem.scrollIntoViewIfNeeded();
+  await win.screenshot({ path: path.join(root, "test", "shot-plugins-update.png") });
+
+  // Off, a minor release is offered rather than installed. It comes before
+  // the new major, which is offered once it is in.
+  await autoSwitch.click();
+  check(
+    "turning automatic updates off is remembered",
+    await until("saved", () => JSON.parse(fs.readFileSync(path.join(userDataDir, "plugins.json"), "utf-8")).autoUpdate === false)
+  );
+  release("1.3.1", greetRelease("1.3.1", "exports.activate = () => {};"));
+  await checkButton.click();
+  check(
+    "with them off, a minor release is offered, ahead of the new major",
+    await until("1.3.1 offered", async () => ((await updateButton.textContent().catch(() => "")) ?? "").includes("1.3.1"), { timeout: 30000 }) &&
+      ((await greetItem.locator(".plugins-settings-version").textContent()) ?? "").trim() === "1.3.0"
+  );
 
   await greetItem.locator(".plugins-settings-remove").click();
   await greetItem.locator(".plugins-settings-remove-confirm").click();

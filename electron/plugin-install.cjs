@@ -119,20 +119,58 @@ function gitMessage(stderr) {
   return `git: ${text}`;
 }
 
-// The newest release tag for a plugin at `subdir`, or null.
-async function newestTag(url, subdir) {
-  const prefix = subdir ? `${path.posix.basename(subdir)}-v` : "v";
+// A plugin's release tags carry a prefix: `v` at the repo's root,
+// `<folder>-v` for one in a subfolder.
+const tagPrefix = (subdir) => (subdir ? `${path.posix.basename(subdir)}-v` : "v");
+
+// The version a release tag names, as [major, minor, patch], or null for any
+// other tag. Pre-releases are null too: they are installed only by asking.
+function releaseVersion(tag, subdir) {
+  const prefix = tagPrefix(subdir);
+  if (typeof tag !== "string" || !tag.startsWith(prefix)) return null;
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(tag.slice(prefix.length));
+  return m ? m.slice(1).map(Number) : null;
+}
+
+// Every tag in the repo, as git ls-remote lists them. The update check asks
+// once per repo, however many plugins live in it.
+async function remoteTags(url) {
   const out = await git(["ls-remote", "--tags", "--refs", "--", url]);
+  return out
+    .split("\n")
+    .map((line) => line.split("\trefs/tags/")[1]?.trim())
+    .filter(Boolean);
+}
+
+// The newest release tag for a plugin at `subdir` among `tags`, as
+// { tag, version: "1.2.3" }, or null. With `major`, only that major's.
+function newestRelease(tags, subdir, major = null) {
   let best = null;
-  for (const line of out.split("\n")) {
-    const tag = line.split("\trefs/tags/")[1]?.trim();
-    if (!tag?.startsWith(prefix)) continue;
-    const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(tag.slice(prefix.length));
-    if (!m) continue; // pre-releases are installed only by asking for them
-    const v = m.slice(1).map(Number);
-    if (!best || newer(v, best.v)) best = { tag, v };
+  for (const tag of tags) {
+    const v = releaseVersion(tag, subdir);
+    if (v && (major === null || v[0] === major) && (!best || newer(v, best.v))) best = { tag, v };
   }
-  return best?.tag ?? null;
+  return best && { tag: best.tag, version: best.v.join(".") };
+}
+
+async function newestTag(url, subdir) {
+  return newestRelease(await remoteTags(url), subdir)?.tag ?? null;
+}
+
+// The commit a branch or tag (or, with no ref, the default branch) is at now.
+async function remoteCommit(url, ref) {
+  const out = await git(["ls-remote", "--", url, ref ?? "HEAD"]);
+  const lines = out
+    .split("\n")
+    .map((l) => l.trim().split("\t"))
+    .filter((l) => l.length === 2);
+  // A name can match a branch and a tag; the branch wins, as in `git clone
+  // --branch`. An annotated tag's peeled line (^{}) is its commit.
+  const pick =
+    lines.find(([, name]) => name === `refs/heads/${ref}`) ??
+    lines.find(([, name]) => name === `refs/tags/${ref}^{}`) ??
+    lines[0];
+  return pick?.[0] ?? null;
 }
 
 function newer(a, b) {
@@ -157,4 +195,13 @@ async function fetchSource(source, dest) {
   return { dir, ref, commit };
 }
 
-module.exports = { parseSource, describeSource, fetchSource };
+module.exports = {
+  parseSource,
+  describeSource,
+  fetchSource,
+  releaseVersion,
+  remoteTags,
+  newestRelease,
+  remoteCommit,
+  newer,
+};

@@ -12,6 +12,9 @@ import type {
   PluginBadge,
   PluginInfo,
   PluginInstallResult,
+  PluginUpdateResult,
+  PluginAutoUpdated,
+  PluginCheckResult,
   PluginsChanged,
   PluginsState,
   PluginToast,
@@ -103,6 +106,11 @@ interface SpectermAPI {
   pluginsSetEnabled(id: string, enabled: boolean): Promise<PluginInfo[]>;
   pluginsInstall(source: string): Promise<PluginInstallResult>;
   pluginsRemove(id: string): Promise<PluginInfo[]>;
+  pluginsCheckUpdates(): Promise<PluginCheckResult>;
+  pluginsUpdate(id: string): Promise<PluginUpdateResult>;
+  pluginsAutoUpdate(): Promise<boolean>;
+  pluginsSetAutoUpdate(on: boolean): Promise<boolean>;
+  onPluginsAutoUpdated(cb: (updated: PluginAutoUpdated[]) => void): () => void;
   pluginsState(): Promise<PluginsState>;
   pluginInvoke(id: string, method: string, args: unknown[]): Promise<unknown>;
   onPluginEvent(cb: (id: string, event: string, payload: unknown) => void): () => void;
@@ -438,6 +446,26 @@ export class ElectronBackend implements Backend {
 
   async pluginsRemove(id: string): Promise<PluginInfo[]> {
     return this.api.pluginsRemove(id);
+  }
+
+  async pluginsCheckUpdates(): Promise<PluginCheckResult> {
+    return this.api.pluginsCheckUpdates();
+  }
+
+  async pluginsAutoUpdate(): Promise<boolean> {
+    return this.api.pluginsAutoUpdate();
+  }
+
+  async pluginsSetAutoUpdate(on: boolean): Promise<boolean> {
+    return this.api.pluginsSetAutoUpdate(on);
+  }
+
+  async onPluginsAutoUpdated(cb: (updated: PluginAutoUpdated[]) => void): Promise<UnlistenFn> {
+    return this.api.onPluginsAutoUpdated(cb);
+  }
+
+  async pluginsUpdate(id: string): Promise<PluginUpdateResult> {
+    return this.api.pluginsUpdate(id);
   }
 
   async pluginsState(): Promise<PluginsState> {

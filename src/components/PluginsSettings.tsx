@@ -1,11 +1,15 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import type { PluginInfo } from "../backends/types";
 import {
+  checkPluginUpdates,
   installPlugin,
+  loadPluginAutoUpdate,
   loadPluginList,
   pluginList,
   removePlugin,
+  setPluginAutoUpdate,
   setPluginEnabled,
+  updatePlugin,
 } from "../stores/plugins";
 
 const message = (err: unknown) => (err instanceof Error ? err.message : String(err)).replace(
@@ -14,8 +18,8 @@ const message = (err: unknown) => (err instanceof Error ? err.message : String(e
   ""
 );
 
-// Settings > Plugins: what is installed, the switch for each, and the field
-// that adds one from its git URL.
+// Settings > Plugins: what is installed, the switch for each, the field that
+// adds one from its git URL, and the updates for the ones added that way.
 //
 // Built-in plugins ship with the app and are on by default; external ones are
 // everyone else's code, so they are listed apart and the hint under them says
@@ -31,10 +35,56 @@ export default function PluginsSettings() {
   const [installError, setInstallError] = createSignal<string | null>(null);
   const [added, setAdded] = createSignal<string | null>(null);
 
-  onMount(() => void loadPluginList());
+  const [checking, setChecking] = createSignal(false);
+  // Set by a check from the button that found nothing, until the next one.
+  const [upToDate, setUpToDate] = createSignal(false);
+  const [updating, setUpdating] = createSignal<string | null>(null);
+  // id -> the version it moved to, from the button or the check above.
+  const [updated, setUpdated] = createSignal<Record<string, string>>({});
+  const [autoUpdate, setAutoUpdate] = createSignal(true);
+
+  onMount(() => {
+    void loadPluginList();
+    void loadPluginAutoUpdate().then(setAutoUpdate);
+  });
 
   const builtIn = () => (pluginList() ?? []).filter((p) => p.builtIn);
   const external = () => (pluginList() ?? []).filter((p) => !p.builtIn);
+  const updatable = () => external().some((p) => p.installed);
+
+  async function checkUpdates() {
+    setChecking(true);
+    setUpToDate(false);
+    setUpdated({});
+    setFailure(null);
+    try {
+      const installed = await checkPluginUpdates();
+      setUpdated(Object.fromEntries(installed.map((u) => [u.id, u.to])));
+      setUpToDate(installed.length === 0 && !external().some((p) => p.update || p.updateError));
+    } catch (err) {
+      // Per-plugin failures come back in the list; this is the call itself.
+      console.error("[plugins] update check failed:", message(err));
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  async function update(id: string) {
+    setBusy(id);
+    setUpdating(id);
+    setFailure(null);
+    setUpdated({});
+    setUpToDate(false);
+    try {
+      const version = await updatePlugin(id);
+      setUpdated({ [id]: version });
+    } catch (err) {
+      setFailure({ id, message: message(err) });
+    } finally {
+      setUpdating(null);
+      setBusy(null);
+    }
+  }
 
   async function toggle(id: string, enabled: boolean) {
     setBusy(id);
@@ -137,7 +187,35 @@ export default function PluginsSettings() {
             </div>
           )}
         </Show>
-        <Show when={plugin().error ?? (failure()?.id === plugin().id ? failure()!.message : null)}>
+        <Show when={plugin().update}>
+          {(next) => (
+            <div class="plugins-settings-update">
+              <span class="plugins-settings-update-text">
+                {next().version} is available
+              </span>
+              <button
+                type="button"
+                class="settings-action plugins-settings-update-button"
+                disabled={busy() !== null}
+                onClick={() => void update(plugin().id)}
+              >
+                {updating() === plugin().id ? "Updating…" : `Update to ${next().version}`}
+              </button>
+            </div>
+          )}
+        </Show>
+        <Show when={updated()[plugin().id]}>
+          {(version) => (
+            <p class="settings-hint plugins-settings-updated">Updated to {version()} and reloaded.</p>
+          )}
+        </Show>
+        <Show
+          when={
+            plugin().error ??
+            (failure()?.id === plugin().id ? failure()!.message : null) ??
+            plugin().updateError
+          }
+        >
           {(text) => <div class="settings-error">{text()}</div>}
         </Show>
       </div>
@@ -161,6 +239,43 @@ export default function PluginsSettings() {
           fallback={<p class="settings-hint plugins-settings-empty">No external plugins yet.</p>}
         >
           <For each={external()}>{(plugin) => <Item plugin={plugin} />}</For>
+        </Show>
+
+        <Show when={updatable()}>
+          <div class="plugins-settings-check">
+            <button
+              type="button"
+              class="settings-reset plugins-settings-check-button"
+              disabled={checking() || busy() !== null}
+              onClick={() => void checkUpdates()}
+            >
+              {checking() ? "Checking…" : "Check for updates"}
+            </button>
+            <Show when={upToDate()}>
+              <span class="plugins-settings-up-to-date">All up to date</span>
+            </Show>
+          </div>
+          <div class="settings-row plugins-settings-auto">
+            <label class="settings-label" for="plugins-settings-auto-update">
+              Update automatically
+            </label>
+            <input
+              id="plugins-settings-auto-update"
+              type="checkbox"
+              class="settings-checkbox"
+              checked={autoUpdate()}
+              onChange={(e) => {
+                const on = e.currentTarget.checked;
+                setAutoUpdate(on);
+                void setPluginAutoUpdate(on).then(setAutoUpdate);
+              }}
+            />
+          </div>
+          <p class="settings-hint">
+            New minor and patch releases install by themselves, at launch and every 6 hours, and
+            a dialog says which. A new major version waits for you. Anyone who can tag a release
+            in a plugin's repository can then run new code here.
+          </p>
         </Show>
 
         <form class="plugins-settings-add" onSubmit={(e) => void add(e)}>

@@ -334,6 +334,11 @@ contextBridge.exposeInMainWorld("specterm", {
   pluginsSetEnabled: (id, enabled) => ipcRenderer.invoke("plugins:set-enabled", id, enabled),
   pluginsInstall: (source) => ipcRenderer.invoke("plugins:install", source),
   pluginsRemove: (id) => ipcRenderer.invoke("plugins:remove", id),
+  pluginsCheckUpdates: () => ipcRenderer.invoke("plugins:check-updates"),
+  pluginsUpdate: (id) => ipcRenderer.invoke("plugins:update", id),
+  pluginsAutoUpdate: () => ipcRenderer.invoke("plugins:auto-update"),
+  pluginsSetAutoUpdate: (on) => ipcRenderer.invoke("plugins:set-auto-update", on),
+  pluginsCheckUpdatesBackground: () => ipcRenderer.invoke("plugins:check-updates-background"),
   pluginsState: () => ipcRenderer.invoke("plugins:state"),
   pluginInvoke: (id, method, args) => ipcRenderer.invoke("plugins:invoke", id, method, args),
   onPluginEvent: (cb) => {
@@ -355,5 +360,10 @@ contextBridge.exposeInMainWorld("specterm", {
     const handler = (_event, payload) => cb(payload);
     ipcRenderer.on("plugins:changed", handler);
     return () => ipcRenderer.removeListener("plugins:changed", handler);
+  },
+  onPluginsAutoUpdated: (cb) => {
+    const handler = (_event, updated) => cb(updated);
+    ipcRenderer.on("plugins:auto-updated", handler);
+    return () => ipcRenderer.removeListener("plugins:auto-updated", handler);
   },
 });

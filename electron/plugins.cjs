@@ -23,7 +23,16 @@
 
 const fs = require("fs");
 const path = require("path");
-const { parseSource, describeSource, fetchSource } = require("./plugin-install.cjs");
+const {
+  parseSource,
+  describeSource,
+  fetchSource,
+  releaseVersion,
+  remoteTags,
+  newestRelease,
+  remoteCommit,
+  newer,
+} = require("./plugin-install.cjs");
 
 // The plugin API version this build implements. A manifest asks for one with a
 // caret range, `engines.specterm: "^1.1"`: same major, and a minor no newer than
@@ -51,6 +60,11 @@ const MAX_COMMANDS = 16;
 // rejected promise, not a hung panel.
 const INVOKE_TIMEOUT_MS = 30_000;
 const LIFECYCLE_TIMEOUT_MS = 10_000;
+
+// The update check for plugins added from Settings: a minute after start (never
+// on the boot path), then every 6 hours. The env var is for the tests.
+const UPDATE_FIRST_CHECK_MS = Number(process.env.SPECTERM_PLUGIN_UPDATE_DELAY_MS) || 60_000;
+const UPDATE_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // Must run before `app` is ready: Chromium fixes the privileged schemes at
 // startup. `standard` + `secure` lets a panel be imported as an ES module from
@@ -282,7 +296,8 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   // plugin added from Settings came from (`{ source, ref, commit, installedAt }`),
   // which is also what makes it removable from there: a folder put in place by
   // hand is the user's, never deleted by us. `contributions` is the external
-  // half of the next launch's boot answer.
+  // half of the next launch's boot answer. `autoUpdate: false` is there only
+  // when the user turned automatic plugin updates off.
   let state = null;
 
   // Built-in plugins: the same contract, shipped inside the app and on by
@@ -299,6 +314,11 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
   const hostErrors = new Map();
   const badges = new Map();
   let discoveredOnce = false;
+  // What the last update check found, in memory only: the next launch checks
+  // again. id -> { ref, version, auto }, and id -> why the check (or the
+  // automatic update) failed.
+  const updates = new Map();
+  const updateErrors = new Map();
 
   // Read once, synchronously, the first time a window's boot flags are built.
   // One small file, and only the first window pays for it.
@@ -312,6 +332,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         disabled: map(parsed?.disabled),
         installed: map(parsed?.installed),
         contributions: Array.isArray(parsed?.contributions) ? parsed.contributions : [],
+        ...(parsed?.autoUpdate === false ? { autoUpdate: false } : {}),
       };
     } catch (_) {
       state = { enabled: {}, disabled: {}, installed: {}, contributions: [] };
@@ -395,6 +416,8 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         running: hostStatus.get(p.id) === "active",
         error: p.error ?? hostErrors.get(p.id) ?? null,
         installed: (!p.builtIn && installed[p.id]) || null,
+        update: updates.get(p.id) ?? null,
+        updateError: updateErrors.get(p.id) ?? null,
       }))
       .sort((a, b) => a.id.localeCompare(b.id));
   }
@@ -819,13 +842,231 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     const stat = await fs.promises.lstat(p.dir).catch(() => null);
     if (stat?.isSymbolicLink()) await fs.promises.unlink(p.dir);
     else if (stat) await fs.promises.rm(p.dir, { recursive: true, force: true, maxRetries: 3 });
+    updates.delete(id);
+    updateErrors.delete(id);
     await discover();
     publish();
     return list();
   }
 
+  // --- updates ----------------------------------------------------------------
+
+  // What is newer than the installed copy, or null. A plugin that follows
+  // releases (installed at a release tag, or from a repo that had none yet) is
+  // offered the newest release tag above it; one pinned to a branch or to some
+  // other tag is offered that ref again once it has moved to another commit.
+  //
+  // `auto`: whether automatic updates may install it without asking. Only a
+  // minor or patch release of the major version installed: a new major can
+  // change what the plugin does or what it reaches, and a branch is not a
+  // release anyone signed off on. When both exist, the same-major release
+  // comes first; the new major is offered on the check after it.
+  async function findUpdate(record, tagsOf) {
+    const source = parseSource(record.source);
+    const installed = releaseVersion(record.ref, source.subdir);
+    if (installed || !record.ref) {
+      const tags = await tagsOf(source.url);
+      const isNewer = (release) =>
+        release && (!installed || newer(releaseVersion(release.tag, source.subdir), installed));
+      const sameMajor = installed && newestRelease(tags, source.subdir, installed[0]);
+      if (isNewer(sameMajor)) return { ref: sameMajor.tag, version: sameMajor.version, auto: true };
+      const latest = newestRelease(tags, source.subdir);
+      if (isNewer(latest)) return { ref: latest.tag, version: latest.version, auto: false };
+      if (installed) return null;
+    }
+    const commit = await remoteCommit(source.url, record.ref);
+    return commit && commit !== record.commit ? { ref: record.ref, version: commit.slice(0, 7), auto: false } : null;
+  }
+
+  // Automatic updates are on unless turned off in Settings; like the other
+  // switches, only the difference from the default is stored.
+  const autoUpdates = () => loadState().autoUpdate !== false;
+
+  // The window that tells the user what was updated in the background: the
+  // focused one, else the first. One dialog, not one per window.
+  function announce(updated) {
+    const windows = openWindows();
+    const target = windows.find((w) => w.isFocused()) ?? windows[0];
+    target?.webContents.send("plugins:auto-updated", updated);
+  }
+
+  // Asks every repo a plugin was added from what it has now: one ls-remote per
+  // repo, however many plugins live in it, and never a prompt (see git() in
+  // plugin-install.cjs). A failure is kept per plugin and shown in Settings.
+  // Queued with installs and updates, so it never reads a record mid-change.
+  //
+  // With automatic updates on, what may be installed without asking is
+  // installed right away. `announce`: a check nobody is watching (at launch,
+  // every 6 hours) shows a dialog with what moved; the one from Settings shows
+  // it inline instead.
+  let checking = null;
+  function checkUpdates({ announce: shouldAnnounce = false } = {}) {
+    checking ??= serial(async () => {
+      const s = loadState();
+      const tags = new Map();
+      const tagsOf = (url) => {
+        if (!tags.has(url)) tags.set(url, remoteTags(url));
+        return tags.get(url);
+      };
+      const targets = [...discovered.values()].filter((p) => !p.builtIn && s.installed[p.id]);
+      await Promise.all(
+        targets.map(async (p) => {
+          try {
+            const offer = await findUpdate(s.installed[p.id], tagsOf);
+            if (offer) updates.set(p.id, offer);
+            else updates.delete(p.id);
+            updateErrors.delete(p.id);
+          } catch (err) {
+            updateErrors.set(p.id, `could not check for updates: ${err.message}`);
+          }
+        })
+      );
+      const updated = [];
+      if (autoUpdates()) {
+        for (const [id, offer] of [...updates]) {
+          if (!offer.auto) continue;
+          const p = discovered.get(id);
+          const from = p?.manifest?.version ?? null;
+          try {
+            const { version } = await applyUpdate(id);
+            updated.push({ id, name: discovered.get(id)?.manifest?.name ?? id, from, to: version });
+          } catch (err) {
+            // Still offered, with the reason: the button in Settings retries.
+            updateErrors.set(id, err.message);
+          }
+        }
+      }
+      publish();
+      if (shouldAnnounce && updated.length) announce(updated);
+      return { plugins: list(), updated };
+    }).finally(() => {
+      checking = null;
+    });
+    return checking;
+  }
+
+  // Windows refuses a rename for a moment while something (an antivirus, the
+  // indexer) still has a file in the folder open.
+  async function move(from, to) {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await fs.promises.rename(from, to);
+      } catch (err) {
+        if (attempt >= 5 || !["EPERM", "EBUSY", "EACCES"].includes(err.code)) throw err;
+        await new Promise((r) => setTimeout(r, 100 * attempt));
+      }
+    }
+  }
+
+  // Moves an added plugin to what the last check offered, without a restart.
+  // The release is fetched and its manifest validated before anything running
+  // is touched; then the plugin is turned off, the folders are swapped and it
+  // is turned on again. If the new copy fails to start, the old one goes back
+  // and the error says so. Open views reload, because their URLs carry the
+  // version (see contributionOf). Not queued itself: the IPC handler and the
+  // check, which already runs in the queue, call it.
+  async function applyUpdate(id) {
+    const s = loadState();
+    const p = discovered.get(id);
+    const record = s.installed[id];
+    if (!p || p.builtIn || !record) throw new Error(`"${id}" was not added from Settings, so it is not updated from here`);
+    const offer = updates.get(id);
+    if (!offer) throw new Error("no update to install; check for updates first");
+    const source = parseSource(record.source);
+    const staging = await fs.promises.mkdtemp(path.join(pluginsDir, ".update-"));
+    try {
+      const fetched = await fetchSource({ ...source, ref: offer.ref }, path.join(staging, "clone"));
+      const ready = path.join(staging, "ready", id);
+      await fs.promises.mkdir(path.dirname(ready));
+      await move(fetched.dir, ready);
+      await fs.promises.rm(path.join(ready, ".git"), { recursive: true, force: true, maxRetries: 3 });
+      let manifest;
+      try {
+        manifest = parseManifest(ready, await fs.promises.readFile(path.join(ready, MANIFEST), "utf-8"));
+      } catch (err) {
+        throw new Error(`${offer.version} cannot be installed: ${err.code === "ENOENT" ? `no ${MANIFEST}` : err.message}`);
+      }
+
+      // A view-activated plugin whose view was in use starts again now, so a
+      // new copy that cannot start is caught here rather than in its panel.
+      const wasRunning = hostStatus.get(id) === "active";
+      const restart = async (plugin) => {
+        if (!plugin?.manifest || !isEnabled(id)) return;
+        if (plugin.manifest.activation === "startup" || wasRunning) await activate(plugin);
+      };
+      const previous = path.join(staging, "previous");
+      await deactivate(id);
+      try {
+        await move(p.dir, previous);
+      } catch (err) {
+        await restart(p);
+        throw new Error(`could not move the installed copy aside: ${err.message}`);
+      }
+      try {
+        await move(ready, p.dir);
+      } catch (err) {
+        await move(previous, p.dir);
+        await restart(p);
+        throw new Error(`could not put ${offer.version} in place: ${err.message}`);
+      }
+      await discover();
+      await restart(discovered.get(id));
+
+      if (hostStatus.get(id) === "failed") {
+        const why = hostErrors.get(id);
+        await deactivate(id);
+        await move(p.dir, path.join(staging, "failed"));
+        await move(previous, p.dir);
+        await discover();
+        await restart(discovered.get(id));
+        publish();
+        throw new Error(`${offer.version} did not start (${why}), so ${p.manifest?.version ?? "the installed copy"} was kept`);
+      }
+
+      s.installed[id] = {
+        ...record,
+        // A source that named a tag now names the new one; one that follows
+        // the newest release, or a branch, reads as it did.
+        source: describeSource({ ...source, ref: source.ref === null ? null : offer.ref }),
+        ref: fetched.ref,
+        commit: fetched.commit,
+        updatedAt: new Date().toISOString(),
+      };
+      writeState();
+      updates.delete(id);
+      updateErrors.delete(id);
+      publish();
+      return { version: manifest.version, plugins: list() };
+    } finally {
+      await fs.promises.rm(staging, { recursive: true, force: true, maxRetries: 3 }).catch((err) =>
+        console.error("[plugins] could not clean up after an update:", err.message)
+      );
+    }
+  }
+
   ipcMain.handle("plugins:install", (_event, source) => serial(() => install(source)));
   ipcMain.handle("plugins:remove", (_event, id) => serial(() => remove(String(id))));
+  ipcMain.handle("plugins:check-updates", () => checkUpdates());
+  ipcMain.handle("plugins:update", (_event, id) => serial(() => applyUpdate(String(id))));
+  ipcMain.handle("plugins:auto-update", () => autoUpdates());
+  ipcMain.handle("plugins:set-auto-update", (_event, on) => {
+    const s = loadState();
+    if (on) delete s.autoUpdate;
+    else s.autoUpdate = false;
+    writeState();
+    return autoUpdates();
+  });
+  // For the tests: the check the timers run, dialog included.
+  ipcMain.handle("plugins:check-updates-background", () => checkUpdates({ announce: true }));
+
+  let updateTimers = [];
+  function scheduleUpdateChecks() {
+    const run = () => {
+      if (Object.keys(loadState().installed).length === 0) return;
+      checkUpdates({ announce: true }).catch((err) => console.error("[plugins] update check failed:", err.message));
+    };
+    updateTimers = [setTimeout(run, UPDATE_FIRST_CHECK_MS), setInterval(run, UPDATE_INTERVAL_MS)];
+  }
 
   function start() {
     return (started ??= discoverAndActivate());
@@ -841,6 +1082,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
         .map(activate)
     );
     publish();
+    scheduleUpdateChecks();
   }
 
   return {
@@ -849,6 +1091,7 @@ function createPlugins({ app, ipcMain, shell, protocol, utilityProcess, openWind
     start,
     // On quit: the host goes with the app, and nothing is waited on.
     stop() {
+      for (const timer of updateTimers) clearTimeout(timer);
       if (host) {
         const proc = host;
         host = null;
