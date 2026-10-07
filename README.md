@@ -72,6 +72,7 @@ later version doesn't take your setting with it.
 | Split — stacked | `⌘D` | `Ctrl+Shift+S` |
 | Split — side by side | `⌘⇧D` | `Ctrl+Shift+Enter` |
 | Focus pane left/right/up/down | `⌥`+arrow | `⌥`+arrow |
+| Focus next / previous pane (wraps) | `⇧`+scroll down / up | `Shift`+scroll down / up |
 | Go to a pane waiting on you | `⌘⇧U` | `Ctrl+Shift+U` |
 | Copy selection | `⌘C` | `Ctrl+Shift+C` |
 | Paste (image inline if the clipboard holds only an image) | `⌘⇧V` | `Ctrl+Shift+V` |

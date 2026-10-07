@@ -251,6 +251,22 @@ export function findPaneInDirection(
   return best?.id ?? null;
 }
 
+// The pane `step` places away from `activeId` in reading order (tree order:
+// left before right, top before bottom), wrapping past either end. Unlike
+// findPaneInDirection this always has an answer once there are two panes, so
+// stepping through it visits every pane in the tab. Null with a single pane or
+// an unknown id.
+export function stepPane(
+  root: SplitNode,
+  activeId: PaneId,
+  step: 1 | -1
+): PaneId | null {
+  const ids = collectLeaves(root).map((l) => l.id);
+  const idx = ids.indexOf(activeId);
+  if (idx === -1 || ids.length < 2) return null;
+  return ids[(idx + step + ids.length) % ids.length];
+}
+
 export type DropEdge = "left" | "right" | "top" | "bottom" | "center";
 
 /** The leaf node carrying `id`, or null if absent. */
