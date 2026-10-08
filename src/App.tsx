@@ -18,7 +18,13 @@ import {
   stopSessionProviders,
 } from "./lib/session-providers";
 import { getBackend, windowBoot } from "./backends";
-import { initKeybindings, registerBindings } from "./stores/keybindings";
+import { activeChords, initKeybindings, registerBindings } from "./stores/keybindings";
+import { chordStealsFromTerminal } from "./lib/chord";
+import {
+  disposeBrowsersExcept,
+  focusBrowser,
+  mountBrowserLayer,
+} from "./lib/browser-registry";
 import { createKeymap } from "./stores/keymap";
 import {
   initSettings,
@@ -201,7 +207,7 @@ export default function App() {
     const tab = store.activeTab;
     if (!tab) return null;
     const pane = findPane(tab.root, tab.activePaneId);
-    return pane && pane.kind !== "terminal" ? pane.filePath : null;
+    return pane && pane.kind !== "terminal" && pane.kind !== "browser" ? pane.filePath : null;
   });
 
   createEffect(() => {
@@ -422,6 +428,8 @@ export default function App() {
     const term = paneId ? getTerminalInstance(paneId) : undefined;
     if (term) {
       term.term.focus();
+    } else if (paneId && focusBrowser(paneId)) {
+      // A browser pane: the page has the keyboard now.
     } else if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -579,6 +587,43 @@ export default function App() {
         unlistenDetach = un;
       });
     onCleanup(() => unlistenDetach?.());
+
+    // A page in a browser pane asked for a new window (a target=_blank link,
+    // window.open): it opens as a browser tab, as a browser would.
+    let unlistenBrowserOpen: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) => backend.onBrowserOpen((url) => store.createBrowserTab(url)))
+      .then((un) => {
+        unlistenBrowserOpen = un;
+      });
+    onCleanup(() => unlistenBrowserOpen?.());
+
+    // A page has the keyboard, so the app's shortcuts never reach the window's
+    // own keydown listener. The host catches the chords the app answers to
+    // (sent below) before the page sees them and hands them over; replayed
+    // here, they go through the one dispatcher like any other keystroke.
+    let unlistenBrowserKey: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) =>
+        backend.onBrowserKey((k) =>
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: k.key,
+              code: k.code,
+              ctrlKey: k.ctrl,
+              shiftKey: k.shift,
+              altKey: k.alt,
+              metaKey: k.meta,
+              bubbles: true,
+              cancelable: true,
+            })
+          )
+        )
+      )
+      .then((un) => {
+        unlistenBrowserKey = un;
+      });
+    onCleanup(() => unlistenBrowserKey?.());
 
     // A tab torn off another window and dropped onto this one.
     let unlistenAdopt: UnlistenFn | undefined;
@@ -788,6 +833,27 @@ export default function App() {
     });
   });
 
+  // A browser pane's page outlives the pane's component (it has to survive
+  // tab switches), so it is destroyed here instead: when its pane is no longer
+  // in any tab of this window — closed, or moved to another window.
+  createEffect(() => {
+    const alive = new Set<PaneId>();
+    for (const tab of store.state.tabs) {
+      for (const leaf of collectLeaves(tab.root)) {
+        if (leaf.pane.kind === "browser") alive.add(leaf.id);
+      }
+    }
+    disposeBrowsersExcept(alive);
+  });
+
+  // The chords a page must not keep for itself: the app's own shortcuts, minus
+  // the bare keys and lone Ctrl+<key> a page uses as much as a shell does
+  // (Ctrl+C, Ctrl+F). Kept current as shortcuts are rebound.
+  createEffect(() => {
+    const chords = activeChords().filter((c) => !chordStealsFromTerminal(c));
+    void getBackend().then((backend) => backend.setBrowserChords(chords));
+  });
+
   return (
     // The chrome layout is expressed as data attributes and CSS variables; the
     // stylesheet reflows around them, so moving the tab bar to another corner or
@@ -918,6 +984,7 @@ export default function App() {
                 onTitle={(paneId, title) => store.updatePaneTitle(paneId, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenFile={handleOpenFile}
+                onBrowserNavigate={(paneId, url) => store.setBrowserUrl(paneId, url)}
               />
             )}
           </Show>
@@ -948,6 +1015,13 @@ export default function App() {
           </Show>
         </div>
       </div>
+      {/* The pages of every browser pane in this window, laid over their panes
+          (see lib/browser-registry.ts). */}
+      <div
+        class="browser-layer"
+        classList={{ "browser-layer-dragging": draggingPaneId() !== null }}
+        ref={(el) => onCleanup(mountBrowserLayer(el))}
+      />
     </div>
   );
 }

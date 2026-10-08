@@ -171,6 +171,15 @@ export function createKeymap({
       label: "New tab",
       run: () => store.createTab(),
     },
+    // A web page in a tab of its own, its address bar ready for typing.
+    // ⌘⇧B on macOS, Ctrl+Alt+B elsewhere (Ctrl+Shift+B is the sidebar there).
+    {
+      id: "browser.new",
+      key: "b",
+      ...cmd({ shift: true }),
+      label: "New browser tab",
+      run: () => store.createBrowserTab(),
+    },
     // Reopen the last closed tab or pane. macOS gets the browser's own ⌘⇧T,
     // which is free there. Linux/Windows can't: Ctrl+Shift+T is already "new
     // tab" (every terminal binds it that way, and bare Ctrl+T belongs to

@@ -74,7 +74,8 @@ export type TransferPane =
   | { kind: "terminal"; ptyId: number; scrollback: string; title: string }
   | { kind: "markdown"; filePath: string }
   | { kind: "text"; filePath: string }
-  | { kind: "image"; filePath: string };
+  | { kind: "image"; filePath: string }
+  | { kind: "browser"; url: string };
 
 export type TransferNode =
   | { type: "leaf"; pane: TransferPane }
@@ -464,6 +465,14 @@ export interface Backend {
   // window hears about a drop heading its way.
   onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn>;
 
+  // --- Browser panes ----------------------------------------------------------
+  // A page in a browser pane asked for a new window; the url is http(s).
+  onBrowserOpen(cb: (url: string) => void): Promise<UnlistenFn>;
+  // The chords the host takes from a focused page and hands to onBrowserKey
+  // instead (the app's own shortcuts).
+  setBrowserChords(chords: BrowserChord[]): Promise<void>;
+  onBrowserKey(cb: (key: BrowserKey) => void): Promise<UnlistenFn>;
+
   // --- Detaching (closing a window without stopping its shells) -------------
   //
   // The host holds a closing window open until the renderer has serialized its
@@ -557,4 +566,25 @@ export interface Backend {
   onPluginBadge(cb: (id: string, value: PluginBadge) => void): Promise<UnlistenFn>;
   onPluginToast(cb: (id: string, toast: PluginToast) => void): Promise<UnlistenFn>;
   onPluginsChanged(cb: (change: PluginsChanged) => void): Promise<UnlistenFn>;
+}
+
+// A shortcut's chord as the host matches it against a page's keystrokes: the
+// renderer's Chord, flattened to plain data.
+export interface BrowserChord {
+  key: string;
+  code?: string;
+  ctrl?: boolean;
+  shift?: boolean;
+  alt?: boolean;
+  meta?: boolean;
+}
+
+// A keystroke the host took from a page, to replay in the app.
+export interface BrowserKey {
+  key: string;
+  code: string;
+  ctrl: boolean;
+  shift: boolean;
+  alt: boolean;
+  meta: boolean;
 }

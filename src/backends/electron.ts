@@ -18,6 +18,8 @@ import type {
   PluginsChanged,
   PluginsState,
   PluginToast,
+  BrowserChord,
+  BrowserKey,
 } from "./types";
 
 // The preload script exposes window.specterm via contextBridge
@@ -93,6 +95,9 @@ interface SpectermAPI {
   dragHover(): void;
   dragEnd(): void;
   onDragOver(cb: (over: boolean) => void): () => void;
+  onBrowserOpen(cb: (url: string) => void): () => void;
+  setBrowserChords(chords: BrowserChord[]): void;
+  onBrowserKey(cb: (key: BrowserKey) => void): () => void;
   broadcast(channel: string, payload?: unknown): void;
   onBroadcast(cb: (channel: string, payload?: unknown) => void): () => void;
   setAttentionBadge(count: number): Promise<void>;
@@ -387,6 +392,20 @@ export class ElectronBackend implements Backend {
 
   async onDragOver(cb: (over: boolean) => void): Promise<UnlistenFn> {
     return this.api.onDragOver(cb);
+  }
+
+  async onBrowserOpen(cb: (url: string) => void): Promise<UnlistenFn> {
+    return this.api.onBrowserOpen(cb);
+  }
+
+  async setBrowserChords(chords: BrowserChord[]): Promise<void> {
+    // Plain objects only: a Chord can carry undefined fields, which the
+    // structured clone keeps but the host would have to skip.
+    this.api.setBrowserChords(chords.map((c) => JSON.parse(JSON.stringify(c))));
+  }
+
+  async onBrowserKey(cb: (key: BrowserKey) => void): Promise<UnlistenFn> {
+    return this.api.onBrowserKey(cb);
   }
 
   broadcast(channel: string, payload?: unknown): void {

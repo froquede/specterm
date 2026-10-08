@@ -1580,8 +1580,10 @@ body,
 /* Dim splits that are not focused by blending the fill color over them.
    A lone pane is always the active pane, so this only ever affects a real
    split. Using an overlay (instead of element opacity) keeps text crisp and
-   lets us tint toward the fill color exactly like Ghostty does. */
-.pane:not(.pane-active):not(.pane-markdown)::after {
+   lets us tint toward the fill color exactly like Ghostty does. A browser
+   pane is left alone: its page sits in a layer above the wash, so washing
+   only its toolbar would read as a broken pane, not an unfocused one. */
+.pane:not(.pane-active):not(.pane-markdown):not(.pane-browser)::after {
   content: "";
   position: absolute;
   inset: 0;
