@@ -5,6 +5,7 @@ import {
   isBareModifierChord,
   type Chord,
 } from "../lib/chord";
+import { editTextField } from "../lib/text-field-editing";
 import {
   initKeybindingOverrides,
   overrides,
@@ -129,7 +130,9 @@ export function setKeybindingCapture(on: boolean) {
 
 // True when focus is in a real text field (filter, search) — but NOT the
 // hidden textarea xterm.js uses for terminal input. We let native editing
-// (typing, ⌘C/⌘V) work in those real inputs instead of hijacking the keys.
+// (typing, ⌘C/⌘V) work in those real inputs instead of hijacking the keys —
+// on macOS the clipboard and undo chords are run by editTextField, since the
+// Edit menu they'd natively come from isn't there.
 function isEditableTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   if (target.tagName === "INPUT") return true;
@@ -170,6 +173,10 @@ export function initKeybindings() {
         spec.run();
         return;
       }
+
+      // Nothing bound took it. On macOS a text field's ⌘V/⌘C/⌘X/⌘A/⌘Z have
+      // no Edit menu to come from, so they are done here (lib/text-field-editing).
+      if (inEditable && editTextField(e)) e.preventDefault();
     },
     true // capture phase — before xterm.js
   );

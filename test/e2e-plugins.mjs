@@ -583,7 +583,38 @@ try {
       /not a git repository URL/.test((await win.locator(".plugins-settings-add-error").textContent()) ?? "")
     )
   );
-  await addInput.fill(greetUrl);
+  // The URL goes in the way people put it there: pasted. On macOS a text
+  // field's ⌘V has no Edit menu to come from (the app ships none), so the app
+  // runs it itself — and the chord goes over CDP rather than keyboard.press,
+  // which on macOS sends the menu's `paste:` command along with the key and so
+  // would paste whether or not the app does anything.
+  const cdp = MAC ? await win.context().newCDPSession(win) : null;
+  const editChord = async (key) => {
+    if (!MAC) return win.keyboard.press(`Control+${key.toUpperCase()}`);
+    const event = {
+      key,
+      code: `Key${key.toUpperCase()}`,
+      windowsVirtualKeyCode: key.toUpperCase().charCodeAt(0),
+      modifiers: 4, // Meta
+    };
+    await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...event });
+    await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", ...event });
+  };
+  const osClip = () => app.evaluate(({ clipboard }) => clipboard.readText());
+  await app.evaluate(({ clipboard }, text) => clipboard.writeText(text), greetUrl);
+  await addInput.fill("");
+  await addInput.focus();
+  await editChord("v");
+  check("⌘V pastes the URL into the field", await until("pasted", async () => (await addInput.inputValue()) === greetUrl));
+  await app.evaluate(({ clipboard }) => clipboard.writeText("not-cut-yet"));
+  await editChord("a");
+  await editChord("x");
+  check(
+    "⌘A then ⌘X cuts it to the clipboard",
+    await until("cut", async () => (await addInput.inputValue()) === "" && (await osClip()) === greetUrl)
+  );
+  await editChord("z");
+  check("⌘Z puts it back", await until("undone", async () => (await addInput.inputValue()) === greetUrl));
   await addButton.click();
   const greetItem = win.locator('[data-group="external"] .plugins-settings-item[data-plugin="greet"]');
   check("a plugin added from its URL is listed under External", await until("greet listed", () => greetItem.isVisible(), { timeout: 30000 }));
