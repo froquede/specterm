@@ -24,6 +24,7 @@ interface SplitContainerProps {
   onTitle?: (paneId: PaneId, title: string) => void;
   onClosePane?: (id: PaneId) => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
+  onBrowserNavigate?: (paneId: PaneId, url: string) => void;
 }
 
 export default function SplitContainer(props: SplitContainerProps) {
@@ -64,6 +65,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                     onTitle={props.onTitle}
                     onClose={() => props.onClosePane?.(leafId)}
                     onOpenFile={props.onOpenFile}
+                    onBrowserNavigate={props.onBrowserNavigate}
                     onDrop={props.onDropPane}
                     onDropToTab={props.onDropPaneToTab}
                     onDropToNewTab={props.onDropPaneToNewTab}
@@ -110,6 +112,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenFile={props.onOpenFile}
+                onBrowserNavigate={props.onBrowserNavigate}
               />
             </div>
             <SplitHandle
@@ -142,6 +145,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenFile={props.onOpenFile}
+                onBrowserNavigate={props.onBrowserNavigate}
               />
             </div>
           </div>

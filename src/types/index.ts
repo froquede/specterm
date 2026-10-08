@@ -9,7 +9,11 @@ export type PaneType =
   | { kind: "text"; filePath: string }
   // A read-only viewer for an image file, opened directly (not embedded in a
   // markdown note). See ImagePane.
-  | { kind: "image"; filePath: string };
+  | { kind: "image"; filePath: string }
+  // A web page. `url` follows the page as it navigates, so a snapshot, a
+  // reopened tab or a pane moved to another window comes back where it was.
+  // An empty url is a new page waiting for an address. See BrowserPane.
+  | { kind: "browser"; url: string };
 
 export type SplitNode =
   | { type: "leaf"; id: PaneId; pane: PaneType }
@@ -77,7 +81,8 @@ export type SnapshotPane =
     }
   | { kind: "markdown"; filePath: string }
   | { kind: "text"; filePath: string }
-  | { kind: "image"; filePath: string };
+  | { kind: "image"; filePath: string }
+  | { kind: "browser"; url: string };
 
 export type SnapshotNode =
   | { type: "leaf"; pane: SnapshotPane }

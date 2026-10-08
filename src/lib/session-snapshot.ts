@@ -66,6 +66,7 @@ function snapshotPane(paneId: string, pane: PaneType): SnapshotPane {
   }
   if (pane.kind === "markdown") return { kind: "markdown", filePath: pane.filePath };
   if (pane.kind === "image") return { kind: "image", filePath: pane.filePath };
+  if (pane.kind === "browser") return { kind: "browser", url: pane.url };
   return { kind: "text", filePath: pane.filePath };
 }
 
@@ -104,6 +105,7 @@ function hydratePane(pane: SnapshotPane): PaneType {
   }
   if (pane.kind === "markdown") return { kind: "markdown", filePath: pane.filePath };
   if (pane.kind === "image") return { kind: "image", filePath: pane.filePath };
+  if (pane.kind === "browser") return { kind: "browser", url: pane.url };
   return { kind: "text", filePath: pane.filePath };
 }
 
@@ -194,6 +196,7 @@ function isSnapshotPane(v: unknown): v is SnapshotPane {
   if (p.kind === "markdown" || p.kind === "text" || p.kind === "image") {
     return typeof p.filePath === "string";
   }
+  if (p.kind === "browser") return typeof p.url === "string";
   return false;
 }
 

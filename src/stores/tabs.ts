@@ -66,6 +66,7 @@ import {
   saveSession,
 } from "./history";
 import { restoreLastSession } from "./settings";
+import { browserTitle } from "../lib/browser-registry";
 import { loadSidebarView, saveSidebarView } from "../lib/sidebar-state";
 
 function createTerminalTab(cwd = ""): Tab {
@@ -92,6 +93,7 @@ function paneEntryTitle(leaf: Extract<SplitNode, { type: "leaf" }>): string {
       "Terminal"
     );
   }
+  if (leaf.pane.kind === "browser") return browserTitle(leaf.id, leaf.pane.url);
   return leaf.pane.filePath.split(/[\\/]/).pop() || "File";
 }
 
@@ -405,6 +407,7 @@ function paneTitle(leaf: SplitNode): string {
   if (leaf.pane.kind === "terminal") {
     return getTerminalInstance(leaf.id)?.title || "Terminal";
   }
+  if (leaf.pane.kind === "browser") return browserTitle(leaf.id, leaf.pane.url);
   const fallback =
     leaf.pane.kind === "markdown" ? "Markdown" : leaf.pane.kind === "image" ? "Image" : "Text";
   return leaf.pane.filePath.split(/[\\/]/).pop() || fallback;
@@ -843,6 +846,46 @@ export function useTabStore() {
         tabHistory: pushMru(s.tabHistory, s.activeTabId),
       }));
       return tab;
+    },
+
+    // A web page in a tab of its own. An empty url opens a blank page with the
+    // address bar focused.
+    createBrowserTab(url = "") {
+      const leaf = createLeaf({ kind: "browser", url });
+      const tab: Tab = {
+        id: nanoid(8),
+        title: browserTitle(leaf.id, url),
+        manualTitle: false,
+        root: leaf,
+        activePaneId: leaf.id,
+        paneHistory: [],
+      };
+      update((s) => ({
+        ...s,
+        tabs: [...s.tabs, tab],
+        activeTabId: tab.id,
+        tabHistory: pushMru(s.tabHistory, s.activeTabId),
+      }));
+      return tab;
+    },
+
+    // A browser pane navigated: keep its address in the tree, which is what a
+    // snapshot, a reopen and a move to another window read.
+    setBrowserUrl(paneId: PaneId, url: string) {
+      const s = state();
+      const tab = s.tabs.find((t) => findLeafNode(t.root, paneId));
+      const leaf = tab && findLeafNode(tab.root, paneId);
+      if (!tab || !leaf || leaf.pane.kind !== "browser" || leaf.pane.url === url) return;
+      const swap = (node: SplitNode): SplitNode =>
+        node.type === "leaf"
+          ? node.id === paneId
+            ? { ...node, pane: { kind: "browser", url } }
+            : node
+          : { ...node, first: swap(node.first), second: swap(node.second) };
+      update(() => ({
+        ...s,
+        tabs: s.tabs.map((t) => (t.id === tab.id ? { ...t, root: swap(t.root) } : t)),
+      }));
     },
 
     closeTab(tabId: string) {

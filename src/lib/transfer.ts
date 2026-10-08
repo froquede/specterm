@@ -34,6 +34,11 @@ async function serializeNode(node: SplitNode): Promise<TransferNode | null> {
     if (pane.kind === "image") {
       return { type: "leaf", pane: { kind: "image", filePath: pane.filePath } };
     }
+    // The page itself can't move between windows: the destination loads the
+    // address again.
+    if (pane.kind === "browser") {
+      return { type: "leaf", pane: { kind: "browser", url: pane.url } };
+    }
     const instance = getTerminalInstance(node.id);
     if (!instance || instance.disposed || instance.ptyId === null) return null;
     return {
@@ -97,6 +102,9 @@ function rebuildNode(node: TransferNode): SplitNode {
     }
     if (pane.kind === "image") {
       return createLeaf({ kind: "image", filePath: pane.filePath });
+    }
+    if (pane.kind === "browser") {
+      return createLeaf({ kind: "browser", url: pane.url });
     }
     const leaf = createLeaf({
       kind: "terminal",

@@ -22,6 +22,8 @@ import IconGitBranch from "lucide-solid/icons/git-branch";
 import IconLibraryBig from "lucide-solid/icons/library-big";
 import IconCloud from "lucide-solid/icons/cloud";
 import IconGauge from "lucide-solid/icons/gauge";
+import IconImage from "lucide-solid/icons/image";
+import IconGlobe from "lucide-solid/icons/globe";
 
 type IconComponent = typeof IconPlug;
 
@@ -42,6 +44,8 @@ const PLUGIN_ICONS: Record<string, IconComponent> = {
   "library-big": IconLibraryBig,
   cloud: IconCloud,
   gauge: IconGauge,
+  image: IconImage,
+  globe: IconGlobe,
 };
 
 export function pluginIcon(name: string): IconComponent {
