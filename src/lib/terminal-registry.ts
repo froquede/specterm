@@ -370,8 +370,7 @@ document.documentElement.style.setProperty(
 // Terminal font family. Unlike zoom (driven by keyboard), this is a persisted
 // preference the Settings panel binds to, so it's a reactive signal. An empty
 // value means "use the bundled default stack".
-const DEFAULT_FONT_FAMILY =
-  "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace";
+const DEFAULT_FONT_FAMILY = "'Specterm Mono', monospace";
 const FONT_FAMILY_STORAGE_KEY = "specterm.fontFamily";
 
 function loadFontFamily(): string {
@@ -421,6 +420,31 @@ function applyFontFamily() {
 }
 
 // `family` is a bare family name (e.g. "Menlo") or "" to restore the default.
+// A web font that finishes loading after a terminal has opened leaves that
+// terminal measured and rasterised with the fallback, and xterm won't notice by
+// itself. `remeasure` is for the main face arriving late: re-setting the family
+// makes xterm measure its cell again (it ignores a set to the same value, hence
+// the detour). Any other face — the italic, which loads on first use — only
+// needs its glyphs redrawn.
+export function refreshTerminalFonts(remeasure: boolean) {
+  for (const instance of instances.values()) {
+    if (instance.disposed) continue;
+    if (remeasure) {
+      const family = instance.term.options.fontFamily;
+      instance.term.options.fontFamily = "monospace";
+      instance.term.options.fontFamily = family;
+      if (instance.container) {
+        try {
+          safeFit(instance.term, instance.fitAddon);
+        } catch {
+          // container not measurable right now — ignore
+        }
+      }
+    }
+    instance.term.clearTextureAtlas();
+  }
+}
+
 export function setTerminalFontFamily(family: string) {
   setTerminalFontFamilySignal(family);
   persistFontFamily();

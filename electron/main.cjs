@@ -3291,6 +3291,14 @@ app.commandLine.appendSwitch("ignore-gpu-blocklist");
 app.commandLine.appendSwitch("enable-gpu-rasterization");
 app.commandLine.appendSwitch("enable-zero-copy");
 
+// Grayscale antialiasing instead of ClearType's coloured subpixel AA on Windows.
+// The terminal canvas is transparent, so its text is grayscale whatever we do;
+// this puts the UI around it on the same rendering, and drops the colour
+// fringes that make ClearType text look sharp-edged next to Linux's.
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("disable-lcd-text");
+}
+
 // The renderer only ever loads bundled local content, so we grant the handful
 // of web permissions the UI actually uses rather than the default deny: the
 // Local Font Access API (system font list for the terminal font picker) and
