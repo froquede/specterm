@@ -62,6 +62,9 @@ const SUITES = [
   { name: "plugin-install", file: "plugin-install.mjs" },
   // Same shape as paste: the matcher behind click-to-copy, pure and DOM-free.
   { name: "path-links", file: "path-links.mjs", node: ["--experimental-strip-types"] },
+  // And the line a hovered cell belongs to — wraps the terminal flagged and
+  // wraps a TUI drew itself — against a stand-in buffer. Milliseconds.
+  { name: "link-target", file: "link-target.mjs", node: ["--experimental-strip-types"] },
   // And the mermaid fence renderer from src/lib/markdown.ts: escaping only,
   // no DOM. Milliseconds.
   { name: "markdown", file: "markdown.mjs", node: ["--experimental-strip-types"] },

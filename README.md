@@ -106,8 +106,10 @@ whatever application owns its type — except anything the OS would run, which i
 revealed in the file manager instead. `~` is expanded and a relative path is
 resolved against that pane's directory. It works in panes running Claude Code,
 vim or lazygit too — the click copies on its way through and still reaches the
-program. What counts as a path is deliberately reluctant, so `24/7` and `and/or`
-stay plain text. See `src/lib/path-links.ts` and `src/lib/terminal-links.ts`.
+program, and a path or URL the program broke onto two rows copies whole. What
+counts as a path is deliberately reluctant, so `24/7` and `and/or` stay plain
+text. See `src/lib/path-links.ts`, `src/lib/link-target.ts` and
+`src/lib/terminal-links.ts`.
 
 **Moving tabs between windows.** Drag a tab — or a pane by its title-bar — past
 the window edge. Release over another Specterm window to move it there, anywhere
