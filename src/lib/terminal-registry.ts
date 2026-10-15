@@ -419,7 +419,6 @@ function applyFontFamily() {
   }
 }
 
-// `family` is a bare family name (e.g. "Menlo") or "" to restore the default.
 // A web font that finishes loading after a terminal has opened leaves that
 // terminal measured and rasterised with the fallback, and xterm won't notice by
 // itself. `remeasure` is for the main face arriving late: re-setting the family
@@ -445,6 +444,7 @@ export function refreshTerminalFonts(remeasure: boolean) {
   }
 }
 
+// `family` is a bare family name (e.g. "Menlo") or "" to restore the default.
 export function setTerminalFontFamily(family: string) {
   setTerminalFontFamilySignal(family);
   persistFontFamily();

@@ -42,9 +42,32 @@ for rec in list(name.names):
         name.removeNames(nameID=rec.nameID)
 name.setName(FAMILY, 1, 3, 1, 0x409)
 name.setName(STYLE, 2, 3, 1, 0x409)
-name.setName(f"{FAMILY} {STYLE}; derived from Monaspace Neon", 3, 3, 1, 0x409)
+name.setName(f"{FAMILY} {STYLE}", 3, 3, 1, 0x409)
 name.setName(f"{FAMILY} {STYLE}", 4, 3, 1, 0x409)
 name.setName(f"{FAMILY.replace(' ', '')}-{STYLE}", 6, 3, 1, 0x409)
+
+# Every other name the font carries goes too: the version string, the sample
+# text, and the PostScript names of the variable font's named instances, which
+# font menus and exported PDFs show. Only the notices keep "Monaspace": the
+# copyright and trademark lines and the license (IDs 0, 7, 13, 14), which the
+# OFL requires every copy to carry as they are.
+NOTICES = {0, 7, 13, 14}
+RENAMES = [
+    ("Monaspace Neon Var", FAMILY),
+    ("MonaspaceNeonVar", FAMILY.replace(" ", "")),
+    ("Monaspace Neon", FAMILY),
+    ("MonaspaceNeon", FAMILY.replace(" ", "")),
+    ("Monaspace", "Specterm"),
+]
+for rec in name.names:
+    if rec.nameID in NOTICES:
+        continue
+    text = rec.toUnicode()
+    for old, new in RENAMES:
+        text = text.replace(old, new)
+    rec.string = text
+left = [r.nameID for r in name.names if r.nameID not in NOTICES and "Monaspace" in r.toUnicode()]
+assert not left, f"reserved name still in name IDs {left}"
 
 opts = subset.Options()
 opts.unicodes = ["*"]
