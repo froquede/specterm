@@ -2,7 +2,8 @@
 //
 // The matching is tested on its own in test/path-links.mjs; what needs a real
 // app is everything around it — that a hovered span maps back to the right
-// cells, that a soft-wrapped path copies whole, and above all that a pane whose
+// cells, that a wrapped path copies whole — whether the terminal wrapped it or
+// the program broke the row itself — and above all that a pane whose
 // program owns the mouse and redraws in place still answers a click. That last
 // pair is why this doesn't ride on xterm's linkifier, so it is the pair worth
 // having a suite for.
@@ -96,6 +97,20 @@ await clickCell(10, 0);
 check("wrapped path copies whole", (await clip()) === long, (await clip()).slice(0, 40));
 await clickCell(3, 1);
 check("wrapped path second row", (await clip()) === long, (await clip()).slice(0, 40));
+
+// The same path broken the way Claude Code draws it: the program cuts the row
+// at the last column itself and carries on two cells in, so xterm flags
+// nothing as wrapped. Either row still has to copy all of it.
+await app.evaluate(({ clipboard }) => clipboard.writeText("before-break"));
+await win.keyboard.type(
+  `clear; c=$(tput cols); p=${long}; printf '* %s\\n  %s\\n' "\${p:0:$((c-2))}" "\${p:$((c-2))}"`
+);
+await win.keyboard.press("Enter");
+await new Promise((r) => setTimeout(r, 1200));
+await clickCell(10, 0);
+check("path the program broke copies whole", (await clip()) === long, (await clip()).slice(0, 40));
+await clickCell(3, 1);
+check("path the program broke, second row", (await clip()) === long, (await clip()).slice(0, 40));
 
 // The case xterm's own linkifier gets wrong, and the reason this doesn't use
 // it: the pointer rests on a row with nothing clickable, the program redraws

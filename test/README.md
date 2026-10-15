@@ -37,8 +37,10 @@ asserting on observable behavior.
 
 - **`e2e-links.mjs`** — click-to-copy for paths and URLs in output, and the
   modifier-click that opens them. The matching is a pure function tested in
-  `path-links.mjs`; this covers what only a real app can show: that a hovered
-  span maps back to the right cells, that a soft-wrapped path copies whole, that
+  `path-links.mjs`, and stitching a wrapped line back together is tested in
+  `link-target.mjs`; this covers what only a real app can show: that a hovered
+  span maps back to the right cells, that a wrapped path copies whole (wrapped by
+  the terminal or broken onto two rows by the program itself), that
   a row redrawn under a motionless pointer becomes clickable, that a click still
   copies in a pane whose program has grabbed the mouse, and that `Ctrl+click` on
   a markdown file opens it as a pane of this window rather than a tab or a second
@@ -60,7 +62,7 @@ asserting on observable behavior.
   developer's home.
 
 `run-all.mjs` also runs the suites that need no app at all — `paste.mjs`,
-`path-links.mjs`, `markdown.mjs` and `vault-index.mjs`, pure functions imported straight from
+`path-links.mjs`, `link-target.mjs`, `markdown.mjs` and `vault-index.mjs`, pure functions imported straight from
 `src/lib` with node stripping the types. They cost milliseconds and they are
 where the guessing in those files is pinned down, case by case.
 

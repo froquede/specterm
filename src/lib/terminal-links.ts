@@ -28,121 +28,22 @@
 // That is the pane this feature exists for, so hovering and clicking are done
 // here instead: hover is recomputed from the buffer whenever the pointer moves
 // to a new cell *or the pane redraws*, which is the invalidation the cache is
-// missing. Matching itself is lib/path-links.ts, which stays DOM-free so the
-// guessing can be tested directly.
+// missing. Matching itself is lib/path-links.ts, and finding the line a cell
+// belongs to (a path the terminal or the program wrapped onto two rows) is
+// lib/link-target.ts; both stay DOM-free so the guessing can be tested
+// directly.
 
 import type { Terminal } from "@xterm/xterm";
-import { findPathLinks, lineSuffixOf, opensInSpecterm, resolveMatchedPath } from "./path-links";
+import { lineSuffixOf, opensInSpecterm, resolveMatchedPath } from "./path-links";
+import { targetAt, type HoverTarget } from "./link-target";
 import { homeDir, locatePath, type LocateContext } from "./path-locate";
 import { clipboardWriteText } from "./pty";
 import { getBackend } from "../backends";
 import { os } from "./platform";
 
-// How far the wrap walk will travel from the hovered row. A path can wrap once
-// or twice; a run of rows longer than this is a paragraph, and rebuilding it on
-// every redraw would cost more than the link is worth.
-const MAX_WRAP_ROWS = 8;
-
 // Ceiling on how often a redraw or a scroll can make the layer re-read the
 // hovered line. A busy TUI renders far faster than a hand can move.
 const REFRESH_THROTTLE_MS = 80;
-
-// How much of the logical line around the hovered character is handed to the
-// matcher. findPathLinks retries its patterns from every position of an
-// unbroken run, so a soft-wrapped JWT or hex dump costs quadratically — ~50ms
-// for 3,400 characters, on every refresh. A path longer than this on either
-// side of the pointer is not one anybody clicks.
-const MATCH_WINDOW = 256;
-
-interface MappedLine {
-  // The logical line as a string, soft wraps stitched back together.
-  text: string;
-  // Buffer coordinates of each character in `text`. Kept as a parallel array
-  // rather than computed, because a wide char (CJK, an emoji) is two cells for
-  // one character and a combining mark is two characters in one cell — so
-  // string index and column drift apart the moment output isn't ASCII.
-  cells: { y: number; x: number }[];
-}
-
-/** What the pointer is currently over, in buffer coordinates. */
-interface HoverTarget {
-  text: string;
-  kind: "path" | "url";
-  // One entry per buffer row the span covers, so a soft-wrapped path draws as
-  // two underlines rather than one impossible rectangle.
-  segments: { y: number; x0: number; x1: number }[];
-}
-
-/**
- * Rebuild the logical line that passes through buffer row `rowIndex`, following
- * soft wraps in both directions, along with the map back to buffer cells.
- */
-function mapLogicalLine(term: Terminal, rowIndex: number): MappedLine | null {
-  const buf = term.buffer.active;
-  if (rowIndex < 0 || !buf.getLine(rowIndex)) return null;
-
-  let top = rowIndex;
-  while (top > 0 && buf.getLine(top)?.isWrapped && rowIndex - top < MAX_WRAP_ROWS) {
-    top--;
-  }
-  let bottom = rowIndex;
-  while (
-    bottom + 1 < buf.length &&
-    buf.getLine(bottom + 1)?.isWrapped &&
-    bottom - rowIndex < MAX_WRAP_ROWS
-  ) {
-    bottom++;
-  }
-
-  let text = "";
-  const cells: { y: number; x: number }[] = [];
-  // One cell object, refilled per column. This runs while the pointer moves
-  // across a pane, so a fresh object per cell would be a few hundred
-  // allocations per row hovered.
-  const cell = buf.getNullCell();
-  for (let y = top; y <= bottom; y++) {
-    const line = buf.getLine(y);
-    if (!line) continue;
-    for (let x = 0; x < line.length; x++) {
-      if (!line.getCell(x, cell)) continue;
-      // Width 0 is the second half of a wide character — already accounted for
-      // by the cell that owns it.
-      if (cell.getWidth() === 0) continue;
-      const chars = cell.getChars() || " ";
-      for (let i = 0; i < chars.length; i++) cells.push({ y, x });
-      text += chars;
-    }
-  }
-  return { text, cells };
-}
-
-/** The link under buffer cell (col, row), or null. */
-function targetAt(term: Terminal, col: number, row: number): HoverTarget | null {
-  const mapped = mapLogicalLine(term, row);
-  if (!mapped) return null;
-
-  const hovered = mapped.cells.findIndex((c) => c.y === row && c.x === col);
-  if (hovered === -1) return null;
-  const from = Math.max(0, hovered - MATCH_WINDOW);
-  const text = mapped.text.slice(from, hovered + MATCH_WINDOW + 1);
-
-  for (const match of findPathLinks(text)) {
-    let hit = false;
-    const segments: { y: number; x0: number; x1: number }[] = [];
-    for (let i = from + match.start; i < from + match.end; i++) {
-      const cell = mapped.cells[i];
-      if (!cell) continue;
-      if (cell.y === row && cell.x === col) hit = true;
-      const last = segments[segments.length - 1];
-      if (last && last.y === cell.y) last.x1 = Math.max(last.x1, cell.x);
-      else segments.push({ y: cell.y, x0: cell.x, x1: cell.x });
-    }
-    if (hit && segments.length) {
-      return { text: match.text, kind: match.kind, segments };
-    }
-  }
-  return null;
-}
 
 function sameTarget(a: HoverTarget | null, b: HoverTarget | null): boolean {
   if (!a || !b) return a === b;

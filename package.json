@@ -35,7 +35,7 @@
     "test:e2e:vault": "vite build && node test/e2e-vault.mjs",
     "test:e2e:plugins": "vite build && node test/e2e-plugins.mjs",
     "test:paste": "node --experimental-strip-types test/paste.mjs",
-    "test:links": "node --experimental-strip-types test/path-links.mjs",
+    "test:links": "node --experimental-strip-types test/path-links.mjs && node --experimental-strip-types test/link-target.mjs",
     "test:markdown": "node --experimental-strip-types test/markdown.mjs",
     "test:vault": "node --experimental-strip-types test/vault-index.mjs",
     "test:open-paths": "node test/open-paths.mjs",
