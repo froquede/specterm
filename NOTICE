@@ -5,3 +5,9 @@ This product includes software developed by the Specterm contributors.
 
 Licensed under the Apache License, Version 2.0. See the LICENSE file for the
 full terms.
+
+This product bundles "Specterm Mono" (src/assets/fonts), a modified version of
+Monaspace Neon, Copyright (c) 2023 GitHub, licensed under the SIL Open Font
+License, Version 1.1 (see src/assets/fonts/OFL.txt). It is modified from the
+original by the removal of TrueType hinting and by pinning its width and slant
+axes, and is renamed because "Monaspace" is a Reserved Font Name.

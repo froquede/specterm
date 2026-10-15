@@ -1,3 +1,25 @@
+/* Bundled so every OS draws the same font, whether or not it's installed:
+   Monaspace Neon, as an unhinted build (scripts/unhint-font.py). Hinting is what
+   makes Windows snap stems to the pixel grid and look thin and jagged next to
+   Linux. It goes by "Specterm Mono" because the license reserves the Monaspace
+   name for unmodified copies. One variable file per style covers every weight.
+   OFL — see assets/fonts/OFL.txt. */
+@font-face {
+  font-family: "Specterm Mono";
+  src: url("../assets/fonts/SpectermMono.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: block;
+}
+
+@font-face {
+  font-family: "Specterm Mono";
+  src: url("../assets/fonts/SpectermMono-Italic.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: italic;
+  font-display: block;
+}
+
 * {
   margin: 0;
   padding: 0;
@@ -12,7 +34,15 @@ body,
   overflow: hidden;
   background: var(--bg-frame);
   color: var(--fg);
-  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "Specterm Mono", monospace;
+}
+
+/* Windows renders text lighter than Linux or macOS at the same weight, so the
+   chrome reads thin there. A hairline stroke in the text's own colour gives it
+   back some body; it inherits, so it reaches every piece of UI text. The
+   terminal itself is a canvas and is unaffected. */
+.is-windows body {
+  -webkit-text-stroke-width: 0.2px;
 }
 
 /* App layout. The tab bar's corner is two independent choices: which edge it

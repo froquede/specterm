@@ -208,7 +208,7 @@ mark.search-highlight.search-active {
   padding: 0.2em 0.4em;
   border-radius: 3px;
   font-size: 0.85em;
-  font-family: "JetBrains Mono", "Fira Code", monospace;
+  font-family: "Specterm Mono", monospace;
 }
 
 .markdown-content pre {

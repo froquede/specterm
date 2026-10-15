@@ -13,6 +13,7 @@
 // developer installs. Availability is probed at runtime, so listing one that
 // isn't installed is harmless.
 const CANDIDATES = [
+  "Specterm Mono", // bundled (src/assets/fonts), so always present
   "JetBrains Mono",
   "JetBrainsMono Nerd Font",
   "Fira Code",

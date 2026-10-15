@@ -162,7 +162,7 @@
   flex: 1;
   display: flex;
   overflow: auto;
-  font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+  font-family: "Specterm Mono", monospace;
   font-size: 13px;
   line-height: 1.5;
   tab-size: 4;
