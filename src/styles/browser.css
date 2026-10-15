@@ -1,0 +1,113 @@
+/* Browser panes (components/BrowserPane.tsx). The pane draws the toolbar and
+   a placeholder; the page itself sits in .browser-layer, laid over the
+   placeholder by lib/browser-registry.ts, so it survives tab switches. */
+
+.browser-pane {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.browser-toolbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 6px;
+  background: var(--bg-chrome);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.browser-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.browser-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--fg);
+}
+.browser-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.browser-address {
+  flex: 1;
+  min-width: 0;
+  height: 22px;
+  margin: 0 4px;
+  padding: 0 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+}
+.browser-address:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.browser-placeholder {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}
+
+/* On the toolbar's bottom edge: the page covers the placeholder below it. */
+.browser-progress {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  height: 2px;
+  width: 30%;
+  background: var(--accent);
+  animation: browser-progress 1.2s ease-in-out infinite;
+}
+@keyframes browser-progress {
+  from { left: -30%; }
+  to { left: 100%; }
+}
+
+/* The pages, over the panes and under everything the app floats over them
+   (menus, dialogs, overlays). Only the pages take the pointer. */
+.browser-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  overflow: hidden;
+}
+.browser-view {
+  position: absolute;
+  pointer-events: auto;
+  background: #fff;
+}
+.browser-view webview {
+  display: flex;
+}
+/* A drag or resize that started in the app keeps the pointer over a page. */
+.browser-layer-passive .browser-view {
+  pointer-events: none;
+}
+/* While a pane is dragged, the drop zones drawn in the panes show through. */
+.browser-layer-dragging .browser-view {
+  opacity: 0.35;
+}

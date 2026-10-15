@@ -300,6 +300,19 @@ contextBridge.exposeInMainWorld("specterm", {
     return () => ipcRenderer.removeListener("drag-over", handler);
   },
 
+  // Browser panes (see the "Browser panes" block in main.cjs).
+  onBrowserOpen: (cb) => {
+    const handler = (_event, url) => cb(url);
+    ipcRenderer.on("browser:open", handler);
+    return () => ipcRenderer.removeListener("browser:open", handler);
+  },
+  setBrowserChords: (chords) => ipcRenderer.send("browser:chords", chords),
+  onBrowserKey: (cb) => {
+    const handler = (_event, key) => cb(key);
+    ipcRenderer.on("browser:key", handler);
+    return () => ipcRenderer.removeListener("browser:key", handler);
+  },
+
   // Cross-window state sync (settings, theme, favorites).
   broadcast: (channel, payload) =>
     ipcRenderer.send("broadcast", channel, payload),

@@ -1,5 +1,5 @@
 import { Show } from "solid-js";
-import type { SplitNode, PaneId } from "../types";
+import type { SplitNode, PaneId, PaneType } from "../types";
 import { gripPosition, type DropEdge } from "../lib/split-tree";
 import Pane from "./Pane";
 import SplitHandle, { type ResizeEntry } from "./SplitHandle";
@@ -24,6 +24,7 @@ interface SplitContainerProps {
   onTitle?: (paneId: PaneId, title: string) => void;
   onClosePane?: (id: PaneId) => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
+  onPaneContent?: (paneId: PaneId, pane: PaneType) => void;
 }
 
 export default function SplitContainer(props: SplitContainerProps) {
@@ -64,6 +65,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                     onTitle={props.onTitle}
                     onClose={() => props.onClosePane?.(leafId)}
                     onOpenFile={props.onOpenFile}
+                    onPaneContent={props.onPaneContent}
                     onDrop={props.onDropPane}
                     onDropToTab={props.onDropPaneToTab}
                     onDropToNewTab={props.onDropPaneToNewTab}
@@ -110,6 +112,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenFile={props.onOpenFile}
+                onPaneContent={props.onPaneContent}
               />
             </div>
             <SplitHandle
@@ -142,6 +145,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
                 onOpenFile={props.onOpenFile}
+                onPaneContent={props.onPaneContent}
               />
             </div>
           </div>

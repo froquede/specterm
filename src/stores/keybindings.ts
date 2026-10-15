@@ -115,6 +115,11 @@ function resolvedBindings(): ResolvedBinding[] {
   return next;
 }
 
+/** Every chord the keymap answers to right now. Reactive. */
+export function activeChords(): Chord[] {
+  return resolvedBindings().map((b) => b.chord);
+}
+
 // While the settings panel is recording a new chord, every keystroke belongs to
 // the recorder — including the ones that are currently bound to something. The
 // dispatcher stands down entirely rather than trying to guess which, so the

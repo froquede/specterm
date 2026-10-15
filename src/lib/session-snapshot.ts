@@ -38,6 +38,7 @@ import type {
   TabSnapshot,
 } from "../types";
 import { collectLeaves } from "./split-tree";
+import { paneKind } from "./pane-kinds";
 import { getTerminalCwd, getTerminalInstance } from "./terminal-registry";
 
 // --- Capture ---------------------------------------------------------------
@@ -66,7 +67,8 @@ function snapshotPane(paneId: string, pane: PaneType): SnapshotPane {
   }
   if (pane.kind === "markdown") return { kind: "markdown", filePath: pane.filePath };
   if (pane.kind === "image") return { kind: "image", filePath: pane.filePath };
-  return { kind: "text", filePath: pane.filePath };
+  if (pane.kind === "text") return { kind: "text", filePath: pane.filePath };
+  return paneKind(pane.kind)!.snapshot(paneId, pane);
 }
 
 export function snapshotNode(node: SplitNode): SnapshotNode {
@@ -104,7 +106,8 @@ function hydratePane(pane: SnapshotPane): PaneType {
   }
   if (pane.kind === "markdown") return { kind: "markdown", filePath: pane.filePath };
   if (pane.kind === "image") return { kind: "image", filePath: pane.filePath };
-  return { kind: "text", filePath: pane.filePath };
+  if (pane.kind === "text") return { kind: "text", filePath: pane.filePath };
+  return paneKind(pane.kind)!.hydrate(pane);
 }
 
 // Everything a hydrated pane needs that the live tree can't hold — its resumable
@@ -194,7 +197,8 @@ function isSnapshotPane(v: unknown): v is SnapshotPane {
   if (p.kind === "markdown" || p.kind === "text" || p.kind === "image") {
     return typeof p.filePath === "string";
   }
-  return false;
+  const described = typeof p.kind === "string" ? paneKind(p.kind as PaneType["kind"]) : undefined;
+  return described ? described.isSaved(p) : false;
 }
 
 // Depth is bounded so a cyclic or absurdly deep blob can't blow the stack here

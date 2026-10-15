@@ -48,6 +48,8 @@ export { default as IconChevronUp } from "lucide-solid/icons/chevron-up";
 export { default as IconChevronDown } from "lucide-solid/icons/chevron-down";
 export { default as IconChevronRight } from "lucide-solid/icons/chevron-right";
 export { default as IconArrowLeft } from "lucide-solid/icons/arrow-left";
+export { default as IconArrowRight } from "lucide-solid/icons/arrow-right";
+export { default as IconGlobe } from "lucide-solid/icons/globe";
 export { default as IconLevelUp } from "lucide-solid/icons/corner-left-up";
 export { default as IconStar } from "lucide-solid/icons/star";
 export { default as IconRefresh } from "lucide-solid/icons/refresh-cw";

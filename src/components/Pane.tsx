@@ -1,4 +1,5 @@
 import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import type { PaneType, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
 import TerminalPane from "./TerminalPane";
@@ -27,6 +28,7 @@ import {
 } from "../stores/pane-drag";
 import { tearingOff, trackTearOff, endTearOff } from "../stores/tear-off";
 import { IconX } from "../lib/icons";
+import { paneKind } from "../lib/pane-kinds";
 
 interface PaneProps {
   id: PaneId;
@@ -36,6 +38,7 @@ interface PaneProps {
   onTitle?: (paneId: PaneId, title: string) => void;
   onClose?: () => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
+  onPaneContent?: (paneId: PaneId, pane: PaneType) => void;
   onDrop?: (
     sourceId: PaneId,
     targetId: PaneId,
@@ -62,6 +65,17 @@ export default function Pane(props: PaneProps) {
   const paneId = props.id;
   const [termTitle, setTermTitle] = createSignal("Terminal");
   const [hasTermTitle, setHasTermTitle] = createSignal(false);
+  const descriptor = () => paneKind(props.pane.kind);
+
+  // New content of another kind (tabs.setPaneContent) names itself afresh: the
+  // name the old content reported no longer describes the pane.
+  createEffect(
+    on(
+      () => props.pane.kind,
+      () => setHasTermTitle(false),
+      { defer: true }
+    )
+  );
 
   // Focus moving to this pane hands it the tab's name: only a tab's focused
   // pane sets the tab title (tabs.updatePaneTitle), so without this the tab
@@ -89,6 +103,10 @@ export default function Pane(props: PaneProps) {
       };
       const fallback = kind === "markdown" ? "Markdown" : kind === "image" ? "Image" : "Text";
       return filePath.split(/[\\/]/).pop() || fallback;
+    }
+    const described = descriptor();
+    if (described) {
+      return hasTermTitle() ? termTitle() : described.title(paneId, props.pane);
     }
     return termTitle();
   };
@@ -202,7 +220,7 @@ export default function Pane(props: PaneProps) {
       // same attribute, and this template is reactive, so a re-render for any
       // other reason would wipe a classList-applied token until its own effect
       // caught up.
-      class={`pane ${props.isActive ? "pane-active" : ""} ${props.pane.kind === "markdown" ? "pane-markdown" : ""} ${props.pane.kind === "text" ? "pane-text" : ""} ${props.pane.kind === "image" ? "pane-image" : ""} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
+      class={`pane ${props.isActive ? "pane-active" : ""} pane-${props.pane.kind} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
       data-pane-id={paneId}
       onMouseDown={props.onFocus}
       style={{ width: "100%", height: "100%", position: "relative" }}
@@ -277,6 +295,27 @@ export default function Pane(props: PaneProps) {
         </Show>
         <Show when={props.pane.kind === "image" ? (props.pane as PaneType & { kind: "image" }).filePath : null} keyed>
           {(filePath) => <ImagePane filePath={filePath} />}
+        </Show>
+        {/* A kind described in lib/pane-kinds.ts draws itself. Keyed on the
+            descriptor, so new content of the same kind updates in place and a
+            different kind replaces the view. */}
+        <Show when={descriptor()} keyed>
+          {(described) => (
+            <Dynamic
+              component={described.mount}
+              paneId={paneId}
+              pane={props.pane}
+              isActive={props.isActive}
+              onFocus={props.onFocus}
+              onContent={(pane: PaneType) => props.onPaneContent?.(paneId, pane)}
+              onTitle={(t: string) => {
+                const name = t || described.title(paneId, props.pane);
+                setTermTitle(name);
+                setHasTermTitle(true);
+                props.onTitle?.(paneId, name);
+              }}
+            />
+          )}
         </Show>
         <Show when={props.pane.kind === "terminal" && searchPaneId() === paneId}>
           <TerminalSearch paneId={paneId} />

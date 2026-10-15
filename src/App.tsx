@@ -18,7 +18,10 @@ import {
   stopSessionProviders,
 } from "./lib/session-providers";
 import { getBackend, windowBoot } from "./backends";
-import { initKeybindings, registerBindings } from "./stores/keybindings";
+import { activeChords, initKeybindings, registerBindings } from "./stores/keybindings";
+import { chordStealsFromTerminal } from "./lib/chord";
+import { mountBrowserLayer } from "./lib/browser-registry";
+import { paneKind } from "./lib/pane-kinds";
 import { createKeymap } from "./stores/keymap";
 import {
   initSettings,
@@ -70,7 +73,7 @@ import SidebarResizeHandle from "./components/SidebarResizeHandle";
 const SettingsPanel = lazy(() => import("./components/SettingsPanel"));
 const PluginView = lazy(() => import("./components/PluginView"));
 const PluginsUpdatedDialog = lazy(() => import("./components/PluginsUpdatedDialog"));
-import type { PaneId, PluginViewKey } from "./types";
+import type { PaneId, PaneType, PluginViewKey } from "./types";
 import { draggingPaneId, dropTarget } from "./stores/pane-drag";
 import { dragOver, setDragOver } from "./stores/tear-off";
 import { closeSearch, searchPaneId } from "./stores/terminal-search";
@@ -201,7 +204,7 @@ export default function App() {
     const tab = store.activeTab;
     if (!tab) return null;
     const pane = findPane(tab.root, tab.activePaneId);
-    return pane && pane.kind !== "terminal" ? pane.filePath : null;
+    return pane && "filePath" in pane ? pane.filePath : null;
   });
 
   createEffect(() => {
@@ -355,16 +358,6 @@ export default function App() {
     inst.term.focus();
   }
 
-  function handleOpenMarkdown(path: string, mode: "split" | "tab") {
-    const mdPane = { kind: "markdown" as const, filePath: path };
-
-    if (mode === "tab") {
-      store.createMarkdownTab(path);
-    } else {
-      store.splitActivePane("h", mdPane);
-    }
-  }
-
   // Markdown gets the rendered preview; an image opens in the image viewer;
   // every other text file opens in the read-only text viewer. The predicates
   // live in lib/file-kind because the sidebar paints a row by the same rules
@@ -373,23 +366,13 @@ export default function App() {
   // TextPane itself decides whether the bytes are actually viewable.
 
   function handleOpenFile(path: string, mode: "split" | "tab") {
-    if (isMarkdownPath(path)) {
-      handleOpenMarkdown(path, mode);
-      return;
-    }
-    if (isImagePath(path)) {
-      if (mode === "tab") {
-        store.createImageTab(path);
-      } else {
-        store.splitActivePane("h", { kind: "image" as const, filePath: path });
-      }
-      return;
-    }
-    if (mode === "tab") {
-      store.createTextTab(path);
-    } else {
-      store.splitActivePane("h", { kind: "text" as const, filePath: path });
-    }
+    const pane: PaneType = isMarkdownPath(path)
+      ? { kind: "markdown", filePath: path }
+      : isImagePath(path)
+        ? { kind: "image", filePath: path }
+        : { kind: "text", filePath: path };
+    if (mode === "tab") store.createTab(pane);
+    else store.splitActivePane("h", pane);
   }
 
   // Move a tab (or a single pane, which becomes a tab) out of this window,
@@ -418,10 +401,14 @@ export default function App() {
   // Move keyboard focus back into the active tab's terminal (or, if that pane
   // isn't a terminal, just drop focus from wherever it is — e.g. the filter).
   function focusActivePane() {
-    const paneId = store.activeTab?.activePaneId;
+    const tab = store.activeTab;
+    const paneId = tab?.activePaneId;
     const term = paneId ? getTerminalInstance(paneId) : undefined;
+    const pane = tab && paneId ? findPane(tab.root, paneId) : undefined;
     if (term) {
       term.term.focus();
+    } else if (paneId && pane && paneKind(pane.kind)?.focus(paneId)) {
+      // A described kind took the keyboard (a browser pane's page).
     } else if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur();
     }
@@ -579,6 +566,43 @@ export default function App() {
         unlistenDetach = un;
       });
     onCleanup(() => unlistenDetach?.());
+
+    // A page in a browser pane asked for a new window (a target=_blank link,
+    // window.open): it opens as a browser tab, as a browser would.
+    let unlistenBrowserOpen: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) => backend.onBrowserOpen((url) => store.createTab({ kind: "browser", url })))
+      .then((un) => {
+        unlistenBrowserOpen = un;
+      });
+    onCleanup(() => unlistenBrowserOpen?.());
+
+    // A page has the keyboard, so the app's shortcuts never reach the window's
+    // own keydown listener. The host catches the chords the app answers to
+    // (sent below) before the page sees them and hands them over; replayed
+    // here, they go through the one dispatcher like any other keystroke.
+    let unlistenBrowserKey: UnlistenFn | undefined;
+    void getBackend()
+      .then((backend) =>
+        backend.onBrowserKey((k) =>
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: k.key,
+              code: k.code,
+              ctrlKey: k.ctrl,
+              shiftKey: k.shift,
+              altKey: k.alt,
+              metaKey: k.meta,
+              bubbles: true,
+              cancelable: true,
+            })
+          )
+        )
+      )
+      .then((un) => {
+        unlistenBrowserKey = un;
+      });
+    onCleanup(() => unlistenBrowserKey?.());
 
     // A tab torn off another window and dropped onto this one.
     let unlistenAdopt: UnlistenFn | undefined;
@@ -753,7 +777,7 @@ export default function App() {
             }
             break;
           case "markdown":
-            handleOpenMarkdown(path, "split");
+            store.splitActivePane("h", { kind: "markdown", filePath: path });
             break;
           case "theme":
             // A .yaml/.json/.txt is a theme only if it parses as one; when it
@@ -786,6 +810,14 @@ export default function App() {
       window.removeEventListener("dragend", endFileDrag);
       window.removeEventListener("drop", onDrop);
     });
+  });
+
+  // The chords a page must not keep for itself: the app's own shortcuts, minus
+  // the bare keys and lone Ctrl+<key> a page uses as much as a shell does
+  // (Ctrl+C, Ctrl+F). Kept current as shortcuts are rebound.
+  createEffect(() => {
+    const chords = activeChords().filter((c) => !chordStealsFromTerminal(c));
+    void getBackend().then((backend) => backend.setBrowserChords(chords));
   });
 
   return (
@@ -918,6 +950,7 @@ export default function App() {
                 onTitle={(paneId, title) => store.updatePaneTitle(paneId, title)}
                 onClosePane={(id) => store.closePane(id)}
                 onOpenFile={handleOpenFile}
+                onPaneContent={(paneId, pane) => store.setPaneContent(paneId, pane)}
               />
             )}
           </Show>
@@ -948,6 +981,13 @@ export default function App() {
           </Show>
         </div>
       </div>
+      {/* The pages of every browser pane in this window, laid over their panes
+          (see lib/browser-registry.ts). */}
+      <div
+        class="browser-layer"
+        classList={{ "browser-layer-dragging": draggingPaneId() !== null }}
+        ref={(el) => onCleanup(mountBrowserLayer(el))}
+      />
     </div>
   );
 }

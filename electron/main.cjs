@@ -27,6 +27,7 @@ const { autoUpdater } = require("electron-updater");
 const { syncLocalRepoAfterUpdate } = require("./repo-sync.cjs");
 const { filePathsFromArgv } = require("./open-paths.cjs");
 const { registerPluginScheme, createPlugins } = require("./plugins.cjs");
+const { registerBrowserPanes } = require("./browser-panes.cjs");
 
 // Chromium fixes its privileged schemes at startup, so this one is declared
 // before anything else happens. See plugins.cjs.
@@ -144,6 +145,14 @@ let nextPtyId = 1;
 // the rest of this file stay window-agnostic: outbound IPC either targets the
 // window resolved from a request's sender, or fans out across these.
 const windows = new Set();
+
+// Browser panes: who may embed a page, and how it runs. See browser-panes.cjs.
+registerBrowserPanes({
+  app,
+  ipcMain,
+  session,
+  isAppWindow: (contents) => [...windows].some((w) => !w.isDestroyed() && w.webContents === contents),
+});
 
 // === Detached sessions (closing a window doesn't stop your shells) ===========
 //
@@ -773,6 +782,9 @@ function createWindow(opts = {}) {
       preload: path.join(__dirname, "preload.cjs"),
       nodeIntegration: false,
       contextIsolation: true,
+      // Browser panes' pages. What they may do is decided in browser-panes.cjs,
+      // whatever the element asks for.
+      webviewTag: true,
       // Read synchronously by the preload (see preload.cjs). This is the whole
       // point: the renderer knows what kind of window it is at module load, so
       // the first terminal spawns without waiting on a round trip to us.
