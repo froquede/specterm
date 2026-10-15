@@ -25,14 +25,19 @@
 // with are, together, too long to have fitted on a row. That still reads two
 // words as one when the first fills nearly the whole row and the second is
 // long too — rare enough to live with, where a short path landing on the last
-// column is not.
+// column is not. Except when the next row starts a link of its own (a scheme,
+// an absolute or home path): a list of paths or URLs, one per row, each long
+// enough to reach the edge, is common, and a break falling exactly before
+// `https://`, or before a `/` right after a file's extension, is not. A missed join copies what the row
+// shows, as before this existed; a wrong one copies something that doesn't
+// exist, so the doubt goes to keeping them apart.
 //
 // DOM-free on purpose, like lib/path-links.ts: this is guessing too, so it is
 // tested against a stand-in buffer (test/link-target.mjs). Keep it erasable
 // TypeScript — the test strips types with node rather than compiling.
 
 import type { IBuffer, IBufferCell, IBufferLine, Terminal } from "@xterm/xterm";
-import { findPathLinks } from "./path-links";
+import { findPathLinks, startsLink } from "./path-links";
 
 // How far the wrap walk will travel from the hovered row. A path can wrap once
 // or twice; a run of rows longer than this is a paragraph, and rebuilding it on
@@ -109,6 +114,16 @@ function textSpan(
   return first === -1 ? null : { first, last, headEnd, tailStart };
 }
 
+// The characters of `line` from column x0 to x1, at most as many as a link's
+// start needs to be recognized.
+function rowText(line: IBufferLine, x0: number, x1: number, cell: IBufferCell): string {
+  let text = "";
+  for (let x = x0; x <= x1 && text.length < 16; x++) {
+    if (line.getCell(x, cell) && cell.getWidth() !== 0) text += cell.getChars();
+  }
+  return text;
+}
+
 /**
  * Whether buffer row `y` carries on in row `y + 1`, and how: "soft" when the
  * terminal wrapped it (the next row is whole, flagged by xterm), "hard" when
@@ -140,7 +155,12 @@ function wrapAfter(
   // Too long to have fitted on the next row, so the wrapper had to break it.
   // Shorter, and it was two words that happened to meet at the edge.
   const run = here.last - here.tailStart + 1 + (below.headEnd - below.first + 1);
-  return run > cols - below.first - EDGE_SLACK ? "hard" : null;
+  if (run <= cols - below.first - EDGE_SLACK) return null;
+
+  // A new link starting the next row is a new line, not the rest of this one.
+  const nextHead = rowText(next, below.first, below.headEnd, cell);
+  const tail = rowText(line, Math.max(here.tailStart, here.last - 15), here.last, cell);
+  return startsLink(nextHead, tail) ? null : "hard";
 }
 
 /**

@@ -164,6 +164,25 @@ expect("padded box, path", prompt, 10, 2, file);
   const term = terminal(row.length, [row, "  because that is where the guessing lives"]);
   expect("longer path that fits exactly isn't glued", term, 30, 0, "/Users/me/projects/demo/src/lib/link-target.ts");
 }
+// Two paths listed one per row, the first reaching the edge: together long
+// enough to have needed a break, but the second starts a path of its own.
+{
+  const a = "/Users/me/projects/demo/src/lib/link-target.ts";
+  const b = "/Users/me/projects/demo/src/lib/terminal-links.ts";
+  const row = "⏺ Changed " + a;
+  const term = terminal(row.length, [row, "  " + b + " too"]);
+  expect("a path listed under one at the edge stays apart", term, 20, 0, a);
+  expect("a path listed under one at the edge stays apart, below", term, 10, 1, b);
+}
+// Indented URLs cut at the edge (less -S, vim nowrap): each row is its own.
+{
+  const a = "https://cdn.example.com/assets/" + "a".repeat(40);
+  const b = "https://cdn.example.com/other/" + "b".repeat(40);
+  const cols = 60;
+  const term = terminal(cols, ["  " + a.slice(0, cols - 2), "  " + b.slice(0, cols - 2)]);
+  expect("indented URLs cut at the edge stay apart", term, 10, 0, a.slice(0, cols - 2));
+  expect("indented URLs cut at the edge stay apart, below", term, 10, 1, b.slice(0, cols - 2));
+}
 // A row that stops short of the edge ended where its line did.
 {
   const term = terminal(40, ["⏺ wrote /tmp/out/a", "  b.txt and stopped"]);

@@ -77,6 +77,26 @@ const CANDIDATE = new RegExp(BRANCHES.join("|"), "g");
 // slashes and would otherwise be carved up into paths.
 const URL_LIKE = /(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.)[^\s"'`<>]+/g;
 
+// The start of a link that stands on its own: a URL's scheme or `www.`, a
+// home path, a Windows drive or share. A bare `/` is not here: it starts an
+// absolute path, but it is also every separator inside one.
+const LINK_START = /^(?:[A-Za-z][A-Za-z0-9+.-]*:\/\/|www\.|~\/|[A-Za-z]:[\\/]|\\\\)/;
+
+// A file name's extension closing a run of text.
+const ENDS_IN_EXTENSION = /\.[A-Za-z0-9]{1,8}$/;
+
+/**
+ * True when `next` begins a link of its own rather than continuing `previous`,
+ * the text right before it. A `/` is the root of a new absolute path only when
+ * what came before was already finished, which a file name with an extension
+ * says ("…/link-target.ts" then "/Users/…"); otherwise it is the next
+ * separator of the same path.
+ */
+export function startsLink(next: string, previous: string): boolean {
+  if (LINK_START.test(next)) return true;
+  return next.startsWith("/") && ENDS_IN_EXTENSION.test(previous);
+}
+
 // A quoted run — how a path with a space in it arrives ("~/My Documents/a.md").
 const QUOTED = /"([^"\n]{1,1024})"|'([^'\n]{1,1024})'/g;
 
