@@ -7,8 +7,8 @@
 // layer over the panes (`.browser-layer`, mounted by App), for as long as its
 // pane exists. The pane renders a placeholder; the page is laid over the
 // placeholder's rectangle while it is on screen, and hidden (still loaded,
-// still playing) while it is not. Pages whose pane is gone are destroyed by
-// `disposeBrowsersExcept`, which App runs whenever the tree changes.
+// still playing) while it is not. A page ends with its pane: the store calls
+// `disposeBrowser` through the pane kind's destroy and release (pane-kinds.ts).
 //
 // The page runs in its own sandboxed process with no preload and no Node,
 // in the `persist:browser` session (cookies kept across launches, apart from
@@ -258,26 +258,13 @@ export function attachBrowser(
   };
 }
 
-/** Destroy every page whose pane is not in `alive`. */
-export function disposeBrowsersExcept(alive: ReadonlySet<PaneId>) {
-  for (const [id, entry] of entries) {
-    if (alive.has(id)) continue;
-    entry.observer.disconnect();
-    entry.wrapper.remove();
-    entries.delete(id);
-  }
-}
-
-/** The pane whose page has this web contents id (a page asking for a new window). */
-export function browserPaneForWebContents(webContentsId: number): PaneId | null {
-  for (const [id, entry] of entries) {
-    try {
-      if (entry.ready && entry.view.getWebContentsId() === webContentsId) return id;
-    } catch {
-      /* not attached yet */
-    }
-  }
-  return null;
+/** Destroy `paneId`'s page. A no-op when it never had one. */
+export function disposeBrowser(paneId: PaneId) {
+  const entry = entries.get(paneId);
+  if (!entry) return;
+  entry.observer.disconnect();
+  entry.wrapper.remove();
+  entries.delete(paneId);
 }
 
 export function focusBrowser(paneId: PaneId): boolean {

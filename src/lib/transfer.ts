@@ -11,8 +11,9 @@
 // dropped into a window that happens to hold the same id can't collide.
 import { nanoid } from "nanoid";
 import type { SplitNode, Tab } from "../types";
-import type { TransferNode, TransferTab } from "../backends/types";
+import type { TransferNode, TransferPane, TransferTab } from "../backends/types";
 import { createLeaf, firstLeafId } from "./split-tree";
+import { paneKind } from "./pane-kinds";
 import {
   getTerminalInstance,
   registerAdoption,
@@ -34,10 +35,11 @@ async function serializeNode(node: SplitNode): Promise<TransferNode | null> {
     if (pane.kind === "image") {
       return { type: "leaf", pane: { kind: "image", filePath: pane.filePath } };
     }
-    // The page itself can't move between windows: the destination loads the
-    // address again.
-    if (pane.kind === "browser") {
-      return { type: "leaf", pane: { kind: "browser", url: pane.url } };
+    // A described kind travels as its snapshot (a browser pane, as its
+    // address): the destination rebuilds it from that.
+    const described = paneKind(pane.kind);
+    if (described) {
+      return { type: "leaf", pane: described.snapshot(node.id, pane) as TransferPane };
     }
     const instance = getTerminalInstance(node.id);
     if (!instance || instance.disposed || instance.ptyId === null) return null;
@@ -103,8 +105,8 @@ function rebuildNode(node: TransferNode): SplitNode {
     if (pane.kind === "image") {
       return createLeaf({ kind: "image", filePath: pane.filePath });
     }
-    if (pane.kind === "browser") {
-      return createLeaf({ kind: "browser", url: pane.url });
+    if (pane.kind !== "terminal") {
+      return createLeaf(paneKind(pane.kind)!.hydrate(pane));
     }
     const leaf = createLeaf({
       kind: "terminal",

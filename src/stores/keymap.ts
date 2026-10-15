@@ -178,7 +178,7 @@ export function createKeymap({
       key: "b",
       ...cmd({ shift: true }),
       label: "New browser tab",
-      run: () => store.createBrowserTab(),
+      run: () => store.createTab({ kind: "browser", url: "" }),
     },
     // Reopen the last closed tab or pane. macOS gets the browser's own ⌘⇧T,
     // which is free there. Linux/Windows can't: Ctrl+Shift+T is already "new

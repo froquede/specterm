@@ -66,7 +66,7 @@ import {
   saveSession,
 } from "./history";
 import { restoreLastSession } from "./settings";
-import { browserTitle } from "../lib/browser-registry";
+import { paneKind } from "../lib/pane-kinds";
 import { loadSidebarView, saveSidebarView } from "../lib/sidebar-state";
 
 function createTerminalTab(cwd = ""): Tab {
@@ -93,7 +93,7 @@ function paneEntryTitle(leaf: Extract<SplitNode, { type: "leaf" }>): string {
       "Terminal"
     );
   }
-  if (leaf.pane.kind === "browser") return browserTitle(leaf.id, leaf.pane.url);
+  if (!("filePath" in leaf.pane)) return paneKind(leaf.pane.kind)?.title(leaf.id, leaf.pane) ?? "File";
   return leaf.pane.filePath.split(/[\\/]/).pop() || "File";
 }
 
@@ -369,13 +369,21 @@ function activeTabIndex(): number {
   return getTabIndex(state().activeTabId);
 }
 
+// Pane contents are flat records of primitives, so a shallow compare is exact.
+function samePane(a: PaneType, b: PaneType): boolean {
+  const ka = Object.keys(a) as (keyof PaneType)[];
+  return ka.length === Object.keys(b).length && ka.every((k) => a[k] === b[k]);
+}
+
+// End whatever a pane is showing: its shell, or its kind's own content (a
+// browser pane's page). The file viewers hold nothing past their component.
+function destroyPaneContent(paneId: PaneId, pane: PaneType) {
+  if (pane.kind === "terminal") destroyTerminal(paneId);
+  else paneKind(pane.kind)?.destroy(paneId);
+}
+
 function killPanesInTree(root: SplitNode) {
-  const leaves = collectLeaves(root);
-  for (const leaf of leaves) {
-    if (leaf.pane.kind === "terminal") {
-      destroyTerminal(leaf.id);
-    }
-  }
+  for (const leaf of collectLeaves(root)) destroyPaneContent(leaf.id, leaf.pane);
 }
 
 // The tear-off counterpart of killPanesInTree: drop this window's terminals
@@ -384,6 +392,8 @@ function releasePanesInTree(root: SplitNode) {
   for (const leaf of collectLeaves(root)) {
     if (leaf.pane.kind === "terminal") {
       releaseTerminal(leaf.id);
+    } else {
+      paneKind(leaf.pane.kind)?.release(leaf.id);
     }
   }
 }
@@ -407,7 +417,7 @@ function paneTitle(leaf: SplitNode): string {
   if (leaf.pane.kind === "terminal") {
     return getTerminalInstance(leaf.id)?.title || "Terminal";
   }
-  if (leaf.pane.kind === "browser") return browserTitle(leaf.id, leaf.pane.url);
+  if (!("filePath" in leaf.pane)) return paneKind(leaf.pane.kind)?.title(leaf.id, leaf.pane) ?? "Pane";
   const fallback =
     leaf.pane.kind === "markdown" ? "Markdown" : leaf.pane.kind === "image" ? "Image" : "Text";
   return leaf.pane.filePath.split(/[\\/]/).pop() || fallback;
@@ -506,14 +516,26 @@ export function useTabStore() {
       return state().tabs.find((t) => t.id === state().activeTabId);
     },
 
-    createTab() {
-      // Same inheritance as a split: a new tab opens where the pane you were in
-      // is. The active pane may be a markdown/text view with no shell, in which
-      // case there's nothing to inherit and the startup path applies.
-      const current = state().tabs.find((t) => t.id === state().activeTabId);
-      const tab = createTerminalTab(
-        current ? getTerminalCwd(current.activePaneId) : ""
-      );
+    // A tab holding `pane`, or a terminal when none is given.
+    createTab(pane?: PaneType) {
+      let tab: Tab;
+      if (pane) {
+        const leaf = createLeaf(pane);
+        tab = {
+          id: nanoid(8),
+          title: paneTitle(leaf),
+          manualTitle: false,
+          root: leaf,
+          activePaneId: leaf.id,
+          paneHistory: [],
+        };
+      } else {
+        // Same inheritance as a split: a new tab opens where the pane you were
+        // in is. The active pane may be a markdown/text view with no shell, in
+        // which case there's nothing to inherit and the startup path applies.
+        const current = state().tabs.find((t) => t.id === state().activeTabId);
+        tab = createTerminalTab(current ? getTerminalCwd(current.activePaneId) : "");
+      }
       update((s) => ({
         ...s,
         tabs: [...s.tabs, tab],
@@ -791,95 +813,23 @@ export function useTabStore() {
       return transfer;
     },
 
-    createMarkdownTab(filePath: string) {
-      const leaf = createLeaf({ kind: "markdown", filePath });
-      const tab: Tab = {
-        id: nanoid(8),
-        title: filePath.split("/").pop() || "Markdown",
-        manualTitle: false,
-        root: leaf,
-        activePaneId: leaf.id,
-        paneHistory: [],
-      };
-      update((s) => ({
-        ...s,
-        tabs: [...s.tabs, tab],
-        activeTabId: tab.id,
-        tabHistory: pushMru(s.tabHistory, s.activeTabId),
-      }));
-      return tab;
-    },
-
-    createTextTab(filePath: string) {
-      const leaf = createLeaf({ kind: "text", filePath });
-      const tab: Tab = {
-        id: nanoid(8),
-        title: filePath.split(/[\\/]/).pop() || "Text",
-        manualTitle: false,
-        root: leaf,
-        activePaneId: leaf.id,
-        paneHistory: [],
-      };
-      update((s) => ({
-        ...s,
-        tabs: [...s.tabs, tab],
-        activeTabId: tab.id,
-        tabHistory: pushMru(s.tabHistory, s.activeTabId),
-      }));
-      return tab;
-    },
-
-    createImageTab(filePath: string) {
-      const leaf = createLeaf({ kind: "image", filePath });
-      const tab: Tab = {
-        id: nanoid(8),
-        title: filePath.split(/[\\/]/).pop() || "Image",
-        manualTitle: false,
-        root: leaf,
-        activePaneId: leaf.id,
-        paneHistory: [],
-      };
-      update((s) => ({
-        ...s,
-        tabs: [...s.tabs, tab],
-        activeTabId: tab.id,
-        tabHistory: pushMru(s.tabHistory, s.activeTabId),
-      }));
-      return tab;
-    },
-
-    // A web page in a tab of its own. An empty url opens a blank page with the
-    // address bar focused.
-    createBrowserTab(url = "") {
-      const leaf = createLeaf({ kind: "browser", url });
-      const tab: Tab = {
-        id: nanoid(8),
-        title: browserTitle(leaf.id, url),
-        manualTitle: false,
-        root: leaf,
-        activePaneId: leaf.id,
-        paneHistory: [],
-      };
-      update((s) => ({
-        ...s,
-        tabs: [...s.tabs, tab],
-        activeTabId: tab.id,
-        tabHistory: pushMru(s.tabHistory, s.activeTabId),
-      }));
-      return tab;
-    },
-
-    // A browser pane navigated: keep its address in the tree, which is what a
-    // snapshot, a reopen and a move to another window read.
-    setBrowserUrl(paneId: PaneId, url: string) {
+    // Put new content in an open pane, keeping its place in the split and its
+    // id. Content of the same kind (a browser pane's next address) updates in
+    // place; a different kind ends what the pane held first, as closing it would.
+    setPaneContent(paneId: PaneId, pane: PaneType) {
       const s = state();
       const tab = s.tabs.find((t) => findLeafNode(t.root, paneId));
       const leaf = tab && findLeafNode(tab.root, paneId);
-      if (!tab || !leaf || leaf.pane.kind !== "browser" || leaf.pane.url === url) return;
+      if (!tab || !leaf) return;
+      if (samePane(leaf.pane, pane)) return;
+      if (leaf.pane.kind !== pane.kind) {
+        recordClosedPane(snapshotNode(leaf), tab.id, paneEntryTitle(leaf));
+        destroyPaneContent(paneId, leaf.pane);
+      }
       const swap = (node: SplitNode): SplitNode =>
         node.type === "leaf"
           ? node.id === paneId
-            ? { ...node, pane: { kind: "browser", url } }
+            ? { ...node, pane }
             : node
           : { ...node, first: swap(node.first), second: swap(node.second) };
       update(() => ({
@@ -1068,9 +1018,7 @@ export function useTabStore() {
       if (leaf) {
         recordClosedPane(snapshotNode(leaf), tab.id, paneEntryTitle(leaf));
       }
-      if (leaf?.pane.kind === "terminal") {
-        destroyTerminal(paneId);
-      }
+      if (leaf) destroyPaneContent(paneId, leaf.pane);
 
       update(() => ({
         ...s,

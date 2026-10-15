@@ -1,6 +1,7 @@
-import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js";
+import { createEffect, createSignal, on, onCleanup, onMount, Show } from "solid-js";
 import { attachBrowser, type BrowserView } from "../lib/browser-registry";
 import { getBackend } from "../backends";
+import type { PaneViewProps } from "../lib/pane-kinds";
 import {
   IconArrowLeft,
   IconArrowRight,
@@ -11,51 +12,56 @@ import {
   ICON_STROKE,
 } from "../lib/icons";
 
-interface BrowserPaneProps {
-  paneId: string;
-  url: string;
-  isActive: boolean;
-  onFocus: () => void;
-  onNavigate: (url: string) => void;
-  onTitle: (title: string) => void;
-}
-
 // A web page in a pane: back, forward, reload and an address bar over the
 // page. The page itself is not rendered here. It lives in the browser layer
 // (lib/browser-registry.ts) so that it survives this component unmounting,
 // which happens on every switch to another tab; this renders the placeholder
 // the page is laid over.
-export default function BrowserPane(props: BrowserPaneProps) {
+export default function BrowserPane(props: PaneViewProps<"browser">) {
   let placeholder!: HTMLDivElement;
   let input!: HTMLInputElement;
   const [view, setView] = createSignal<BrowserView | null>(null);
   const [draft, setDraft] = createSignal<string | null>(null);
 
   onMount(() => {
-    const { view: v, detach } = attachBrowser(props.paneId, props.url, placeholder, {
+    const { view: v, detach } = attachBrowser(props.paneId, props.pane.url, placeholder, {
       onFocus: props.onFocus,
-      onNavigate: props.onNavigate,
+      onNavigate: (url) => props.onContent({ kind: "browser", url }),
       onTitle: props.onTitle,
     });
     setView(v);
     onCleanup(detach);
     if (v.title()) props.onTitle(v.title());
     // A new page starts at the address bar.
-    if (!props.url && props.isActive) input.focus();
+    if (!props.pane.url && props.isActive) input.focus();
   });
+
+  // The pane handed a new address from outside (tabs.setPaneContent): load it.
+  // The page's own navigations come back through onContent with the address
+  // it is already at, so they don't load twice.
+  createEffect(
+    on(
+      () => props.pane.url,
+      (url) => {
+        const v = view();
+        if (v && url && url !== v.url()) v.navigate(url);
+      },
+      { defer: true }
+    )
+  );
 
   // The address shown: what is being typed, else where the page is.
   const shown = () => {
     const d = draft();
     if (d !== null) return d;
-    const u = view()?.url() ?? props.url;
+    const u = view()?.url() ?? props.pane.url;
     return u === "about:blank" ? "" : u;
   };
 
   // Focus moving to this pane from the keyboard (a pane switch shortcut)
   // hands the keyboard to the page, as it would to a terminal.
   createEffect(() => {
-    if (props.isActive && document.activeElement !== input && props.url) view()?.focus();
+    if (props.isActive && document.activeElement !== input && props.pane.url) view()?.focus();
   });
 
   function submit(e: Event) {
