@@ -47,14 +47,13 @@ function selectedText(field: TextField): string {
 }
 
 async function pasteInto(field: TextField) {
-  let text = await clipboardReadText();
+  const text = await clipboardReadText();
   // The read is async: if focus moved meanwhile, the text is not for this field.
   if (!text || document.activeElement !== field) return;
-  // A single-line field has no line breaks; Blink's own paste drops them too.
-  if (field instanceof HTMLInputElement) text = text.replace(/[\r\n]+/g, "");
   // insertText rather than assigning .value: it replaces the selection, keeps
   // the field's undo history, and fires the input event its component listens
-  // to — the same things a native paste does.
+  // to — the same things a native paste does. A single-line field gets each
+  // line break as a space from it, as a native paste gives.
   document.execCommand("insertText", false, text);
 }
 
