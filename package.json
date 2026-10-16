@@ -1,7 +1,7 @@
 {
   "name": "specterm",
   "private": true,
-  "version": "0.31.0",
+  "version": "0.32.0",
   "description": "A fast, GPU-accelerated terminal emulator with built-in markdown preview.",
   "license": "Apache-2.0",
   "author": "Roque Francisco <roquefsd@gmail.com>",
@@ -84,9 +84,18 @@
       "build/icon.png"
     ],
     "extraResources": [
-      { "from": "LICENSE", "to": "licenses/LICENSE" },
-      { "from": "NOTICE", "to": "licenses/NOTICE" },
-      { "from": "src/assets/fonts/OFL.txt", "to": "licenses/OFL.txt" }
+      {
+        "from": "LICENSE",
+        "to": "licenses/LICENSE"
+      },
+      {
+        "from": "NOTICE",
+        "to": "licenses/NOTICE"
+      },
+      {
+        "from": "src/assets/fonts/OFL.txt",
+        "to": "licenses/OFL.txt"
+      }
     ],
     "linux": {
       "target": [

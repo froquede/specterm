@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.32.0 — 2026-10-16
+
+### Added
+- **Browser panes.** A web page in a tab or a split, with back, forward,
+  reload, an address bar (an address or a search) and *Open in your browser*.
+  ⌘⇧B on macOS, Ctrl+Alt+B on Linux and Windows (`browser.new`, rebindable).
+  - A page keeps running in a background tab (a video keeps playing) and comes
+    back where it was after a restart, a reopened tab or a move to another
+    window.
+  - Links that open a new window open a browser tab. The app's shortcuts work
+    with a page focused.
+  - Pages run sandboxed, with no Node, in their own session, at http(s) only,
+    with every permission but full screen, pointer lock and copying refused.
+- **Specterm Mono, a bundled font.** Monaspace Neon without hinting, renamed as
+  its license requires. The UI, the terminal, markdown, the text viewer and the
+  editors use it on every OS, and it is first in the font picker. On Windows,
+  text is smoothed in grayscale and the UI's text gets a hairline of weight,
+  so it no longer reads thin and jagged. The licenses now ship with the app.
+
+### Fixed
+- **macOS: ⌘V, ⌘C, ⌘X, ⌘A, ⌘Z and ⌘⇧Z work in text fields** (the plugin URL
+  box, the sidebar filter, find bars, tab rename, settings). A line break
+  pasted into a single-line field becomes a space.
+- **A path or URL that a program broke across two rows copies whole.** Claude
+  Code breaks a long word at the last column and carries it on, indented, in
+  the next row; clicking either row now copies the whole link, and the
+  underline skips the indent. A path or URL listed on the next row stays a
+  separate link.
+
 ## 0.31.0 — 2026-10-07
 
 ### Added
