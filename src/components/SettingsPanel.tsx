@@ -153,6 +153,7 @@ const CATEGORY_IDS = [
   "terminal",
   "keybindings",
   "sessions",
+  "plugins",
   "updates",
 ] as const;
 
