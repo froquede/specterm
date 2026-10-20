@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.33.0 — 2026-10-20
+
+### Changed
+- **Settings explain themselves on demand.** The paragraph under nearly every
+  setting moved behind an info icon beside its label: hover or focus shows it,
+  a click keeps it open. Errors, the clock preview and the plugin trust warning
+  stay on the page, and Reset sits beside the value it resets.
+
+### Fixed
+- **A command or reply Claude Code wrapped copies as one line.** Claude Code
+  lays out its own rows, so a long `Bash(…)` command copied with a line break
+  and the indent at every row. The rows a program wrapped are now joined back,
+  without the indent. Output a shell printed copies as before.
+- **A selection stays on its text while Claude Code scrolls.** In a program
+  that scrolls by redrawing, the highlight stayed put while the text moved
+  under it. It now follows the text; if the text scrolls away, copying still
+  returns what you selected.
+- **Collapse all / Expand all fold the Plugins category too.**
+
 ## 0.32.0 — 2026-10-16
 
 ### Added
