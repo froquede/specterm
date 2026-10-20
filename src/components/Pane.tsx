@@ -37,6 +37,7 @@ interface PaneProps {
   onFocus: () => void;
   onTitle?: (paneId: PaneId, title: string) => void;
   onClose?: () => void;
+  onExit?: () => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
   onPaneContent?: (paneId: PaneId, pane: PaneType) => void;
   onDrop?: (
@@ -283,7 +284,7 @@ export default function Pane(props: PaneProps) {
               setHasTermTitle(true);
               props.onTitle?.(paneId, t);
             }}
-            onExit={props.onClose}
+            onExit={props.onExit}
             onOpenFile={props.onOpenFile}
           />
         </Show>

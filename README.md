@@ -167,6 +167,14 @@ being touched. No clone, no `git`, no network — it skips. See
 (`Ctrl+V`/`Ctrl+C`/`Ctrl+X`) act on the document rather than the terminal behind
 it, and right-clicking offers the same.
 
+**Closing the last pane closes the window.** When a window is down to one tab
+holding one pane, closing that pane — `⌘W`, `⌘⇧W`, the pane's or the tab's ×, a
+middle click on the tab — closes the window rather than putting a fresh terminal
+in its place. Its shell ends with it, so nothing parks and the window doesn't
+come back on the next launch; if it was the last window and nothing is parked,
+the app quits. A shell that exits on its own (`exit`) still leaves a fresh
+terminal behind.
+
 **Closing with something still running.** A window's terminals die with it, so
 closing one — or quitting — while a build, a test run or a Claude session is in
 flight asks first, naming what is running. The answer comes from the shells' own

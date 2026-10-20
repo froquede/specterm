@@ -13,8 +13,8 @@ asserting on observable behavior.
   named on the command line** (an image and a markdown file, one absolute and
   one relative), which is the whole of what the app does with `argv`.
 - **`e2e-windows.mjs`** — multi-window behaviour: tearing a tab out into a window
-  of its own, dropping it onto another, and settings/theme changes propagating to
-  every open window.
+  of its own, dropping it onto another, a window closing with its last pane, and
+  settings/theme changes propagating to every open window.
 - **`e2e-session.mjs`** — session continuity, which needs the app closed and
   reopened repeatedly and so can't live in the suite above (it is already close to
   its time budget). Covers the two independent mechanisms: **detaching** (closing a

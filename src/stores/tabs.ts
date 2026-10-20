@@ -58,6 +58,7 @@ import {
 } from "../lib/session-screens";
 import {
   flushSession,
+  forgetWindowLayout,
   takeLegacySession,
   validateWindowSnapshot,
   popClosed,
@@ -66,6 +67,7 @@ import {
   saveSession,
 } from "./history";
 import { restoreLastSession } from "./settings";
+import { closeWindow } from "./window-chrome";
 import { paneKind } from "../lib/pane-kinds";
 import { loadSidebarView, saveSidebarView } from "../lib/sidebar-state";
 
@@ -838,7 +840,13 @@ export function useTabStore() {
       }));
     },
 
-    closeTab(tabId: string) {
+    // `closeWindowIfLast` is for the user's own close gestures: the X on a tab or
+    // a pane, the middle click, the close shortcuts. When the tab is the window's
+    // only one and holds a single pane, the window closes with it rather than
+    // getting a fresh terminal in its place. A pane whose process exited doesn't
+    // pass it: every shell dies on the way out of a Quit, and those exits must not
+    // close windows the session is about to save.
+    closeTab(tabId: string, opts: { closeWindowIfLast?: boolean } = {}) {
       const s = state();
       const idx = s.tabs.findIndex((t) => t.id === tabId);
       if (idx === -1) return;
@@ -851,7 +859,23 @@ export function useTabStore() {
       killPanesInTree(s.tabs[idx].root);
 
       const newTabs = s.tabs.filter((t) => t.id !== tabId);
-      if (newTabs.length === 0) {
+      if (
+        newTabs.length === 0 &&
+        opts.closeWindowIfLast &&
+        s.tabs[idx].root.type === "leaf"
+      ) {
+        // Left empty, as takeTab leaves a window whose last tab moved away. The
+        // shells are already dead, so a window that parks on close has nothing to
+        // park, and nothing brings it back on the next launch.
+        update(() => ({
+          ...s,
+          tabs: [],
+          activeTabId: "",
+          tabHistory: [],
+        }));
+        forgetWindowLayout();
+        void closeWindow();
+      } else if (newTabs.length === 0) {
         const tab = createTerminalTab();
         update(() => ({
           ...s,
@@ -996,7 +1020,7 @@ export function useTabStore() {
       return newLeaf.id;
     },
 
-    closePane(paneId: PaneId) {
+    closePane(paneId: PaneId, opts: { closeWindowIfLast?: boolean } = {}) {
       const s = state();
       const idx = s.tabs.findIndex((t) => t.id === s.activeTabId);
       if (idx === -1) return;
@@ -1010,7 +1034,7 @@ export function useTabStore() {
       // entries on the stack for one keystroke, so the tree is pruned before
       // anything is captured or destroyed.
       if (newRoot === null) {
-        this.closeTab(tab.id);
+        this.closeTab(tab.id, opts);
         return;
       }
 

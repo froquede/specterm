@@ -204,7 +204,7 @@ export function createKeymap({
       label: "Close tab",
       run: () => {
         const tab = store.activeTab;
-        if (tab) store.closeTab(tab.id);
+        if (tab) store.closeTab(tab.id, { closeWindowIfLast: true });
       },
     },
     {
@@ -295,7 +295,7 @@ export function createKeymap({
       label: "Close pane",
       run: () => {
         const tab = store.activeTab;
-        if (tab) store.closePane(tab.activePaneId);
+        if (tab) store.closePane(tab.activePaneId, { closeWindowIfLast: true });
       },
     },
 
