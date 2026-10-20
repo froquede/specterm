@@ -132,6 +132,7 @@ import {
 } from "../lib/icons-lazy";
 import KeybindingsSettings from "./KeybindingsSettings";
 import PluginsSettings from "./PluginsSettings";
+import SettingsInfo from "./SettingsInfo";
 import { capturing } from "../stores/keybindings";
 
 interface SettingsPanelProps {
@@ -584,9 +585,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <Category id="appearance" title="Appearance" icon={IconAppearance}>
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="theme-select">
-                Theme
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="theme-select">
+                  Theme
+                </label>
+                <SettingsInfo about="Theme">
+                  Pick one, browse the bundled base16 schemes, or bring your own:
+                  open a file, paste one, or drag it onto the window. A theme
+                  recolors the terminal and the app.
+                </SettingsInfo>
+              </span>
               <Show when={activeIsCustom()}>
                 <button
                   class="settings-reset"
@@ -685,8 +693,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 onInput={(e) => setImportText(e.currentTarget.value)}
                 rows={6}
               />
-              <div class="settings-row">
-                <span class="settings-hint">base00–base0F → terminal + chrome.</span>
+              <div class="settings-row settings-row-end">
                 <button
                   class="settings-reset"
                   disabled={!importText().trim()}
@@ -700,17 +707,20 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             <Show when={importError()}>
               <div class="settings-error">{importError()}</div>
             </Show>
-            <p class="settings-hint">
-              Drag a base16 file onto the window, or browse hundreds of schemes
-              above. Imports recolor the terminal and the app.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="font-select">
-                Terminal font
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="font-select">
+                  Terminal font
+                </label>
+                <SettingsInfo about="Terminal font">
+                  {fontsLoading()
+                    ? "Looking for the monospace fonts installed on this system…"
+                    : `The monospace fonts installed on this system (${fonts().length} found).`}
+                </SettingsInfo>
+              </span>
               <Show when={terminalFontFamily() !== ""}>
                 <button
                   class="settings-reset"
@@ -748,19 +758,26 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 </For>
               </select>
             </SelectField>
-            <p class="settings-hint">
-              {fontsLoading()
-                ? "Detecting installed monospace fonts…"
-                : `${fonts().length} monospace font${fonts().length === 1 ? "" : "s"} found on this system.`}
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="font-size">
-                Terminal font size
-              </label>
-              <span class="settings-value">{terminalFontSize()}px</span>
+              <span class="settings-label-line">
+                <label class="settings-label" for="font-size">
+                  Terminal font size
+                </label>
+                <SettingsInfo about="Terminal font size">
+                  Also ⌘= / ⌘- / ⌘0 while a terminal is focused.
+                </SettingsInfo>
+              </span>
+              <span class="settings-row-trail">
+                <Show when={terminalFontSize() !== DEFAULT_FONT_SIZE}>
+                  <button class="settings-reset" onClick={resetTerminalFontSize}>
+                    Reset
+                  </button>
+                </Show>
+                <span class="settings-value">{terminalFontSize()}px</span>
+              </span>
             </div>
             <input
               ref={(el) => {
@@ -778,24 +795,27 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               step={1}
               onInput={(e) => setTerminalFontSize(Number(e.currentTarget.value))}
             />
-            <div class="settings-row">
-              <p class="settings-hint">
-                Also adjustable with ⌘= / ⌘- / ⌘0 while a terminal is focused.
-              </p>
-              <Show when={terminalFontSize() !== DEFAULT_FONT_SIZE}>
-                <button class="settings-reset" onClick={resetTerminalFontSize}>
-                  Reset
-                </button>
-              </Show>
-            </div>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="unfocused-opacity">
-                Unfocused pane opacity
-              </label>
-              <span class="settings-value">{pct()}%</span>
+              <span class="settings-label-line">
+                <label class="settings-label" for="unfocused-opacity">
+                  Unfocused pane opacity
+                </label>
+                <SettingsInfo about="Unfocused pane opacity">
+                  How visible the split panes you aren't in are. 100% is no
+                  dimming.
+                </SettingsInfo>
+              </span>
+              <span class="settings-row-trail">
+                <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
+                  <button class="settings-reset" onClick={reset}>
+                    Reset
+                  </button>
+                </Show>
+                <span class="settings-value">{pct()}%</span>
+              </span>
             </div>
             <input
               ref={(el) => {
@@ -812,24 +832,27 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               step={0.05}
               onInput={(e) => setUnfocusedOpacity(Number(e.currentTarget.value))}
             />
-            <div class="settings-row">
-              <p class="settings-hint">
-                How visible inactive split panes are. 100% = no dimming.
-              </p>
-              <Show when={unfocusedOpacity() !== UNFOCUSED_OPACITY_DEFAULT}>
-                <button class="settings-reset" onClick={reset}>
-                  Reset
-                </button>
-              </Show>
-            </div>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="window-opacity">
-                Window opacity
-              </label>
-              <span class="settings-value">{winPct()}%</span>
+              <span class="settings-label-line">
+                <label class="settings-label" for="window-opacity">
+                  Window opacity
+                </label>
+                <SettingsInfo about="Window opacity">
+                  Lets the desktop show through the whole window. 100% is
+                  opaque.
+                </SettingsInfo>
+              </span>
+              <span class="settings-row-trail">
+                <Show when={windowOpacity() !== WINDOW_OPACITY_DEFAULT}>
+                  <button class="settings-reset" onClick={resetWindow}>
+                    Reset
+                  </button>
+                </Show>
+                <span class="settings-value">{winPct()}%</span>
+              </span>
             </div>
             <input
               ref={(el) => {
@@ -847,17 +870,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
               step={0.05}
               onInput={(e) => setWindowOpacity(Number(e.currentTarget.value))}
             />
-            <div class="settings-row">
-              <p class="settings-hint">
-                Whole-window transparency, so the desktop shows through. 100% =
-                opaque.
-              </p>
-              <Show when={windowOpacity() !== WINDOW_OPACITY_DEFAULT}>
-                <button class="settings-reset" onClick={resetWindow}>
-                  Reset
-                </button>
-              </Show>
-            </div>
           </div>
         </Category>
 
@@ -865,7 +877,20 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <Category id="layout" title="Layout" icon={IconLayout}>
           <div class="settings-section">
             <div class="settings-row">
-              <span class="settings-label">Tab bar corner</span>
+              <span class="settings-label-line">
+                <span class="settings-label">Tab bar corner</span>
+                <SettingsInfo about="Tab bar corner">
+                  <p>
+                    Which edge the tabs sit on, and which end of it they hug. At
+                    the bottom, the window controls stay up top.
+                  </p>
+                  <p>
+                    The sidebar's width is set by dragging its edge, and is
+                    shared by the file tree and this panel. <em>Reset all</em>{" "}
+                    puts it back too.
+                  </p>
+                </SettingsInfo>
+              </span>
               <Show when={chromeLayoutIsCustom()}>
                 <button class="settings-reset" onClick={resetChromeLayout}>
                   Reset all
@@ -896,24 +921,19 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 )}
               </For>
             </div>
-            <p class="settings-hint">
-              Which edge the tabs sit on, and which end of it they hug. Moved to
-              the bottom, the window controls stay up top where you reach for
-              them.
-            </p>
-            <p class="settings-hint">
-              The sidebar's width is set by dragging the edge between it and the
-              panes — one width for both the file tree and this panel, so
-              switching between them never shifts the layout. <em>Reset all</em>
-              puts it back too.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="chrome-style">
-                Chrome style
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="chrome-style">
+                  Chrome style
+                </label>
+                <SettingsInfo about="Chrome style">
+                  Modern floats the panes and the sidebar as rounded cards, with
+                  the gaps as dividers. Classic is the original flat layout.
+                </SettingsInfo>
+              </span>
               <SelectField>
                 <select
                   id="chrome-style"
@@ -928,18 +948,19 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 </select>
               </SelectField>
             </div>
-            <p class="settings-hint">
-              Modern floats the panes and sidebar as rounded cards, with the gaps
-              between them as the dividers. Classic is the original flat layout.
-            </p>
           </div>
 
           <Show when={chromeStyle() === "modern"}>
             <div class="settings-section">
               <div class="settings-row">
-                <label class="settings-label" for="pane-gap">
-                  Gap between panes
-                </label>
+                <span class="settings-label-line">
+                  <label class="settings-label" for="pane-gap">
+                    Gap between panes
+                  </label>
+                  <SettingsInfo about="Gap between panes">
+                    Also how thick the dividers are to grab.
+                  </SettingsInfo>
+                </span>
                 <span class="settings-value">{paneGap()}px</span>
               </div>
               <input
@@ -952,9 +973,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 value={paneGap()}
                 onInput={(e) => setPaneGap(Number(e.currentTarget.value))}
               />
-              <p class="settings-hint">
-                Also how thick the dividers are to grab.
-              </p>
             </div>
 
             <div class="settings-section">
@@ -998,9 +1016,15 @@ export default function SettingsPanel(props: SettingsPanelProps) {
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="tab-bar-autohide">
-                Auto-hide the tab bar
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="tab-bar-autohide">
+                  Auto-hide the tab bar
+                </label>
+                <SettingsInfo about="Auto-hide the tab bar">
+                  Panes take the whole window; the bar slides back in when you
+                  reach for its edge.
+                </SettingsInfo>
+              </span>
               <input
                 id="tab-bar-autohide"
                 type="checkbox"
@@ -1009,17 +1033,26 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 onChange={(e) => setTabBarAutoHide(e.currentTarget.checked)}
               />
             </div>
-            <p class="settings-hint">
-              Panes take the whole window; the bar slides back in when you reach
-              for its edge.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="custom-title-bar">
-                Tab bar replaces the title bar
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="custom-title-bar">
+                  Tab bar replaces the title bar
+                </label>
+                <SettingsInfo about="Tab bar replaces the title bar">
+                  <p>
+                    Drops the system title bar and puts the window controls in
+                    the tab bar. Applies to windows opened after the change.
+                    macOS always works this way.
+                  </p>
+                  <p>
+                    On Linux the frame comes off entirely and resizing is up to
+                    your compositor: turn this off if that ends up worse.
+                  </p>
+                </SettingsInfo>
+              </span>
               <input
                 id="custom-title-bar"
                 type="checkbox"
@@ -1028,21 +1061,22 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 onChange={(e) => setCustomTitleBar(e.currentTarget.checked)}
               />
             </div>
-            <p class="settings-hint">
-              Drops the system title bar and puts the window controls in the tab
-              bar, so the panes get the space back. Takes effect on the next
-              window — a frame can't be added to or taken off one that's already
-              open. macOS always works this way. On Linux the frame comes off
-              entirely and resizing is then up to your compositor, so turn this
-              off if that ends up worse than the decorations it replaced.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="clock-enabled">
-                Clock in the tab bar
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="clock-enabled">
+                  Clock in the tab bar
+                </label>
+                <SettingsInfo about="Clock in the tab bar">
+                  Format tokens: <code>HH</code> <code>mm</code> <code>ss</code>{" "}
+                  <code>DD</code> <code>MM</code> <code>YYYY</code>{" "}
+                  <code>ddd</code> <code>h</code> <code>a</code>. Wrap literal
+                  text in brackets: <code>[at] HH:mm</code>. Seconds make it tick
+                  every second instead of every minute.
+                </SettingsInfo>
+              </span>
               <input
                 id="clock-enabled"
                 type="checkbox"
@@ -1065,16 +1099,18 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 }}
               />
               <p class="settings-hint">
-                Now: <strong>{clockPreview()}</strong> — <code>HH</code>{" "}
-                <code>mm</code> <code>ss</code> <code>DD</code> <code>MM</code>{" "}
-                <code>YYYY</code> <code>ddd</code> <code>h</code> <code>a</code>.
-                Wrap literal text in brackets: <code>[at] HH:mm</code>. Seconds
-                make it tick every second instead of every minute.
+                Now: <strong>{clockPreview()}</strong>
               </p>
               <div class="settings-row">
-                <label class="settings-label" for="clock-battery">
-                  Battery level beside the clock
-                </label>
+                <span class="settings-label-line">
+                  <label class="settings-label" for="clock-battery">
+                    Battery level beside the clock
+                  </label>
+                  <SettingsInfo about="Battery level beside the clock">
+                    Handy in fullscreen, where the system panel is hidden. Only
+                    on machines that report a battery; red at 15% or less.
+                  </SettingsInfo>
+                </span>
                 <input
                   id="clock-battery"
                   type="checkbox"
@@ -1083,14 +1119,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                   onChange={(e) => setClockBattery(e.currentTarget.checked)}
                 />
               </div>
-              <p class="settings-hint">
-                Handy in fullscreen, where the system panel is hidden. Shown only
-                on machines that report a battery, and in red at 15% or less.
-              </p>
               <div class="settings-row">
-                <label class="settings-label" for="clock-offline">
-                  Offline indicator beside the clock
-                </label>
+                <span class="settings-label-line">
+                  <label class="settings-label" for="clock-offline">
+                    Offline indicator beside the clock
+                  </label>
+                  <SettingsInfo about="Offline indicator beside the clock">
+                    Only while there is no network connection at all. Wi-Fi that
+                    is connected but has no internet doesn't count.
+                  </SettingsInfo>
+                </span>
                 <input
                   id="clock-offline"
                   type="checkbox"
@@ -1099,10 +1137,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                   onChange={(e) => setClockOffline(e.currentTarget.checked)}
                 />
               </div>
-              <p class="settings-hint">
-                Appears only while there is no network connection at all. Wi-Fi
-                that is connected but has no internet doesn't count.
-              </p>
             </Show>
           </div>
         </Category>
@@ -1111,9 +1145,15 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <Category id="terminal" title="Terminal" icon={IconTerminal}>
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="startup-path">
-                Default terminal path
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="startup-path">
+                  Default terminal path
+                </label>
+                <SettingsInfo about="Default terminal path">
+                  Where new terminals open and the file sidebar starts. Blank is
+                  your home directory.
+                </SettingsInfo>
+              </span>
               <Show when={startupPath() !== ""}>
                 <button
                   class="settings-reset"
@@ -1142,10 +1182,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             <Show when={startupError()}>
               <div class="settings-error">{startupError()}</div>
             </Show>
-            <p class="settings-hint">
-              Where new terminals open and the file sidebar starts. Blank uses
-              your home directory.
-            </p>
           </div>
         </Category>
 
@@ -1158,9 +1194,16 @@ export default function SettingsPanel(props: SettingsPanelProps) {
         <Category id="sessions" title="Sessions" icon={IconSessions}>
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="restore-last-session">
-                Reopen tabs on start
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="restore-last-session">
+                  Reopen tabs on start
+                </label>
+                <SettingsInfo about="Reopen tabs on start">
+                  Brings back the tabs, splits, directories, screens and names
+                  you had. The shells are new: nothing you were running is
+                  restarted.
+                </SettingsInfo>
+              </span>
               <input
                 id="restore-last-session"
                 type="checkbox"
@@ -1169,18 +1212,21 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 onChange={(e) => setRestoreLastSession(e.currentTarget.checked)}
               />
             </div>
-            <p class="settings-hint">
-              Brings back the tabs, splits, directories and screens you had open,
-              with the names they had. The shells are new — nothing you were
-              running is restarted.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="background-sessions">
-                Keep shells running when a window closes
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="background-sessions">
+                  Keep shells running when a window closes
+                </label>
+                <SettingsInfo about="Keep shells running when a window closes">
+                  Closing a window detaches it: the shells keep running and the
+                  tray icon brings them back where they were. Quit, from the tray
+                  or the app menu, is what ends them. Off, closing a window ends
+                  it, and a restart reopens the tabs instead.
+                </SettingsInfo>
+              </span>
               <input
                 id="background-sessions"
                 type="checkbox"
@@ -1189,20 +1235,20 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 onChange={(e) => setBackgroundSessions(e.currentTarget.checked)}
               />
             </div>
-            <p class="settings-hint">
-              Closing a window detaches it instead of ending it: your shells keep
-              running and a tray icon brings them back, exactly where they were.
-              Quit — from the tray menu or the app menu — is what actually ends
-              them. Off means closing a window closes it for good, and a restart
-              falls back to reopening the tabs above.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="session-restore-mode">
-                Resumable sessions
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="session-restore-mode">
+                  Resumable sessions
+                </label>
+                <SettingsInfo about="Resumable sessions">
+                  A restored pane that was running Claude Code remembers its
+                  session. "Type" leaves <code>claude --resume …</code> at the
+                  prompt for you to confirm; "run" submits it.
+                </SettingsInfo>
+              </span>
             </div>
             <SelectField>
               <select
@@ -1218,18 +1264,21 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 <option value="run">Run the resume command</option>
               </select>
             </SelectField>
-            <p class="settings-hint">
-              When a restored pane was running Claude Code, its session is
-              remembered. "Type" leaves <code>claude --resume …</code> at the
-              prompt for you to confirm; "run" submits it.
-            </p>
           </div>
 
           <div class="settings-section">
             <div class="settings-row">
-              <label class="settings-label" for="claude-attention-mode">
-                Flag panes waiting on you
-              </label>
+              <span class="settings-label-line">
+                <label class="settings-label" for="claude-attention-mode">
+                  Flag panes waiting on you
+                </label>
+                <SettingsInfo about="Flag panes waiting on you">
+                  A dot on the tab and the pane's title bar when Claude Code
+                  finishes a turn or asks permission. "Detect it" needs no setup
+                  and watches for a working pane going quiet. A terminal bell
+                  counts either way.
+                </SettingsInfo>
+              </span>
             </div>
             <SelectField>
               <select
@@ -1247,12 +1296,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                 <option value="hooks">On — let Claude say so</option>
               </select>
             </SelectField>
-            <p class="settings-hint">
-              A dot on the tab and on the pane's title-bar when Claude Code has
-              finished a turn or is asking permission, so you can leave it running
-              in another tab. "Detect it" needs no setup and watches for a pane
-              that was working going quiet. A terminal bell counts either way.
-            </p>
 
             <Show when={claudeAttentionMode() === "hooks"}>
               <Show
@@ -1265,7 +1308,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                   </p>
                 }
               >
-                <div class="settings-actions">
+                <div class="settings-row settings-hooks">
                   <button
                     class="settings-action"
                     disabled={hooksBusy()}
@@ -1277,14 +1320,14 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                         ? "Remove hooks"
                         : "Install hooks…"}
                   </button>
+                  <SettingsInfo about="Claude Code hooks">
+                    Adds a <code>Notification</code> and a <code>Stop</code> hook
+                    to <code>~/.claude/settings.json</code>, each writing one
+                    escape sequence to its pane. Nothing else in the file is
+                    touched; "Remove" takes back exactly these two. Running
+                    sessions pick them up on their next turn.
+                  </SettingsInfo>
                 </div>
-                <p class="settings-hint">
-                  Adds a <code>Notification</code> and a <code>Stop</code> hook to{" "}
-                  <code>~/.claude/settings.json</code>; each writes one escape
-                  sequence to the pane it runs in. Nothing else in that file is
-                  touched, and "Remove" takes back exactly these two. Sessions
-                  already running pick the hooks up on their next turn.
-                </p>
                 <Show when={hooksError()}>
                   <div class="settings-error">{hooksError()}</div>
                 </Show>
@@ -1295,9 +1338,17 @@ export default function SettingsPanel(props: SettingsPanelProps) {
           <Show when={claudeAttentionMode() !== "off"}>
             <div class="settings-section">
               <div class="settings-row">
-                <label class="settings-label" for="desktop-notifications">
-                  Also send a desktop notification
-                </label>
+                <span class="settings-label-line">
+                  <label class="settings-label" for="desktop-notifications">
+                    Also send a desktop notification
+                  </label>
+                  <SettingsInfo about="Also send a desktop notification">
+                    Silent, one per pane per wait, only while this window is in
+                    the background, and one at a time however many panes finish
+                    together. Messages a program sends (<code>OSC 9</code>,{" "}
+                    <code>777</code>, <code>99</code>) are carried through.
+                  </SettingsInfo>
+                </span>
                 <input
                   id="desktop-notifications"
                   type="checkbox"
@@ -1308,15 +1359,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                   }
                 />
               </div>
-              <p class="settings-hint">
-                Off by default — the dot, the dock badge and the taskbar flash
-                already say it without interrupting anything. When on it stays
-                quiet: silent, one per pane per wait (not one per message), only
-                while this window is in the background, and never more than one
-                at a time however many panes finish together. Programs that send
-                a notification sequence (<code>OSC 9</code>, <code>777</code>,{" "}
-                <code>99</code>) have their message carried through.
-              </p>
             </div>
           </Show>
         </Category>
@@ -1360,6 +1402,7 @@ export default function SettingsPanel(props: SettingsPanelProps) {
                     : undefined
                 }
                 disabled={updaterBusy()}
+                title="Checks GitHub for the latest release and installs it in place"
                 onClick={onUpdaterButton}
               >
                 <Show when={updaterDownloading()}>
@@ -1374,9 +1417,6 @@ export default function SettingsPanel(props: SettingsPanelProps) {
             <Show when={updaterError()}>
               <div class="settings-error">{updaterError()}</div>
             </Show>
-            <p class="settings-hint">
-              Checks GitHub for the latest release and installs it in place.
-            </p>
           </div>
         </Category>
       </div>

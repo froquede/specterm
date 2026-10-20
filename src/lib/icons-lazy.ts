@@ -14,3 +14,4 @@ export { default as IconSessions } from "lucide-solid/icons/history";
 export { default as IconUpdates } from "lucide-solid/icons/download";
 export { default as IconPlugins } from "lucide-solid/icons/plug";
 export { default as IconArrowRight } from "lucide-solid/icons/arrow-right";
+export { default as IconInfo } from "lucide-solid/icons/info";

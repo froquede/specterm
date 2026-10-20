@@ -46,6 +46,7 @@ import {
   type Chord,
 } from "../lib/chord";
 import { isMac } from "../lib/platform";
+import SettingsInfo from "./SettingsInfo";
 
 // Which heading each id prefix files under, and the order the headings appear
 // in. Keyed off the prefix rather than a field on the spec so the keymap stays
@@ -219,7 +220,22 @@ export default function KeybindingsSettings(): JSX.Element {
   return (
     <div class="settings-section keybindings">
       <div class="settings-row">
-        <span class="settings-label">Shortcuts</span>
+        <span class="settings-label-line">
+          <span class="settings-label">Shortcuts</span>
+          <SettingsInfo about="Shortcuts">
+            <p>
+              Click a shortcut and press the keys you want.{" "}
+              <strong>Backspace</strong> switches it off and hands the keys back
+              to the terminal; <strong>Esc</strong> leaves it alone. Pressing a
+              row's original chord clears the override.
+            </p>
+            <p>
+              Bare keys and lone <code>Ctrl+&lt;key&gt;</code> chords are refused:
+              they are control codes the shell and its programs expect to
+              receive. Function keys are fine.
+            </p>
+          </SettingsInfo>
+        </span>
         <Show when={overrideCount() > 0}>
           <button
             class="settings-reset"
@@ -319,17 +335,6 @@ export default function KeybindingsSettings(): JSX.Element {
         </Show>
       </div>
 
-      <p class="settings-hint">
-        Click a shortcut and press the keys you want. <strong>Backspace</strong>{" "}
-        switches it off and hands the keys back to the terminal;{" "}
-        <strong>Esc</strong> leaves it alone. Pressing a row's original chord
-        clears the override.
-      </p>
-      <p class="settings-hint">
-        Bare keys and lone <code>Ctrl+&lt;key&gt;</code> chords are refused on
-        purpose — those are control codes the shell and everything running in it
-        expect to receive. Function keys are fine; they carry none.
-      </p>
     </div>
   );
 }

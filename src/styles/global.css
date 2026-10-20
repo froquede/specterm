@@ -882,6 +882,113 @@ body,
   margin-top: 0;
 }
 
+/* A label and the info icon that explains it, kept together on one side of the
+   row (a row spreads its children to both ends). Text flow rather than flex, so
+   a label that wraps carries the icon along after its last word.
+
+   The icon takes no width in that flow and hangs into padding kept free for it
+   at the end of every line. Taking width, it would be what decides where the
+   label breaks: a label that just fits leaves the icon alone on the next line,
+   and nothing (a word joiner, nowrap around a box) keeps the line breaker from
+   breaking before an inline box. */
+.settings-label-line {
+  min-width: 0;
+  padding-right: 18px;
+}
+
+.settings-label-line > .settings-info {
+  display: inline-block;
+  width: 0;
+  white-space: nowrap;
+}
+
+.settings-info-button {
+  margin-left: 5px;
+}
+
+/* What sits at the other end of a labelled row: a Reset and the value. */
+.settings-row-trail {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+/* The row is what an info popover hangs from, so it opens as wide as the row. */
+.settings-row,
+.plugins-settings-group-title {
+  position: relative;
+}
+
+.settings-info-button {
+  display: inline-flex;
+  vertical-align: -1px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--fg-faint);
+  cursor: help;
+}
+
+.settings-info-button:hover,
+.settings-info-button:focus-visible,
+.settings-info.pinned .settings-info-button {
+  color: var(--accent);
+}
+
+.settings-info-pop {
+  display: none;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-chrome);
+  box-shadow: 0 6px 18px rgb(0 0 0 / 0.35);
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--fg);
+  text-transform: none;
+  letter-spacing: normal;
+  white-space: normal;
+  cursor: auto;
+}
+
+/* Bridges the gap between icon and popover, so the pointer can travel onto the
+   text without the hover ending on the way. */
+.settings-info-pop::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 8px;
+}
+
+.settings-info-pop p + p {
+  margin-top: 6px;
+}
+
+.settings-info:hover .settings-info-pop,
+.settings-info-button:focus-visible + .settings-info-pop,
+.settings-info.pinned .settings-info-pop {
+  display: block;
+}
+
+/* The hooks button and the icon explaining what it writes. */
+.settings-hooks {
+  margin-top: 10px;
+}
+
+/* A row holding only a control pushed to its end. */
+.settings-row-end {
+  justify-content: flex-end;
+}
+
 .settings-reset {
   border: none;
   background: none;

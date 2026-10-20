@@ -1,5 +1,6 @@
 import { createSignal, For, onMount, Show } from "solid-js";
 import type { PluginInfo } from "../backends/types";
+import SettingsInfo from "./SettingsInfo";
 import {
   checkPluginUpdates,
   installPlugin,
@@ -236,9 +237,13 @@ export default function PluginsSettings() {
     <div class="settings-section plugins-settings">
       <Show when={builtIn().length > 0}>
         <section class="plugins-settings-group" data-group="built-in">
-          <h3 class="plugins-settings-group-title">Built in</h3>
+          <h3 class="plugins-settings-group-title">
+            Built in
+            <SettingsInfo about="Built-in plugins">
+              Ship with Specterm and are on unless you turn them off.
+            </SettingsInfo>
+          </h3>
           <For each={builtIn()}>{(plugin) => <Item plugin={plugin} />}</For>
-          <p class="settings-hint">Ship with Specterm and are on unless you turn them off.</p>
         </section>
       </Show>
 
@@ -266,9 +271,16 @@ export default function PluginsSettings() {
             </Show>
           </div>
           <div class="settings-row plugins-settings-auto">
-            <label class="settings-label" for="plugins-settings-auto-update">
-              Update automatically
-            </label>
+            <span class="settings-label-line">
+              <label class="settings-label" for="plugins-settings-auto-update">
+                Update automatically
+              </label>
+              <SettingsInfo about="Update automatically">
+                New minor and patch releases install by themselves, at launch and every 6 hours,
+                and a dialog says which. A new major version waits for you. Anyone who can tag a
+                release in a plugin's repository can then run new code here.
+              </SettingsInfo>
+            </span>
             <input
               id="plugins-settings-auto-update"
               type="checkbox"
@@ -281,17 +293,20 @@ export default function PluginsSettings() {
               }}
             />
           </div>
-          <p class="settings-hint">
-            New minor and patch releases install by themselves, at launch and every 6 hours, and
-            a dialog says which. A new major version waits for you. Anyone who can tag a release
-            in a plugin's repository can then run new code here.
-          </p>
         </Show>
 
         <form class="plugins-settings-add" onSubmit={(e) => void add(e)}>
-          <label class="settings-label" for="plugins-settings-add-url">
-            Add from a URL
-          </label>
+          <div class="settings-row">
+            <span class="settings-label-line">
+              <label class="settings-label" for="plugins-settings-add-url">
+                Add from a URL
+              </label>
+              <SettingsInfo about="Add from a URL">
+                Installs the newest release. Add <code>#tag</code> to pick one, or paste a folder
+                link (<code>…/tree/&lt;tag&gt;/&lt;folder&gt;</code>).
+              </SettingsInfo>
+            </span>
+          </div>
           <div class="plugins-settings-add-row">
             <input
               id="plugins-settings-add-url"
@@ -322,10 +337,6 @@ export default function PluginsSettings() {
           <Show when={added()}>
             {(name) => <p class="settings-hint plugins-settings-added">Added {name()} and turned it on.</p>}
           </Show>
-          <p class="settings-hint">
-            Installs the newest release. Add <code>#tag</code> to pick one, or paste a folder link
-            (<code>…/tree/&lt;tag&gt;/&lt;folder&gt;</code>).
-          </p>
         </form>
 
         <p class="settings-hint">
