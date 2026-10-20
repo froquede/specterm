@@ -96,7 +96,7 @@ function isBlank(line: IBufferLine, x: number, cell: IBufferCell): boolean {
  * it — the run a broken word would leave against the right edge, and the one
  * its remainder would start the next row with. Null for a blank row.
  */
-function textSpan(
+export function textSpan(
   line: IBufferLine,
   cell: IBufferCell
 ): { first: number; last: number; headEnd: number; tailStart: number } | null {
@@ -130,7 +130,7 @@ function rowText(line: IBufferLine, x0: number, x1: number, cell: IBufferCell): 
  * the program did (the edge's padding and the next row's indent aren't part of
  * the line). Null when the two rows are separate lines.
  */
-function wrapAfter(
+export function wrapAfter(
   buf: IBuffer,
   cols: number,
   y: number,

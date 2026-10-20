@@ -12,6 +12,7 @@ import type { useTabStore } from "./tabs";
 import { waitingPanes } from "./attention";
 import {
   getTerminalInstance,
+  terminalSelectionText,
   paneRunsFullscreenApp,
   selectComposerText,
   pasteIntoTerminal,
@@ -366,9 +367,9 @@ export function createKeymap({
       label: "Copy selection",
       run: () => {
         const tab = store.activeTab;
-        const inst = tab && getTerminalInstance(tab.activePaneId);
-        if (inst && inst.term.hasSelection()) {
-          clipboardWriteText(inst.term.getSelection());
+        const text = tab && terminalSelectionText(tab.activePaneId);
+        if (text) {
+          clipboardWriteText(text);
           return;
         }
         // No terminal selection: copy the current DOM selection (e.g. text

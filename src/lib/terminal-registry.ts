@@ -30,6 +30,8 @@ import { claudeAttentionMode } from "../stores/settings";
 import { favoriteByIndex } from "../stores/favorites";
 import { themeToXterm, DEFAULT_THEME } from "./theme";
 import { installClickVsDragSelection } from "./mouse-selection";
+import { installSelectionFollow, type SelectionFollow } from "./selection-follow";
+import { selectionText } from "./selection-text";
 import { installLinkLayer } from "./terminal-links";
 import { preparePaste } from "./paste";
 import { publishStoreChange, registerStoreSync } from "./store-sync";
@@ -214,6 +216,10 @@ export interface TerminalInstance {
   // Tears down the click-vs-drag selection bridge (see lib/mouse-selection).
   // Re-installed on every attach, since it's bound to the current container.
   detachSelection: (() => void) | null;
+  // Keeps the selection on its text while the program redraws, and is what ⌘C
+  // copies (see lib/selection-follow). Bound to the terminal, not the
+  // container, so it lives as long as the instance does.
+  selection: SelectionFollow;
   // Tears down the paste bridge (see installPasteBridge). Bound to the current
   // container for the same reason, and re-installed alongside the selection one.
   detachPaste: (() => void) | null;
@@ -780,6 +786,34 @@ const CD_FAV_RE = /^cd\s+fav-(\d+)$/;
 // has to tell them apart.
 const MOUSE_REPORT = /^\x1b\[(<|M)/;
 
+// Whether input on the onData channel came from the keyboard, rather than being
+// a mouse or focus report the program asked for.
+function isTyping(data: string): boolean {
+  return data !== "\x1b[I" && data !== "\x1b[O" && !MOUSE_REPORT.test(data);
+}
+
+// xterm's SelectionMode.COLUMN (a const enum, so not importable).
+const COLUMN_SELECTION = 3;
+
+// What a terminal's selection copies as (see lib/selection-text). A column
+// selection (Alt-drag) is a rectangle, not lines, so it is left to xterm —
+// whose mode isn't public, hence the reach inside.
+function copySelection(term: Terminal): string {
+  const range = term.getSelectionPosition();
+  const mode = (term as unknown as {
+    _core?: { _selectionService?: { _activeSelectionMode?: number } };
+  })._core?._selectionService?._activeSelectionMode;
+  if (!range || mode === COLUMN_SELECTION) return term.getSelection();
+  return selectionText(term, range, os === "windows" ? "\r\n" : "\n");
+}
+
+/** What the pane's selection copies as, or null when nothing is selected. */
+export function terminalSelectionText(paneId: string): string | null {
+  const instance = instances.get(paneId);
+  if (!instance || instance.disposed) return null;
+  return instance.selection.text();
+}
+
 // POSIX single-quote a path so spaces and shell metacharacters survive intact.
 function shellQuote(p: string): string {
   return `'${p.replace(/'/g, "'\\''")}'`;
@@ -1022,6 +1056,7 @@ export async function createTerminalInstance(
     unlistenExit: null,
     resizeObserver: null,
     detachSelection: null,
+    selection: installSelectionFollow(term, copySelection, isTyping),
     detachPaste: null,
     detachLinks: null,
     disposed: false,
@@ -1685,6 +1720,7 @@ export function releaseTerminal(paneId: string) {
   if (!instance) return;
 
   instance.disposed = true;
+  instance.selection.dispose();
   instance.resizeObserver?.disconnect();
   instance.detachLinks?.();
   instance.detachLinks = null;
@@ -1718,6 +1754,7 @@ export function destroyTerminal(paneId: string) {
   if (!instance) return;
 
   instance.disposed = true;
+  instance.selection.dispose();
   instance.resizeObserver?.disconnect();
   instance.detachLinks?.();
   instance.detachLinks = null;
