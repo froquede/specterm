@@ -170,8 +170,9 @@ registerBrowserPanes({
 // What it does *not* survive is this process dying: an explicit Quit, a crash, a
 // reboot. Those fall back to the on-disk restore (lib/session-screens.ts +
 // stores/history.ts), which replays the screens and reopens the layout with fresh
-// shells. So there are two mechanisms, and they cover different failures:
-// detaching keeps the processes, the disk snapshot keeps the picture.
+// shells — for a parked window, only when something was still running in it (see
+// collectSessionWindows). So there are two mechanisms, and they cover different
+// failures: detaching keeps the processes, the disk snapshot keeps the picture.
 const detachedSessions = [];
 
 // PTYs a window has detached but whose session has not been parked yet, keyed by
@@ -261,9 +262,9 @@ let updateCheckClaimed = false;
 const windowLayouts = new Map();
 
 // Layouts belonging to detached sessions — windows that are closed but whose
-// shells are still running. They are part of the saved session too: you hadn't
-// finished with them, and if this process dies the shells go but the layout should
-// still come back.
+// shells are still running. They are part of the saved session while something
+// is still running in them (see collectSessionWindows): if this process dies the
+// shells go, but the window you left working should still come back.
 const parkedLayouts = [];
 
 // The flags stamped into a window's launch arguments, read back by preload.cjs.
@@ -1160,6 +1161,9 @@ ipcMain.handle("spawn-pty", (event, opts) => {
     pendingBytes: 0,
     // Set only while this PTY is in transit between windows — see release-pty.
     transitTimer: null,
+    // What the pty reports as its foreground process while the shell sits at its
+    // prompt. Anything else in the foreground means it is busy (see shellIsBusy).
+    shellName: path.basename(shell),
   };
   ptyInstances.set(id, instance);
 
@@ -2214,8 +2218,20 @@ function scheduleSessionWrite() {
   sessionWriteTimer.unref?.();
 }
 
-// Every window worth reopening: the ones still on screen, and the ones that were
-// detached into the background. Both are things the user hadn't finished with.
+// Every window worth reopening: the ones still on screen, and the ones detached
+// into the background with something still running in them.
+//
+// A parked window is saved for what is running in it, not for having been
+// parked. One closed to leave a Claude Code session or a build working is
+// unfinished business: if the process ends before you're back — a Quit, a
+// reboot — the next launch has to lead you to it. One sitting at its prompts is a
+// window you were done with, and saving those too is how windows nobody wanted
+// any more (a blank shell left by closing a window's last tab, a ⌘N never used,
+// a copy of a window already open elsewhere) came back on every launch, and
+// piled up, because closing one again only parked it again.
+//
+// Asked on every write, so the answer is current on the way out of a Quit:
+// before-quit writes the session before it ends the parked shells.
 function collectSessionWindows() {
   const windowsOut = [];
   for (const win of openWindows()) {
@@ -2231,9 +2247,29 @@ function collectSessionWindows() {
   }
   for (const parked of parkedLayouts) {
     if (!parked?.tabs?.length) continue;
-    windowsOut.push(parked);
+    const session = detachedSessions.find((s) => s.layout === parked);
+    if (!session) continue;
+    const busy = [...ptyIdsIn(session.tabs)].some((id) => shellIsBusy(ptyInstances.get(id)));
+    if (busy) windowsOut.push(parked);
   }
   return windowsOut;
+}
+
+// Whether a shell is busy: its foreground process is something other than the
+// shell itself (a Claude Code session, a build, a dev server). Read straight off
+// the pty, synchronously, which is what lets a session write ask it on the way
+// out of a Quit. A shell's own helpers (gitstatusd and the like) run in the
+// background and never show up here. Windows reports the shell's own name
+// whatever runs in it, so there this is always false and a parked window ends
+// with the app.
+function shellIsBusy(instance) {
+  if (!instance || instance.disposed) return false;
+  try {
+    const foreground = instance.process.process;
+    return Boolean(foreground) && foreground !== instance.shellName;
+  } catch {
+    return false;
+  }
 }
 
 // Written synchronously, on the way out. Synchronous because this is `before-quit`
@@ -2496,6 +2532,24 @@ ipcMain.handle("detach-ptys", (event, ids) => {
   detachedButUnparked.set(event.sender.id, claimed);
 });
 
+// The PTYs a list of serialized tabs carries.
+function ptyIdsIn(tabs) {
+  const ids = new Set();
+  const walk = (node) => {
+    if (!node) return;
+    if (node.type === "leaf") {
+      if (node.pane?.kind === "terminal" && Number.isInteger(node.pane.ptyId)) {
+        ids.add(node.pane.ptyId);
+      }
+      return;
+    }
+    walk(node.first);
+    walk(node.second);
+  };
+  for (const tab of Array.isArray(tabs) ? tabs : []) walk(tab?.root);
+  return ids;
+}
+
 // A window reporting that it has handed everything over and can now be closed.
 //
 // This is the second half of the intercepted close above, and it is also the only
@@ -2514,19 +2568,7 @@ ipcMain.handle("park-session", (event, payload) => {
   const claimed = detachedButUnparked.get(event.sender.id);
   detachedButUnparked.delete(event.sender.id);
   if (claimed?.size) {
-    const carried = new Set();
-    const walk = (node) => {
-      if (!node) return;
-      if (node.type === "leaf") {
-        if (node.pane?.kind === "terminal" && Number.isInteger(node.pane.ptyId)) {
-          carried.add(node.pane.ptyId);
-        }
-        return;
-      }
-      walk(node.first);
-      walk(node.second);
-    };
-    for (const tab of Array.isArray(tabs) ? tabs : []) walk(tab?.root);
+    const carried = ptyIdsIn(tabs);
     const orphans = [...claimed].filter((id) => !carried.has(id));
     if (orphans.length) {
       detachedButUnparked.set(event.sender.id, new Set(orphans));
