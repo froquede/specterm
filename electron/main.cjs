@@ -1163,7 +1163,7 @@ ipcMain.handle("spawn-pty", (event, opts) => {
     transitTimer: null,
     // What the pty reports as its foreground process while the shell sits at its
     // prompt. Anything else in the foreground means it is busy (see shellIsBusy).
-    shellName: path.basename(shell),
+    shellName: path.basename(shell).replace(/^-/, ""),
   };
   ptyInstances.set(id, instance);
 
@@ -2265,7 +2265,10 @@ function collectSessionWindows() {
 function shellIsBusy(instance) {
   if (!instance || instance.disposed) return false;
   try {
-    const foreground = instance.process.process;
+    // By name only: Linux reports the path the process was started with
+    // ("/bin/bash"), macOS the bare name ("zsh"), and a login shell may lead
+    // with a dash ("-zsh").
+    const foreground = path.basename(String(instance.process.process ?? "")).replace(/^-/, "");
     return Boolean(foreground) && foreground !== instance.shellName;
   } catch {
     return false;
