@@ -23,6 +23,8 @@ interface SplitContainerProps {
   onTearOffPane?: (sourceId: PaneId) => void;
   onTitle?: (paneId: PaneId, title: string) => void;
   onClosePane?: (id: PaneId) => void;
+  // The pane's process exited, as opposed to the user closing it.
+  onPaneExit?: (id: PaneId) => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
   onPaneContent?: (paneId: PaneId, pane: PaneType) => void;
 }
@@ -64,6 +66,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                     onFocus={() => props.onFocusPane(leafId)}
                     onTitle={props.onTitle}
                     onClose={() => props.onClosePane?.(leafId)}
+                    onExit={() => props.onPaneExit?.(leafId)}
                     onOpenFile={props.onOpenFile}
                     onPaneContent={props.onPaneContent}
                     onDrop={props.onDropPane}
@@ -111,6 +114,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTearOffPane={props.onTearOffPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
+                onPaneExit={props.onPaneExit}
                 onOpenFile={props.onOpenFile}
                 onPaneContent={props.onPaneContent}
               />
@@ -144,6 +148,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onTearOffPane={props.onTearOffPane}
                 onTitle={props.onTitle}
                 onClosePane={props.onClosePane}
+                onPaneExit={props.onPaneExit}
                 onOpenFile={props.onOpenFile}
                 onPaneContent={props.onPaneContent}
               />

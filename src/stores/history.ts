@@ -302,6 +302,20 @@ export function takeLegacySession():
   }
 }
 
+// A window emptied by closing its last tab, on its way to closing for good. Its
+// last report to the host still lists the tab that was just closed, and a close
+// that saves the session on the way out (the last window on Windows or Linux,
+// with background sessions off) would bring that tab back on the next launch.
+// Only this window's layout goes: clearSession below also clears the screens,
+// and the host treats that as every window's.
+export function forgetWindowLayout() {
+  void getBackend()
+    .then((backend) => backend.pushLayout(null))
+    .catch(() => {
+      /* nothing to forget */
+    });
+}
+
 export function clearSession() {
   void getBackend()
     .then((backend) => backend.pushLayout(null))

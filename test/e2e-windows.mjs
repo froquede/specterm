@@ -40,6 +40,8 @@ const NEW_WINDOW = MAC ? "Meta+N" : "Control+Shift+N";
 const COPY_KEY = MAC ? "Meta+C" : "Control+Shift+C";
 const SETTINGS_KEY = MAC ? "Meta+Comma" : "Control+Shift+Comma";
 const SPLIT_SIDE = MAC ? "Meta+Shift+D" : "Control+Shift+Enter";
+const CLOSE_PANE = MAC ? "Meta+W" : "Control+Shift+W";
+const CLOSE_TAB = MAC ? "Meta+Shift+W" : "Control+Shift+Q";
 
 // Printed into a terminal before it is moved; it may only reappear in the
 // destination window if the buffer was serialized and replayed there.
@@ -576,6 +578,122 @@ try {
       `before=${soloPid} after=${mergedPid}`
     );
   }
+
+  // --- closing the last pane closes its window -----------------------------
+  // A window down to one tab holding one pane has nothing left to show once that
+  // pane goes, so the user's close gestures (⌘W, the tab's X, ⌘⇧W) take the
+  // window with it. A window holding more just loses the pane. A shell that
+  // exits on its own still leaves a fresh terminal behind: every shell exits on
+  // the way out of a Quit, and those exits must not close windows.
+  const savedWindows = () => {
+    try {
+      const file = path.join(userDataDir, "session.json");
+      return JSON.parse(fs.readFileSync(file, "utf8")).windows.length;
+    } catch {
+      return 0;
+    }
+  };
+  const isAlive = (pid) => {
+    try {
+      process.kill(Number(pid), 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const focusTerminal = (win) =>
+    win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  // The window is gone before the gesture finishes (between a key's down and up,
+  // or before the click returns), so Playwright ends it against a closed page.
+  // That is the outcome under test, not an error.
+  const closingGesture = (gesture) => gesture.catch(() => {});
+  const openWindow = async () => {
+    const before = new Set(app.windows());
+    await focusTerminal(winA);
+    await winA.keyboard.press(NEW_WINDOW);
+    await winA.waitForTimeout(2500);
+    const win = app.windows().find((w) => !before.has(w));
+    await win?.waitForSelector(".xterm-helper-textarea", { timeout: 20000 });
+    await win?.waitForTimeout(1500);
+    return win;
+  };
+
+  await winA.waitForTimeout(3000);
+  const savedBefore = savedWindows();
+
+  const byShortcut = await openWindow();
+  check("a window opens to close with its last pane", !!byShortcut);
+  if (byShortcut) {
+    const lastPid = await shellPid(byShortcut, "lastpane");
+    await focusTerminal(byShortcut);
+    await closingGesture(byShortcut.keyboard.press(CLOSE_PANE));
+    await winA.waitForTimeout(2500);
+    check(
+      "closing the only pane of the only tab closes the window",
+      !app.windows().includes(byShortcut),
+      `windows=${app.windows().length}`
+    );
+    check(
+      "its shell dies instead of waiting in the tray",
+      !!lastPid && !isAlive(lastPid),
+      `pid=${lastPid}`
+    );
+  }
+
+  const split = await openWindow();
+  if (split) {
+    await focusTerminal(split);
+    await split.keyboard.press(SPLIT_SIDE);
+    await split.waitForTimeout(1500);
+    await focusTerminal(split);
+    await split.keyboard.press(CLOSE_PANE);
+    await split.waitForTimeout(1500);
+    check(
+      "with two panes, closing one leaves the window open",
+      app.windows().includes(split) && (await paneIds(split)).length === 1,
+      `panes=${app.windows().includes(split) ? (await paneIds(split)).length : "window gone"}`
+    );
+    if (app.windows().includes(split)) {
+      await closingGesture(split.locator(".tab-close").first().click());
+      await winA.waitForTimeout(2500);
+      check(
+        "the tab's X closes the window once it is down to one pane",
+        !app.windows().includes(split),
+        `windows=${app.windows().length}`
+      );
+    }
+  }
+
+  const exited = await openWindow();
+  if (exited) {
+    await focusTerminal(exited);
+    await exited.keyboard.type("exit");
+    await exited.keyboard.press("Enter");
+    await exited.waitForSelector(".xterm-helper-textarea", { timeout: 20000 });
+    await winA.waitForTimeout(2500);
+    check(
+      "a shell exiting on its own leaves the window with a fresh terminal",
+      app.windows().includes(exited) && (await tabIds(exited)).length === 1,
+      `windows=${app.windows().length}`
+    );
+    if (app.windows().includes(exited)) {
+      await focusTerminal(exited);
+      await closingGesture(exited.keyboard.press(CLOSE_TAB));
+      await winA.waitForTimeout(2500);
+      check(
+        "the close-tab shortcut closes the window too",
+        !app.windows().includes(exited),
+        `windows=${app.windows().length}`
+      );
+    }
+  }
+
+  await winA.waitForTimeout(3000);
+  check(
+    "windows closed with their last pane stay out of the saved session",
+    savedWindows() === savedBefore,
+    `saved ${savedBefore} → ${savedWindows()}`
+  );
 
   // --- per-window teardown -------------------------------------------------
   // Closing one window must not take another's terminals down with it.

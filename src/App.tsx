@@ -861,7 +861,7 @@ export default function App() {
         sidebarOpen={store.state.sidebarView === "files"}
         renamingTabId={store.state.renamingTabId}
         onSelect={(id) => store.setActiveTab(id)}
-        onClose={(id) => store.closeTab(id)}
+        onClose={(id) => store.closeTab(id, { closeWindowIfLast: true })}
         onCreate={() => store.createTab()}
         onToggleSidebar={() => store.toggleSidebarView("files")}
         onOpenSettings={toggleSettings}
@@ -948,7 +948,8 @@ export default function App() {
                 }}
                 onTearOffPane={(sourceId) => void tearOff("pane", sourceId)}
                 onTitle={(paneId, title) => store.updatePaneTitle(paneId, title)}
-                onClosePane={(id) => store.closePane(id)}
+                onClosePane={(id) => store.closePane(id, { closeWindowIfLast: true })}
+                onPaneExit={(id) => store.closePane(id)}
                 onOpenFile={handleOpenFile}
                 onPaneContent={(paneId, pane) => store.setPaneContent(paneId, pane)}
               />
