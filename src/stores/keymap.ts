@@ -10,6 +10,7 @@ import { cmd, isMac } from "../lib/platform";
 import type { BindingSpec, Chord } from "./keybindings";
 import type { useTabStore } from "./tabs";
 import { waitingPanes } from "./attention";
+import { toggleZoom, toggleCollapsed, toggleHidden, isCollapsed, zoomedPane } from "./pane-view";
 import {
   getTerminalInstance,
   terminalSelectionText,
@@ -90,6 +91,13 @@ export interface KeymapContext {
 
 const newTerminal = () =>
   ({ kind: "terminal", ptyId: null, cwd: "" }) as const;
+
+// The fold the collapse chord last made, so pressing it again straight away
+// takes it back instead of folding the pane focus was just handed to. Only while
+// focus is still where the fold put it, and only for a moment: after a pause,
+// the chord folds the pane you are now in, so several can be folded in a row.
+const FOLD_UNDO_MS = 800;
+let lastFold: { tabId: string; paneId: string; handedTo: string; at: number } | null = null;
 
 // Linux/Windows keep the original Kitty-style "Ctrl+Shift+<key>" defaults; only
 // macOS adopted the ⌘ scheme. `kitty(key)` pins that original chord on non-mac
@@ -296,6 +304,71 @@ export function createKeymap({
       run: () => {
         const tab = store.activeTab;
         if (tab) store.closePane(tab.activePaneId, { closeWindowIfLast: true });
+      },
+    },
+
+    // Pane view — focus one pane, fold it away, or cover it (stores/pane-view.ts).
+    {
+      id: "pane.zoom",
+      key: "Enter",
+      code: "Enter",
+      ...cmd({ shift: true, code: "Enter" }),
+      label: "Focus pane / restore layout",
+      run: () => {
+        const tab = store.activeTab;
+        // A lone pane already fills the workspace. Taking zoom back off one
+        // stays allowed: its siblings may have closed while it was zoomed.
+        if (!tab) return;
+        if (tab.root.type === "split" || zoomedPane(tab.id)) {
+          toggleZoom(tab.id, tab.activePaneId);
+        }
+        focusActivePane();
+      },
+    },
+    {
+      id: "pane.collapse",
+      key: "m",
+      ...cmd({ shift: true }),
+      label: "Collapse pane",
+      run: () => {
+        const tab = store.activeTab;
+        if (!tab || tab.root.type !== "split") return;
+        const last = lastFold;
+        lastFold = null;
+        if (
+          last &&
+          last.tabId === tab.id &&
+          last.handedTo === tab.activePaneId &&
+          performance.now() - last.at < FOLD_UNDO_MS &&
+          isCollapsed(last.paneId)
+        ) {
+          toggleCollapsed(last.paneId);
+          store.setActivePaneId(last.paneId);
+          requestAnimationFrame(focusActivePane);
+          return;
+        }
+        const paneId = tab.activePaneId;
+        toggleCollapsed(paneId);
+        // Focus moves off the folded pane at once (see the effect in App.tsx),
+        // so nothing typed lands in a terminal that isn't drawn. Read where it
+        // went once that has run.
+        requestAnimationFrame(() => {
+          const handedTo = store.activeTab?.activePaneId;
+          if (handedTo && handedTo !== paneId) {
+            lastFold = { tabId: tab.id, paneId, handedTo, at: performance.now() };
+          }
+          focusActivePane();
+        });
+      },
+    },
+    {
+      id: "pane.hide",
+      key: "h",
+      ...cmd({ shift: true }),
+      label: "Hide pane content",
+      run: () => {
+        const tab = store.activeTab;
+        if (tab) toggleHidden(tab.activePaneId);
       },
     },
 

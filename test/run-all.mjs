@@ -45,6 +45,7 @@ const SUITES = [
   { name: "vault", file: "e2e-vault.mjs" },
   { name: "plugins", file: "e2e-plugins.mjs" },
   { name: "browser", file: "e2e-browser.mjs" },
+  { name: "pane-view", file: "e2e-pane-view.mjs" },
   // Not an Electron suite — it drives electron/repo-sync.cjs against real git
   // in a temp sandbox, so it costs seconds and runs alongside the rest for free.
   { name: "repo-sync", file: "repo-sync.mjs" },

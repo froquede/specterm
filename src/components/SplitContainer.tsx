@@ -1,8 +1,13 @@
-import { Show } from "solid-js";
+import { Show, createMemo } from "solid-js";
 import type { SplitNode, PaneId, PaneType } from "../types";
 import { gripPosition, type DropEdge } from "../lib/split-tree";
 import Pane from "./Pane";
 import SplitHandle, { type ResizeEntry } from "./SplitHandle";
+import { zoomedPane, subtreeCollapsed, subtreeHas } from "../stores/pane-view";
+
+// A collapsed pane's strip: its 26px title-bar, the bar's 1px rule and the
+// card's 1px border on each side.
+const COLLAPSED_SIZE = "29px";
 
 interface SplitContainerProps {
   node: SplitNode;
@@ -27,6 +32,9 @@ interface SplitContainerProps {
   onPaneExit?: (id: PaneId) => void;
   onOpenFile?: (path: string, mode: "split" | "tab") => void;
   onPaneContent?: (paneId: PaneId, pane: PaneType) => void;
+  // The direction of the split this node sits in; absent at the layout root.
+  // A collapsed pane folds along it, and a lone pane has nothing to fold into.
+  parentDirection?: "h" | "v";
 }
 
 export default function SplitContainer(props: SplitContainerProps) {
@@ -63,6 +71,8 @@ export default function SplitContainer(props: SplitContainerProps) {
                     id={leafId}
                     pane={l().pane}
                     isActive={leafId === props.activePaneId}
+                    tabId={props.tabId}
+                    axis={props.parentDirection}
                     onFocus={() => props.onFocusPane(leafId)}
                     onTitle={props.onTitle}
                     onClose={() => props.onClosePane?.(leafId)}
@@ -83,6 +93,42 @@ export default function SplitContainer(props: SplitContainerProps) {
     >
       {(splitNode) => {
         const split = () => splitNode() as SplitNode & { type: "split" };
+        // Which side holds this tab's zoomed pane, if either does. The other
+        // side drops out of layout entirely (see stores/pane-view.ts).
+        // Memos: the styles below read these several times, and a divider
+        // drag replaces the tree on every move.
+        const zoomSide = createMemo(() => {
+          const z = zoomedPane(props.tabId);
+          if (!z) return null;
+          if (subtreeHas(split().first, z)) return "first";
+          if (subtreeHas(split().second, z)) return "second";
+          return null;
+        });
+        // A side folds only when the other one still has something to show.
+        const sidesFolded = createMemo(() => ({
+          first: subtreeCollapsed(split().first),
+          second: subtreeCollapsed(split().second),
+        }));
+        const folded = createMemo(() => {
+          const { first, second } = sidesFolded();
+          if (first && !second) return "first";
+          if (second && !first) return "second";
+          return null;
+        });
+        const firstFlex = () => {
+          if (zoomSide() === "first") return "1 1 100%";
+          if (folded() === "first") return `0 0 ${COLLAPSED_SIZE}`;
+          if (folded() === "second") return "1 1 0";
+          return `0 0 ${split().ratio * 100}%`;
+        };
+        // When both sides are folded this split is one strip in its parent, and
+        // its panes fold along the parent's direction, not their own.
+        const childAxis = () =>
+          sidesFolded().first && sidesFolded().second
+            ? props.parentDirection ?? split().direction
+            : split().direction;
+        const secondFlex = () =>
+          folded() === "second" ? `0 0 ${COLLAPSED_SIZE}` : "1";
         return (
           <div
             class="split-container"
@@ -95,7 +141,8 @@ export default function SplitContainer(props: SplitContainerProps) {
           >
             <div
               style={{
-                flex: `0 0 ${split().ratio * 100}%`,
+                flex: firstFlex(),
+                display: zoomSide() === "second" ? "none" : undefined,
                 overflow: "hidden",
                 position: "relative",
               }}
@@ -117,19 +164,30 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onPaneExit={props.onPaneExit}
                 onOpenFile={props.onOpenFile}
                 onPaneContent={props.onPaneContent}
+                parentDirection={childAxis()}
               />
             </div>
-            <SplitHandle
-              direction={split().direction}
-              splitId={split().id}
-              onResize={props.onResizeSplit}
-              onEqualize={props.onEqualizeSplits}
-              onToggleDirection={() => props.onToggleDirection?.(split().id)}
-              gripAt={gripPosition(split().direction, [split().first, split().second])}
-            />
+            {/* Zoomed: no divider at all. Folded: the gap stays, but there is
+                nothing to drag — the folded side has a fixed size. */}
+            <Show when={!zoomSide()}>
+              <Show
+                when={!folded()}
+                fallback={<div class={`split-handle split-handle-${split().direction} split-handle-inert`} />}
+              >
+                <SplitHandle
+                  direction={split().direction}
+                  splitId={split().id}
+                  onResize={props.onResizeSplit}
+                  onEqualize={props.onEqualizeSplits}
+                  onToggleDirection={() => props.onToggleDirection?.(split().id)}
+                  gripAt={gripPosition(split().direction, [split().first, split().second])}
+                />
+              </Show>
+            </Show>
             <div
               style={{
-                flex: "1",
+                flex: secondFlex(),
+                display: zoomSide() === "first" ? "none" : undefined,
                 overflow: "hidden",
                 position: "relative",
               }}
@@ -151,6 +209,7 @@ export default function SplitContainer(props: SplitContainerProps) {
                 onPaneExit={props.onPaneExit}
                 onOpenFile={props.onOpenFile}
                 onPaneContent={props.onPaneContent}
+                parentDirection={childAxis()}
               />
             </div>
           </div>

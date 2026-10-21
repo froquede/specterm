@@ -69,3 +69,9 @@ export { default as IconPreview } from "lucide-solid/icons/eye";
 // the counters of the denser glyphs, so the whole set steps down to 1.75.
 export const ICON_SIZE = 15;
 export const ICON_STROKE = 1.75;
+export { default as IconPaneZoom } from "lucide-solid/icons/maximize-2";
+export { default as IconPaneUnzoom } from "lucide-solid/icons/minimize-2";
+export { default as IconPaneCollapseV } from "lucide-solid/icons/chevrons-down-up";
+export { default as IconPaneCollapseH } from "lucide-solid/icons/chevrons-right-left";
+export { default as IconPaneHide } from "lucide-solid/icons/eye-off";
+export { default as IconPaneReveal } from "lucide-solid/icons/eye";

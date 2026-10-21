@@ -32,6 +32,7 @@
     "test:perf": "vite build && node test/perf-boot.mjs",
     "test:e2e:windows": "vite build && node test/e2e-windows.mjs",
     "test:e2e:links": "vite build && node test/e2e-links.mjs",
+    "test:e2e:pane-view": "vite build && node test/e2e-pane-view.mjs",
     "test:e2e:vault": "vite build && node test/e2e-vault.mjs",
     "test:e2e:plugins": "vite build && node test/e2e-plugins.mjs",
     "test:selection": "node --experimental-strip-types test/selection-text.mjs",

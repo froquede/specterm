@@ -74,6 +74,9 @@ later version doesn't take your setting with it.
 | Focus pane left/right/up/down | `⌥`+arrow | `⌥`+arrow |
 | Focus next / previous pane (wraps; with 2+ panes, Shift+scroll over a pane does only this) | `⇧`+scroll down / up | `Shift`+scroll down / up |
 | Go to a pane waiting on you | `⌘⇧U` | `Ctrl+Shift+U` |
+| Focus pane / restore layout | `⌘⇧↵` | `Ctrl+Alt+Enter` |
+| Collapse pane (again right away: undo) | `⌘⇧M` | `Ctrl+Alt+M` |
+| Hide / show pane content | `⌘⇧H` | `Ctrl+Alt+H` |
 | Copy selection | `⌘C` | `Ctrl+Shift+C` |
 | Paste (image inline if the clipboard holds only an image) | `⌘⇧V` | `Ctrl+Shift+V` |
 | Paste as plain text | `⌘V` | `Ctrl+V` |
@@ -124,6 +127,16 @@ window it left closes itself.
 **Moving a pane out of its split.** Drop a pane on the **tab bar** — anywhere
 that isn't a tab chip — and it gets a tab of its own. Drop it on a chip and it
 joins that tab; drop it back over the panes and it splits or swaps as usual.
+
+**Focus, collapse or hide a pane.** The title-bar under the pointer shows three
+buttons beside the ×. **Focus** fills the workspace with that pane, and the
+others keep running behind it; press it again, or move focus to another pane,
+to bring the layout back. **Collapse** folds the pane down to its title-bar
+along its split and gives the space to its neighbour; click the bar, or move
+focus onto it, to open it again. **Hide** puts a cover over the pane's content
+(a browser pane's page included) and names it "Hidden" in its title-bar and tab,
+for when someone can see your screen. In all three the program keeps running
+and the terminal keeps its size. None of it is saved across launches.
 
 **Splits inherit the directory.** A new pane opens where the pane you split from
 is. Read from the shell's own process, so it works without configuring anything;

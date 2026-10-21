@@ -1,4 +1,5 @@
 import { createSignal } from "solid-js";
+import { forgetPane } from "./pane-view";
 import { nanoid } from "nanoid";
 import type {
   AppState,
@@ -385,13 +386,19 @@ function destroyPaneContent(paneId: PaneId, pane: PaneType) {
 }
 
 function killPanesInTree(root: SplitNode) {
-  for (const leaf of collectLeaves(root)) destroyPaneContent(leaf.id, leaf.pane);
+  for (const leaf of collectLeaves(root)) {
+    // Not in destroyPaneContent: new content in the same pane (setPaneContent)
+    // keeps the pane, and a hidden one must stay hidden.
+    forgetPane(leaf.id);
+    destroyPaneContent(leaf.id, leaf.pane);
+  }
 }
 
 // The tear-off counterpart of killPanesInTree: drop this window's terminals
 // without killing the shells behind them — another window is about to adopt them.
 function releasePanesInTree(root: SplitNode) {
   for (const leaf of collectLeaves(root)) {
+    forgetPane(leaf.id);
     if (leaf.pane.kind === "terminal") {
       releaseTerminal(leaf.id);
     } else {
@@ -1041,8 +1048,9 @@ export function useTabStore() {
       // Capture before destroying, for the same reason as closeTab.
       if (leaf) {
         recordClosedPane(snapshotNode(leaf), tab.id, paneEntryTitle(leaf));
+        forgetPane(paneId);
+        destroyPaneContent(paneId, leaf.pane);
       }
-      if (leaf) destroyPaneContent(paneId, leaf.pane);
 
       update(() => ({
         ...s,
