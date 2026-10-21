@@ -178,9 +178,14 @@ terminal behind.
 **Closing with something still running.** A window's terminals die with it, so
 closing one — or quitting — while a build, a test run or a Claude session is in
 flight asks first, naming what is running. The answer comes from the shells' own
-child processes, not from "are there tabs open", so a window of idle prompts
-closes on one click. A window that parks its session instead (background
-sessions, on by default) kills nothing and never asks.
+child processes. A window that parks its session instead (background sessions,
+on by default) kills nothing, so on its own that never asks.
+
+**Closing more than one pane.** Closing a window, or quitting, also asks when it
+would take two or more tabs or panes with it, even with nothing running and even
+when the window parks, so a stray `⌘Q` or click on the close button doesn't put
+away a window of work without a word. A window with one tab and one pane, or a
+quit with a single idle pane, still closes on one click.
 
 **Theming.** Themes drive the terminal palette and the app chrome at once.
 Settings → Theme → *Browse gallery* has 325 bundled

@@ -32,7 +32,7 @@ const check = (name, pass, detail = "") => {
 const hard = setTimeout(() => {
   console.error("[e2e-windows] HARD TIMEOUT");
   process.exit(2);
-}, 180000);
+}, 300000);
 hard.unref();
 
 const NEW_TAB = MAC ? "Meta+T" : "Control+Shift+T";
@@ -722,6 +722,137 @@ try {
     fs.rmSync(userDataDir, { recursive: true, force: true });
   } catch {}
 }
+
+// --- two or more tabs ask before a close or a quit ---------------------------
+// Everything above runs with the confirmation off (see launch.mjs): a native
+// dialog is something no script can answer. These launches turn it back on and
+// read the answer the only way left: whether the window, or the app, is still
+// there a moment after being told to go. A dialog that is up stays up, so each
+// held close needs a launch of its own, killed at the end.
+async function withConfirmingApp(label, body) {
+  const dir = path.join(os.tmpdir(), `specterm-e2e-win-${label}-${process.pid}-${Date.now()}`);
+  fs.mkdirSync(dir, { recursive: true });
+  let confirming;
+  // Held from the start: once the app has quit, Playwright can no longer reach
+  // the process through it, and whether it quit is exactly what gets asked.
+  let proc;
+  try {
+    confirming = await electron.launch(
+      launchOptions(root, dir, { env: { SPECTERM_NO_CLOSE_CONFIRM: "" } })
+    );
+    proc = confirming.process();
+    const win = await confirming.firstWindow();
+    await win.waitForSelector(".xterm-helper-textarea", { timeout: 20000 });
+    await win.waitForTimeout(1500);
+    await body(confirming, win, proc);
+  } catch (err) {
+    console.error(`[e2e-windows] ERROR (${label}):`, err?.message || err);
+    results.push({ name: `${label} completed`, pass: false });
+  } finally {
+    try {
+      await Promise.race([confirming?.close(), new Promise((r) => setTimeout(r, 3000))]);
+    } catch {}
+    try {
+      proc?.kill("SIGKILL");
+    } catch {}
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch {}
+  }
+}
+
+const newTab = async (win) => {
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(NEW_TAB);
+  await win.waitForTimeout(1500);
+};
+
+// The window's own close button and Alt+F4 both arrive as a close request.
+const requestClose = async (app, win) => {
+  const bw = await app.browserWindow(win);
+  await bw.evaluate((w) => w.close()).catch(() => {});
+  await new Promise((r) => setTimeout(r, 2500));
+};
+
+// The way ⌘Q (and the Alt+F4 binding) quit.
+const requestQuit = async (app) => {
+  await Promise.race([
+    app.evaluate(({ app }) => app.quit()).catch(() => {}),
+    new Promise((r) => setTimeout(r, 2000)),
+  ]);
+  await new Promise((r) => setTimeout(r, 2500));
+};
+
+await withConfirmingApp("close", async (app, win) => {
+  const before = new Set(app.windows());
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(NEW_WINDOW);
+  await win.waitForTimeout(2500);
+  const single = app.windows().find((w) => !before.has(w));
+  if (single) {
+    await single.waitForSelector(".xterm-helper-textarea", { timeout: 20000 });
+    await single.waitForTimeout(1500);
+    await requestClose(app, single);
+    check(
+      "a window with one tab closes without asking",
+      !app.windows().includes(single),
+      `windows=${app.windows().length}`
+    );
+  } else {
+    check("a window with one tab closes without asking", false, "no second window");
+  }
+
+  // One tab split in two counts as much as two tabs. The dialog this leaves up
+  // belongs to that window alone, so the next check can still drive the first.
+  const beforeSplit = new Set(app.windows());
+  await win.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+  await win.keyboard.press(NEW_WINDOW);
+  await win.waitForTimeout(2500);
+  const split = app.windows().find((w) => !beforeSplit.has(w));
+  if (split) {
+    await split.waitForSelector(".xterm-helper-textarea", { timeout: 20000 });
+    await split.waitForTimeout(1500);
+    await split.locator(".xterm-helper-textarea:visible").last().click({ force: true });
+    await split.keyboard.press(SPLIT_SIDE);
+    await split.waitForTimeout(1500);
+    await requestClose(app, split);
+    check(
+      "a window with one tab split in two holds its close for confirmation",
+      app.windows().includes(split) && (await paneIds(split)).length === 2,
+      `windows=${app.windows().length}`
+    );
+  } else {
+    check("a window with one tab split in two holds its close for confirmation", false,
+      "no split window");
+  }
+
+  await newTab(win);
+  await requestClose(app, win);
+  check(
+    "a window with two tabs holds its close for confirmation",
+    app.windows().includes(win) && (await tabIds(win)).length === 2,
+    `windows=${app.windows().length}`
+  );
+});
+
+await withConfirmingApp("quit-one", async (app, _win, proc) => {
+  await requestQuit(app);
+  check(
+    "quitting with one idle tab doesn't ask",
+    proc.exitCode !== null || proc.signalCode !== null,
+    `exitCode=${proc.exitCode}`
+  );
+});
+
+await withConfirmingApp("quit-two", async (app, win, proc) => {
+  await newTab(win);
+  await requestQuit(app);
+  check(
+    "quitting with two tabs open holds for confirmation",
+    proc.exitCode === null && proc.signalCode === null,
+    `exitCode=${proc.exitCode}`
+  );
+});
 
 const failed = results.filter((r) => !r.pass).length;
 log("");

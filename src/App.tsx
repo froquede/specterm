@@ -242,6 +242,17 @@ export default function App() {
       });
   });
 
+  // The host asks before closing this window (or quitting) with two or more
+  // tabs or panes open, and it can't stop to ask how many there are.
+  createEffect(() => {
+    const tabs = store.state.tabs;
+    const counts = {
+      tabs: tabs.length,
+      panes: tabs.reduce((n, tab) => n + collectLeaves(tab.root).length, 0),
+    };
+    void getBackend().then((backend) => backend.setOpenCounts(counts));
+  });
+
   // An OS notification for a pane that has *just* started waiting.
   //
   // Deliberately one per waiting episode, not one per signal: a pane that

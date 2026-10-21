@@ -672,29 +672,79 @@ async function runningCommands(wc) {
   return [...names];
 }
 
-// Ask, and answer true when it's fine to go ahead. `scope` is "app" for a quit
-// (every window's terminals) and "window" for one window's.
-async function confirmClose(win, scope) {
-  if (CLOSE_CONFIRM_DISABLED) return true;
-  const commands = await withTimeout(
-    runningCommands(scope === "app" ? null : win.webContents),
-    BUSY_SCAN_TIMEOUT_MS,
-    []
-  );
-  if (commands.length === 0) return true;
+// How many tabs and panes each window has open, keyed by webContents id. Pushed
+// by the renderer on every change (setOpenCounts), because the close handler
+// decides synchronously and has no time to ask.
+const openCounts = new Map();
 
-  const shown = commands.slice(0, 6).join(", ");
-  const list = commands.length > 6 ? `${shown}, …` : shown;
+ipcMain.on("window-open-counts", (event, counts) => {
+  const tabs = Number(counts?.tabs);
+  const panes = Number(counts?.panes);
+  openCounts.set(event.sender.id, {
+    tabs: Number.isFinite(tabs) ? tabs : 0,
+    panes: Number.isFinite(panes) ? panes : 0,
+  });
+});
+
+// What is open in one window, or in every open window when `wc` is null (a quit).
+function openCountsOf(wc) {
+  if (wc) return openCounts.get(wc.id) ?? { tabs: 0, panes: 0 };
+  const total = { tabs: 0, panes: 0 };
+  for (const win of openWindows()) {
+    const counts = openCounts.get(win.webContents.id);
+    total.tabs += counts?.tabs ?? 0;
+    total.panes += counts?.panes ?? 0;
+  }
+  return total;
+}
+
+// Two or more tabs, or two or more panes, is enough to lose that closing a
+// window, or quitting, asks first even with nothing running. Every tab holds at
+// least one pane, so counting panes covers both.
+const worthAsking = ({ panes }) => panes >= 2;
+
+// Ask, and answer true when it's fine to go ahead. `scope` is "app" for a quit
+// (every window's terminals) and "window" for one window's. Two things are worth
+// a question: something still running in shells about to be killed, and two or
+// more tabs or panes about to close. A window that parks kills nothing (`parks`),
+// so only what it has open counts.
+async function confirmClose(win, scope, { parks = false } = {}) {
+  if (CLOSE_CONFIRM_DISABLED) return true;
+  const wc = scope === "app" ? null : win.webContents;
+  const counts = openCountsOf(wc);
+  const commands = parks
+    ? []
+    : await withTimeout(runningCommands(wc), BUSY_SCAN_TIMEOUT_MS, []);
+  if (commands.length === 0 && !worthAsking(counts)) return true;
+
+  const details = [];
+  if (worthAsking(counts)) {
+    const windowCount = openWindows().length;
+    const open =
+      counts.tabs >= 2 ? `${counts.tabs} tabs are open` : `${counts.panes} panes are open`;
+    details.push(
+      scope === "app" && windowCount > 1
+        ? `${open} across ${windowCount} windows.`
+        : `${open}.`
+    );
+  }
+  if (commands.length > 0) {
+    const shown = commands.slice(0, 6).join(", ");
+    const list = commands.length > 6 ? `${shown}, …` : shown;
+    details.push(
+      `Still running: ${list}.\n\n` +
+        `Closing ends ${commands.length === 1 ? "it" : "them"}.`
+    );
+  }
+  const verb = scope === "app" ? "Quit" : "Close";
   const options = {
     type: "question",
-    buttons: ["Cancel", scope === "app" ? "Quit anyway" : "Close anyway"],
+    buttons: ["Cancel", commands.length > 0 ? `${verb} anyway` : verb],
     defaultId: 0,
     cancelId: 0,
     noLink: true,
     message: scope === "app" ? "Quit Specterm?" : "Close this window?",
-    detail:
-      `Still running: ${list}.\n\n` +
-      `Closing ends ${commands.length === 1 ? "it" : "them"}.`,
+    detail: details.join("\n\n"),
   };
   // Attached to the window it is about (a sheet on macOS) when there is one —
   // the two-argument form only accepts a real window, never undefined.
@@ -714,9 +764,12 @@ let quitAsking = false;
 
 app.on("before-quit", (event) => {
   if (quitConfirmed || CLOSE_CONFIRM_DISABLED) return;
-  // Nothing running anywhere: decided synchronously, so the ordinary quit path
-  // never waits on a process scan.
-  if (livePtysOwnedBy(null).length === 0) {
+  // No shells and a single pane at most: decided synchronously, so the ordinary
+  // quit path never waits on a process scan.
+  if (
+    livePtysOwnedBy(null).length === 0 &&
+    !worthAsking(openCountsOf(null))
+  ) {
     quitConfirmed = true;
     return;
   }
@@ -925,10 +978,10 @@ function createWindow(opts = {}) {
   // --- closing a window ----------------------------------------------------
   //
   // Two things can stop a close, in this order: a confirmation (the shells are
-  // about to be killed and something is still running in them) and the parking
-  // handshake (the shells are *not* about to be killed — they are being handed
-  // over to the tray). They are mutually exclusive by construction: a window
-  // that parks kills nothing, so it has nothing to warn about.
+  // about to be killed and something is still running in them, or the window
+  // has two or more tabs or panes open) and the parking handshake (the shells are *not*
+  // about to be killed — they are being handed over to the tray). A window that
+  // parks kills nothing, so the only thing it is asked about is what it has open.
   //
   // A close can only be stopped synchronously, so both paths work the same way
   // — cancel this close, do the asynchronous part, re-issue the close — and
@@ -952,13 +1005,15 @@ function createWindow(opts = {}) {
 
     // --- confirm ------------------------------------------------------------
     //
-    // Only when the shells really are about to die. Already answered — for this
-    // window, or for the whole app on the way to a quit — lets it through.
-    if (!parks && !closeConfirmed && !quitConfirmed && !CLOSE_CONFIRM_DISABLED) {
+    // When the shells really are about to die, or when two or more tabs or
+    // panes are about to go, parked or not. Already answered — for this window, or for the
+    // whole app on the way to a quit — lets it through.
+    const asks = !parks || worthAsking(openCountsOf(win.webContents));
+    if (asks && !closeConfirmed && !quitConfirmed && !CLOSE_CONFIRM_DISABLED) {
       event.preventDefault();
       if (closeAsking) return; // a dialog is already up for this window
       closeAsking = true;
-      void confirmClose(win, "window").then((ok) => {
+      void confirmClose(win, "window", { parks }).then((ok) => {
         closeAsking = false;
         if (!ok || win.isDestroyed()) return;
         closeConfirmed = true;
@@ -1046,6 +1101,7 @@ function createWindow(opts = {}) {
     if (dragTarget === win) clearDragTarget();
     // Its panes are gone, so whatever they were waiting for comes off the badge.
     if (attentionCounts.delete(wcId)) refreshBadge();
+    openCounts.delete(wcId);
     killPtysOwnedBy(wc);
     const watcher = fsWatchers.get(wcId);
     if (watcher) {

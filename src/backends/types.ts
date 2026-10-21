@@ -420,6 +420,11 @@ export interface Backend {
   // app is behind a browser. 0 clears it. A no-op wherever the platform has
   // nothing to show.
   setAttentionBadge(count: number): Promise<void>;
+  // How many tabs and panes this window has open, so the host can ask before a
+  // close or a quit that would take two or more of them down (see confirmClose
+  // in electron/main.cjs). Pushed on every change: the close handler has to
+  // decide synchronously, with no time to ask the renderer.
+  setOpenCounts(counts: { tabs: number; panes: number }): void;
 
   // Raise an OS notification for a pane that just started waiting. Separate from
   // the badge above because it is an *event*, not a level: the badge reflects a
