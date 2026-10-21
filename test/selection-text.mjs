@@ -58,11 +58,16 @@ function terminal(cols, rows) {
         cell.chars = at(x);
         return cell;
       },
-      // xterm's: an unwritten cell reads as a space.
+      // xterm's: an unwritten cell reads as a space, and trimming drops only
+      // unwritten cells — a printed space at the end of a row stays.
       translateToString(trimRight, start = 0, end = cols) {
         let s = "";
-        for (let x = start; x < end; x++) s += at(x) || " ";
-        return trimRight ? s.replace(/\s+$/, "") : s;
+        let kept = 0;
+        for (let x = start; x < end; x++) {
+          s += at(x) || " ";
+          if (at(x)) kept = s.length;
+        }
+        return trimRight ? s.slice(0, kept) : s;
       },
     };
   });
@@ -162,6 +167,52 @@ expect("a word that would have fitted means a real break", fits, all(fits), "⏺
 const outdent = terminal(30, ["    nested item that runs long", "  outer_item_with_long_name"]);
 expect("outdented row stays apart", outdent, all(outdent), "    nested item that runs long\n  outer_item_with_long_name");
 
+// A fenced code block in a Claude Code reply, 72 columns: wrap-ansi lays it
+// out 70 wide two cells in (hard: true, trim: false). A word longer than the
+// row is broken at the edge — once right before a `-`, once inside a URL's
+// scheme — and a word that doesn't fit moves down whole, leaving the space
+// before it printed at the end of the row. Whether a row's indent is skipped
+// or printed (`~~`) depends on what the previous frame had there, so one
+// command gets both.
+const fenced =
+  "! cd /tmp/claude-1000/-home-nexfar-Development/becc92ef-dbcc-42be-b1db-e712a8cd70ab/scratchpad/wt-ic-backfill" +
+  " && NEXT_PUBLIC_GRAPHQL_URL=https://arriving-lemur-1090.ddn.hasura.app/graphql" +
+  " npx tsx scripts/backfill-quotation-order-link.ts --pairs ../pares-tech-4326.csv --execute";
+const block = (indents) => [
+  "  !~cd~/tmp/claude-1000/-home-nexfar-Development/becc92ef-dbcc-42be-b1db",
+  indents[0] + "-e712a8cd70ab/scratchpad/wt-ic-backfill~&&~NEXT_PUBLIC_GRAPHQL_URL=htt",
+  indents[1] + "ps://arriving-lemur-1090.ddn.hasura.app/graphql~npx~tsx~",
+  indents[2] + "scripts/backfill-quotation-order-link.ts~--pairs~",
+  indents[3] + "../pares-tech-4326.csv~--execute",
+];
+// Rows as Claude Code 2.1.306 drew them (a real capture, replayed into xterm).
+const tail = [
+  "",
+  "~~line 1 of the tail",
+  "~~line~2~of~the~tail",
+  "  line~3~of~the~tail",
+  "  line~4~of~the~tail",
+];
+const captured = terminal(72, ["  Para gravar, rode:", "", ...block(["  ", "  ", "~~", "  "]), ...tail]);
+const blockRange = (x0) => ({ start: { x: x0, y: 2 }, end: { x: 72, y: 6 } });
+expect("a code block's long command copies as one line", captured, blockRange(2), fenced);
+expect("the same, from inside it", captured, blockRange(4), fenced.slice(2));
+
+// The rows of the paste on 20/10/2026: two of the four indents printed.
+const pasted = terminal(72, block(["~~", "  ", "~~", "  "]));
+expect("a code block with indents printed on some rows", pasted, all(pasted, 4), fenced.slice(2));
+
+// Every indent of the command printed, as happens to a run of rows; the rows
+// around it had theirs skipped.
+const allPrinted = terminal(72, ["  Para gravar, rode:", "", ...block(["~~", "~~", "~~", "~~"]), ...tail]);
+expect("a code block with every indent printed, among drawn rows", allPrinted, blockRange(2), fenced);
+
+// Every indent skipped: the scheme broken as `htt|ps://` is not a URL starting
+// the next row, and the printed space before a word that moved down is not
+// doubled.
+const skippedAll = terminal(72, block(["  ", "  ", "  ", "  "]));
+expect("a code block with skipped indents copies as one line", skippedAll, all(skippedAll, 2), fenced);
+
 // --- what a shell prints --------------------------------------------------
 
 // Same shape, but the indent was printed: a shell's output, kept as it is.
@@ -174,6 +225,20 @@ expect(
   shell,
   all(shell),
   "src/components/SettingsPanel.tsx:153 warning: hand-kept list\n       consider_deriving_it_from_the_rendered_categories"
+);
+
+// An indented block a shell printed, rows reaching the edge: every indent is
+// printed, so nothing vouches for any of them.
+const printedBlock = terminal(30, [
+  "~~first_line_of_an_indented_fi",
+  "~~second_line_that_is_as_long_",
+  "~~third",
+]);
+expect(
+  "a printed indented block stays apart",
+  printedBlock,
+  all(printedBlock),
+  "  first_line_of_an_indented_fi\n  second_line_that_is_as_long_\n  third"
 );
 
 // A line the terminal wrapped is joined, as xterm does — spaces at the edge kept.

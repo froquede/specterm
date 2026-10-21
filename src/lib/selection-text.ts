@@ -17,11 +17,18 @@
 // wrapper would have put it there, so the break was in the text.
 //
 // What keeps this away from everything that isn't a wrapper laying out rows is
-// how the next row's indent was made. Claude Code moves the cursor to where the
-// text starts (`ESC [ n G`), so the cells in front of it were never written. A
-// shell, a log, `cat` on an indented file print spaces there. A row whose
-// indent was printed is a line of its own, whatever the fit says — so a shell's
-// output copies exactly as it did before this existed.
+// how the indents were made. Claude Code moves the cursor to where the text
+// starts (`ESC [ n G`, `ESC [ n C`), so the cells in front of it are never
+// written — except where its previous frame had something in them, which it
+// clears by printing spaces. Which rows get a printed indent depends on what
+// was drawn there before (a redraw to scroll, a reply streaming in), so in one
+// wrapped command some rows have it skipped and some printed, and a run of
+// several rows can have it printed. A shell, a log, `cat` on an indented file
+// print every indent. So a continuation counts when its indent was skipped, or
+// when a row near it, text starting at the same column, had its indent
+// skipped. Rows where every indent was printed are lines of their own,
+// whatever the fit says — so a shell's output copies exactly as it did before
+// this existed.
 //
 // DOM-free, like lib/link-target.ts, and tested the same way
 // (test/selection-text.mjs). Keep it erasable TypeScript.
@@ -49,6 +56,29 @@ function unwritten(line: IBufferLine, x: number, cell: IBufferCell): boolean {
   return cell.getWidth() !== 0 && cell.getChars() === "";
 }
 
+// Every cell in front of column `first` was skipped, none printed.
+function skipped(line: IBufferLine, first: number, cell: IBufferCell): boolean {
+  if (first === 0) return false;
+  for (let x = 0; x < first; x++) {
+    if (!unwritten(line, x, cell)) return false;
+  }
+  return true;
+}
+
+// How far around a row to look for one whose indent was skipped.
+const AROUND = 8;
+
+// Some row near `y` starts its text at column `first` with the indent in front
+// of it skipped: the rows here were laid out by a program, which only prints an
+// indent over cells that held something on its previous frame.
+function drawnAround(buf: IBuffer, y: number, first: number, cell: IBufferCell): boolean {
+  for (let r = Math.max(0, y - AROUND); r <= y + AROUND; r++) {
+    const line = r === y ? undefined : buf.getLine(r);
+    if (line && textSpan(line, cell)?.first === first && skipped(line, first, cell)) return true;
+  }
+  return false;
+}
+
 /** How row `y` carries on in row `y + 1`, if it does. */
 export function rowBreak(
   buf: IBuffer,
@@ -64,14 +94,17 @@ export function rowBreak(
   // Carries on indented, and the indent was skipped rather than printed.
   const below = textSpan(next, cell);
   if (!below || below.first === 0) return null;
-  for (let x = 0; x < below.first; x++) {
-    if (!unwritten(next, x, cell)) return null;
-  }
 
   // Never further out than this row starts: a row that steps back out is the
   // next item of a list, not the rest of this one.
   const here = textSpan(line, cell);
   if (!here || below.first < here.first) return null;
+
+  // A printed indent is a line of its own unless the rows around say the
+  // screen is a program's layout (see the top of the file).
+  if (!skipped(next, below.first, cell) && !drawnAround(buf, y + 1, below.first, cell)) {
+    return null;
+  }
 
   // A word broken at the edge (link-target's rule, which knows when a row only
   // looks like that).
@@ -119,6 +152,9 @@ export function selectionText(
     // A row the terminal wrapped is full, so whatever ends it — spaces
     // included — is part of the line.
     text += x0 < x1 ? line.translateToString(brk !== "soft", x0, x1) : "";
+    // A wrapper that keeps spaces (wrap-ansi's trim: false) prints the one
+    // before the word it moved down; the join puts back exactly one.
+    if (brk === "word") text = text.replace(/[ \u00a0]+$/, "");
     if (y < end.y) text += brk === "word" ? " " : brk === null ? newline : "";
     indent = indentAfter(buf, y, brk, cell);
   }
