@@ -148,6 +148,14 @@ expect("padded box, path", prompt, 10, 2, file);
   expect("soft wrap, last row", term, 2, 2, long);
 }
 
+// A URL whose scheme the wrapper broke at the edge (`htt|ps://`): the next row
+// reads like a scheme of its own, but the row above ends with the rest of it.
+{
+  const url = "https://arriving-lemur-1090.ddn.hasura.app/graphql";
+  const row = "  -e712a8cd70ab/scratchpad/wt-ic-backfill && NEXT_PUBLIC_GRAPHQL_URL=htt";
+  const term = terminal(row.length, [row, "  ps://arriving-lemur-1090.ddn.hasura.app/graphql npx tsx"]);
+  expect("a scheme broken at the edge joins", term, 10, 1, url);
+}
 // --- what must stay apart ------------------------------------------------
 // Prose word-wrapped so that a path ends exactly on the last column. The next
 // row's first word is a new word, and gluing it on copies a path that doesn't

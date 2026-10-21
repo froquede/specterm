@@ -93,8 +93,23 @@ const ENDS_IN_EXTENSION = /\.[A-Za-z0-9]{1,8}$/;
  * separator of the same path.
  */
 export function startsLink(next: string, previous: string): boolean {
-  if (LINK_START.test(next)) return true;
+  if (LINK_START.test(next)) return !brokenScheme(next, previous);
   return next.startsWith("/") && ENDS_IN_EXTENSION.test(previous);
+}
+
+// Schemes a wrapper can break in the middle of, leaving a stub (`ps://`,
+// `tp://`) that reads like a scheme of its own at the start of the next row.
+const SCHEMES = ["https", "http", "wss", "ws", "sftp", "ftps", "ftp", "ssh", "git", "file"];
+
+// `next` starts with the tail of a scheme whose head ends `previous`:
+// "…URL=htt" then "ps://…" is one URL broken at the edge, not a new one.
+function brokenScheme(next: string, previous: string): boolean {
+  const tail = /^([A-Za-z][A-Za-z0-9+.-]*):\/\//.exec(next)?.[1].toLowerCase();
+  const head = /[A-Za-z]+$/.exec(previous)?.[0].toLowerCase();
+  if (!tail || !head) return false;
+  return SCHEMES.some(
+    (s) => s.length > tail.length && s.endsWith(tail) && (head + tail).endsWith(s)
+  );
 }
 
 // A quoted run — how a path with a space in it arrives ("~/My Documents/a.md").
