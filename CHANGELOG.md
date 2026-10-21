@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.34.0 — 2026-10-21
+
+### Changed
+- **Closing the last pane closes the window.** When a window is down to one
+  tab with one pane, ⌘W, ⌘⇧W, the pane's or the tab's × and a middle click
+  on the tab close the window instead of leaving a fresh terminal. A shell that
+  exits on its own still leaves a fresh terminal.
+- **Closing a window or quitting asks first when two or more tabs or panes
+  would go**, even with nothing running in them, and also when the window would
+  park in the background. One tab with one pane closes without asking, as
+  before; the question about running commands is unchanged and shares the
+  dialog.
+
+### Fixed
+- **Windows you were done with no longer come back on every launch.** With
+  background sessions on, a window closed into the background is reopened by
+  the next launch only if something was still running in it (Claude Code, a
+  build, a dev server). One sitting at its prompts ends with the app.
+- **A long command in a code block copies as one line.** Claude Code prints
+  some of a wrapped command's indents and skips others; the rows it wrapped are
+  now joined either way, a URL broken inside `https` stays one link, and the
+  space before a word moved down is no longer doubled.
+
 ## 0.33.0 — 2026-10-20
 
 ### Changed
