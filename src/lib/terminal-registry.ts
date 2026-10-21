@@ -67,6 +67,11 @@ function safeFit(term: Terminal, fitAddon: FitAddon) {
   // NaN that produces) — this says so up front rather than relying on it. The
   // pane refits when it is attached again.
   if (term.element && !term.element.isConnected) return;
+  // The same holds for a terminal that is attached but not rendered — a pane
+  // folded or zoomed out of layout sits under display:none. Its computed size
+  // then comes back as the stylesheet's `100%`, which FitAddon reads as 100px,
+  // and the shell would be told to shrink to a 10x6 grid.
+  if (term.element && term.element.getClientRects().length === 0) return;
 
   const buffer = term.buffer.active;
   // Was the viewport pinned to the bottom before the fit?

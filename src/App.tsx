@@ -56,6 +56,7 @@ import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
 import { isMarkdownPath, isImagePath } from "./lib/file-kind";
 import { collectLeaves, findPane } from "./lib/split-tree";
+import { isCollapsed, toggleCollapsed, zoomedPane, toggleZoom } from "./stores/pane-view";
 import { initWindowChrome } from "./stores/window-chrome";
 import TabBar from "./components/TabBar";
 import TitleStrip from "./components/TitleStrip";
@@ -214,6 +215,28 @@ export default function App() {
     // rapid tab/pane switches don't queue up stale focus calls.
     const raf = requestAnimationFrame(focusActiveTerminal);
     onCleanup(() => cancelAnimationFrame(raf));
+  });
+
+  // Keyboard focus never sits in a pane you can't see. Moving focus off the
+  // zoomed pane (⌥+arrow, a waiting-pane jump) puts the layout back, as tmux
+  // does. Arriving at a folded pane unfolds it — you went there to use it. A
+  // pane that folds while focused hands focus to the first one still open, and
+  // the last open pane in a tab won't fold at all.
+  let lastActive: PaneId | undefined;
+  createEffect(() => {
+    const tab = store.activeTab;
+    if (!tab) return;
+    const active = tab.activePaneId;
+    const arrived = active !== lastActive;
+    lastActive = active;
+    const zoomed = zoomedPane(tab.id);
+    if (zoomed && zoomed !== active) toggleZoom(tab.id, zoomed);
+    if (!isCollapsed(active)) return;
+    const open = arrived
+      ? undefined
+      : collectLeaves(tab.root).find((leaf) => !isCollapsed(leaf.id));
+    if (open) store.setActivePaneId(open.id);
+    else toggleCollapsed(active);
   });
 
   // Tell the attention store where the user is. Arriving at a pane that was

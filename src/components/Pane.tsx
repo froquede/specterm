@@ -1,4 +1,4 @@
-import { Show, createEffect, createSignal, on, onCleanup } from "solid-js";
+import { Show, createEffect, createMemo, createSignal, on, onCleanup } from "solid-js";
 import { Dynamic } from "solid-js/web";
 import type { PaneType, PaneId } from "../types";
 import type { DropEdge } from "../lib/split-tree";
@@ -27,13 +27,32 @@ import {
   isRootEdgeDrop,
 } from "../stores/pane-drag";
 import { tearingOff, trackTearOff, endTearOff } from "../stores/tear-off";
-import { IconX } from "../lib/icons";
+import {
+  IconX,
+  IconPaneZoom,
+  IconPaneUnzoom,
+  IconPaneCollapseV,
+  IconPaneCollapseH,
+  IconPaneHide,
+  IconPaneReveal,
+} from "../lib/icons";
+import {
+  zoomedPane,
+  toggleZoom,
+  isCollapsed,
+  toggleCollapsed,
+  isHidden,
+  toggleHidden,
+} from "../stores/pane-view";
 import { paneKind } from "../lib/pane-kinds";
 
 interface PaneProps {
   id: PaneId;
   pane: PaneType;
   isActive: boolean;
+  tabId: string;
+  // Direction of the split this pane sits in; absent for a lone pane.
+  axis?: "h" | "v";
   onFocus: () => void;
   onTitle?: (paneId: PaneId, title: string) => void;
   onClose?: () => void;
@@ -85,7 +104,7 @@ export default function Pane(props: PaneProps) {
     on(
       () => props.isActive,
       (active) => {
-        if (active && hasTermTitle()) props.onTitle?.(paneId, termTitle());
+        if (active && hasTermTitle()) reportTitle(termTitle());
       },
       { defer: true }
     )
@@ -112,10 +131,15 @@ export default function Pane(props: PaneProps) {
     return termTitle();
   };
 
+  // Where the last press on the title-bar started, so a release that ends a
+  // drag doesn't also count as a click on a folded pane's bar.
+  let barDownAt = { x: 0, y: 0 };
+
   // Pointer-driven drag from the title-bar. We don't preventDefault so the
   // compatibility mousedown still bubbles to the pane root and focuses it;
   // the bar is user-select:none in CSS so no text selection starts.
   function onBarPointerDown(e: PointerEvent) {
+    barDownAt = { x: e.clientX, y: e.clientY };
     const bar = e.currentTarget as HTMLElement;
     bar.setPointerCapture(e.pointerId);
     setDraggingPaneId(paneId);
@@ -209,6 +233,55 @@ export default function Pane(props: PaneProps) {
     }
   });
 
+  // A memo, so it only notifies when the answer changes: `props.tabId` is read
+  // through the tab object, which every focus change replaces, and a plain
+  // accessor would redraw the button's icon under a press — the press then
+  // lands on a node that is gone and the click never fires.
+  const zoomed = createMemo(() => zoomedPane(props.tabId) === paneId);
+  // Zoomed, the pane is alone on screen and folding it would leave a bar.
+  const collapsed = () => isCollapsed(paneId) && !zoomed();
+  const hidden = () => isHidden(paneId);
+
+  // What the pane tells its tab it is called. A hidden pane says only that, so
+  // the tab and the window title don't give away what it is hiding.
+  function reportTitle(title: string) {
+    props.onTitle?.(paneId, hidden() ? "Hidden" : title);
+  }
+  createEffect(
+    on(
+      hidden,
+      () => {
+        if (props.isActive && hasTermTitle()) reportTitle(termTitle());
+      },
+      { defer: true }
+    )
+  );
+
+  // The view buttons. Everything that changes is passed as an accessor and read
+  // inside the button's own bindings, so a change redraws the part it touches
+  // rather than rebuilding the button.
+  function viewButton(
+    title: () => string,
+    icon: () => any,
+    run: () => void,
+    on: () => boolean = () => false
+  ) {
+    return (
+      <button
+        class={`pane-view-btn ${on() ? "pane-view-btn-on" : ""}`}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          run();
+        }}
+        title={title()}
+        aria-label={title()}
+      >
+        {icon()}
+      </button>
+    );
+  }
+
   const isDropHere = () =>
     draggingPaneId() !== null &&
     draggingPaneId() !== paneId &&
@@ -221,15 +294,29 @@ export default function Pane(props: PaneProps) {
       // same attribute, and this template is reactive, so a re-render for any
       // other reason would wipe a classList-applied token until its own effect
       // caught up.
-      class={`pane ${props.isActive ? "pane-active" : ""} pane-${props.pane.kind} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""}`}
+      class={`pane ${props.isActive ? "pane-active" : ""} pane-${props.pane.kind} ${draggingPaneId() === paneId && tearingOff() ? "tearing-off" : ""} ${collapsed() ? `pane-collapsed pane-collapsed-${props.axis ?? "v"}` : ""} ${hidden() ? "pane-hidden" : ""}`}
       data-pane-id={paneId}
-      onMouseDown={props.onFocus}
+      // A folded pane takes focus when its bar is clicked open, not on the
+      // press: a press that starts a drag would otherwise unfold it.
+      onMouseDown={() => {
+        if (!collapsed()) props.onFocus();
+      }}
       style={{ width: "100%", height: "100%", position: "relative" }}
     >
       <div
         class="pane-titlebar"
-        title="Drag to move / swap pane"
+        title={collapsed() ? "Click to expand, drag to move" : "Drag to move / swap pane"}
         onPointerDown={onBarPointerDown}
+        // A folded pane is just its bar, so a click anywhere on it unfolds it.
+        // A drag still moves it: a click is a press and release in one place.
+        onClick={(e) => {
+          const moved =
+            Math.abs(e.clientX - barDownAt.x) + Math.abs(e.clientY - barDownAt.y);
+          if (collapsed() && moved < 4) {
+            toggleCollapsed(paneId);
+            props.onFocus();
+          }
+        }}
       >
         <span class="pane-grip">
           {/* Drawn here rather than taken from Lucide: its grip puts the dots
@@ -256,7 +343,43 @@ export default function Pane(props: PaneProps) {
             />
           )}
         </Show>
-        <span class="pane-title">{label()}</span>
+        <span class="pane-title">{hidden() ? "Hidden" : label()}</span>
+        {viewButton(
+          () => (hidden() ? "Show pane content" : "Hide pane content"),
+          () =>
+            hidden() ? (
+              <IconPaneReveal size={12} stroke-width={2} />
+            ) : (
+              <IconPaneHide size={12} stroke-width={2} />
+            ),
+          () => toggleHidden(paneId),
+          hidden
+        )}
+        <Show when={props.axis && !collapsed()}>
+          {viewButton(
+            () => "Collapse pane",
+            () =>
+              props.axis === "h" ? (
+                <IconPaneCollapseH size={12} stroke-width={2} />
+              ) : (
+                <IconPaneCollapseV size={12} stroke-width={2} />
+              ),
+            () => toggleCollapsed(paneId)
+          )}
+        </Show>
+        <Show when={props.axis || zoomed()}>
+          {viewButton(
+            () => (zoomed() ? "Restore layout" : "Focus pane"),
+            () =>
+              zoomed() ? (
+                <IconPaneUnzoom size={12} stroke-width={2} />
+              ) : (
+                <IconPaneZoom size={12} stroke-width={2} />
+              ),
+            () => toggleZoom(props.tabId, paneId),
+            zoomed
+          )}
+        </Show>
         <button
           class="pane-close-btn"
           onPointerDown={(e) => e.stopPropagation()}
@@ -282,7 +405,7 @@ export default function Pane(props: PaneProps) {
             onTitle={(t) => {
               setTermTitle(t);
               setHasTermTitle(true);
-              props.onTitle?.(paneId, t);
+              reportTitle(t);
             }}
             onExit={props.onExit}
             onOpenFile={props.onOpenFile}
@@ -313,7 +436,7 @@ export default function Pane(props: PaneProps) {
                 const name = t || described.title(paneId, props.pane);
                 setTermTitle(name);
                 setHasTermTitle(true);
-                props.onTitle?.(paneId, name);
+                reportTitle(name);
               }}
             />
           )}
@@ -329,6 +452,15 @@ export default function Pane(props: PaneProps) {
           <DiagramOverlay paneId={paneId} />
         </Show>
       </div>
+      {/* Stands in for the content, which is out of layout meanwhile: the
+          program keeps running and keeps its size, it just can't be read. */}
+      <Show when={hidden() && !collapsed()}>
+        <div class="pane-privacy-cover" onClick={() => toggleHidden(paneId)}>
+          <IconPaneHide size={22} stroke-width={1.75} />
+          <span>Content hidden</span>
+          <span class="pane-privacy-hint">Click to show</span>
+        </div>
+      </Show>
       <Show when={isDropHere()}>
         <div class={`drop-indicator drop-indicator-${dropTarget()!.edge}`} />
       </Show>

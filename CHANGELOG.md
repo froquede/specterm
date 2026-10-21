@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.35.0 — 2026-10-21
+
+### Added
+- **Focus, collapse or hide a pane.** A pane's title-bar shows three buttons
+  beside the × under the pointer, each with a shortcut you can rebind.
+  - **Focus** (`⌘⇧↵` / `Ctrl+Alt+Enter`) fills the workspace with the pane;
+    the others keep running behind it. Press it again, or move focus to another
+    pane, to restore the layout.
+  - **Collapse** (`⌘⇧M` / `Ctrl+Alt+M`) folds the pane to its title-bar along
+    its split, and the neighbour takes the space. Click the bar or move focus
+    onto it to open it again. Pressing the shortcut again right away undoes the
+    fold; after a pause it folds the pane you are in. The last open pane in a
+    tab doesn't fold.
+  - **Hide** (`⌘⇧H` / `Ctrl+Alt+H`) puts a cover over the pane's content,
+    browser pages included, and the pane and its tab say "Hidden" instead of
+    its title. Click the cover to show it again.
+
+  Programs keep running and keep their terminal size in all three. The state
+  lasts for the session: it isn't saved across launches or carried along when a
+  pane moves to another window.
+
 ## 0.34.0 — 2026-10-21
 
 ### Changed

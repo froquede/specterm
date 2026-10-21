@@ -2662,3 +2662,102 @@ body.resizing-sidebar .xterm {
 @media (prefers-reduced-motion: reduce) {
   .plugin-toast { animation: none; }
 }
+
+/* --- Pane view: focus, collapse, hide (stores/pane-view.ts) ------------------ */
+
+.pane-view-btn {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  cursor: pointer;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* Out of the way until the bar is under the pointer, like the × would be if
+     it weren't the one control every pane needs at a glance. */
+  opacity: 0;
+  transition: opacity 0.1s ease, background 0.2s ease, color 0.2s ease;
+}
+
+/* The press lands on the button, never on an icon that a state change swaps. */
+.pane-view-btn svg {
+  pointer-events: none;
+}
+
+.pane-titlebar:hover .pane-view-btn,
+.pane-view-btn-on {
+  opacity: 1;
+}
+
+.pane-view-btn:hover {
+  background: color-mix(in srgb, var(--fg-muted) 18%, transparent);
+  color: var(--fg);
+}
+
+.pane-view-btn-on {
+  color: var(--accent);
+}
+
+/* Folded or hidden: the content leaves layout, not just sight — see
+   stores/pane-view.ts for why. */
+.pane-collapsed .pane-content,
+.pane-hidden .pane-content {
+  display: none;
+}
+
+/* The gap beside a folded side. Nothing to drag: that side has a fixed size. */
+.split-handle-inert {
+  cursor: default;
+}
+
+.split-handle-inert::before {
+  display: none;
+}
+
+.pane-collapsed .pane-titlebar {
+  cursor: pointer;
+  border-bottom: none;
+}
+
+/* Folded out of a side-by-side split, the bar stands on its side and runs the
+   full height of the strip. */
+.pane-collapsed-h .pane-titlebar {
+  flex: 1 1 auto;
+  writing-mode: vertical-rl;
+  padding: 9px 0 3px;
+}
+
+.pane-collapsed-h .pane-grip {
+  transform: rotate(90deg);
+}
+
+/* Hidden: the content is still running, out of layout, with this in its place. */
+.pane-privacy-cover {
+  position: absolute;
+  inset: 27px 0 0 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: var(--bg);
+  color: var(--fg-muted);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pane-privacy-hint {
+  opacity: 0;
+  font-size: 11px;
+  transition: opacity 0.15s ease;
+}
+
+.pane-privacy-cover:hover .pane-privacy-hint {
+  opacity: 0.8;
+}
