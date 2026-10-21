@@ -4,7 +4,9 @@
 //   1. **Detaching.** Closing a window hands its shells to the host instead of
 //      killing them. Nothing is restored because nothing stopped: reattaching
 //      adopts the same PTYs. Covers closing a window and quitting-by-habit.
-//      Dies with the process — an explicit Quit, a crash, a reboot.
+//      Dies with the process — an explicit Quit, a crash, a reboot. A parked
+//      window with something still running in it comes back through the
+//      snapshot below; one sitting at its prompts doesn't.
 //   2. **The on-disk snapshot.** Layout, directories, names and each pane's
 //      serialized screen, replayed into fresh shells on the next launch. Covers
 //      exactly what detaching can't.
@@ -152,9 +154,13 @@ try {
   const app = await launch();
   const nWindows = () =>
     app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
+  // The window opened first. Not `getAllWindows()[0]`: Electron promises no
+  // order, and on macOS it lists the newest window first, so that closed the
+  // second, idle window instead of the one running the probe.
   const closeFirstWindow = () =>
     app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.close();
+      const all = BrowserWindow.getAllWindows();
+      all.reduce((oldest, w) => (w.id < oldest.id ? w : oldest), all[0])?.close();
     });
 
   const winA = await app.firstWindow();
@@ -213,6 +219,24 @@ try {
   ).catch(() => {});
   const parked = await survivor.evaluate(() => window.specterm.detachedSessionCount());
   check("closing a window parks its session", parked === 1, `parked=${parked}`);
+
+  // What a quit or a reboot from here would reopen. The parked window is still
+  // running its tick loop, so it is saved beside the one on screen.
+  const savedWindows = () => {
+    try {
+      const raw = fs.readFileSync(path.join(userDataDir, "session.json"), "utf8");
+      return JSON.parse(raw).windows?.length ?? 0;
+    } catch {
+      return -1;
+    }
+  };
+  await until("the session file to name both windows", () => savedWindows() === 2)
+    .catch(() => {});
+  check(
+    "a parked window with something running stays in the saved session",
+    savedWindows() === 2,
+    `windows=${savedWindows()}`
+  );
 
   // The shell has to keep ticking now that nothing is watching it, which takes
   // as long as it takes: wait for the ticks to arrive, but let the check do the
@@ -281,6 +305,18 @@ try {
   await closeFirstWindow();
   await until("no windows left", async () => (await nWindows()) === 0);
   check("all windows can be closed", (await nWindows()) === 0, `windows=${await nWindows()}`);
+
+  // Both are parked now, and only one of them is doing anything: the tick loop.
+  // The other window never ran a command, so it sits at its prompt and is not
+  // worth reopening after a quit — saving every parked window is how windows
+  // nobody wanted any more came back on every launch.
+  await until("the idle parked window to leave the session file", () => savedWindows() === 1)
+    .catch(() => {});
+  check(
+    "a parked window at its prompt is not in the saved session",
+    savedWindows() === 1,
+    `windows=${savedWindows()}`
+  );
 
   const bg = countTicks();
   await until(
@@ -380,8 +416,9 @@ try {
     await first2.waitForSelector(".file-tree", { timeout: 20000 });
 
     // More than one window can come back here, and that is correct: the phases
-    // above left a session parked, and a detached window is part of the saved
-    // session too — its shells died with the quit, but you hadn't finished with it.
+    // above left a session parked with its tick loop still running, and a detached
+    // window with work in flight is part of the saved session too — its shells died
+    // with the quit, but you hadn't finished with it.
     // So the window carrying the renamed tab has to be *found* rather than
     // assumed to be the first one — and looked for until it turns up, since the
     // windows do not all finish restoring at the same moment.
@@ -449,9 +486,10 @@ try {
       JSON.stringify(sessionFile)
     );
     // Part 1 detached and reattached windows twice, and quit with one window open
-    // and one session still parked: exactly two windows are owed. A reattached
-    // session used to leave its parked copy in the saved session, so every
-    // detach/reattach cycle reopened one more window on the next launch.
+    // and one session still parked, its tick loop still running: exactly two
+    // windows are owed. A reattached session used to leave its parked copy in the
+    // saved session, so every detach/reattach cycle reopened one more window on
+    // the next launch.
     check(
       "a reattached session is not saved twice",
       sessionFile.windows === 2,
