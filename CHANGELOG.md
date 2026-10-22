@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.36.0 — 2026-10-22
+
+### Added
+- **Plugin API 1.4.** A plugin's panel can open a terminal in a new tab with a
+  command typed at its prompt (`api.openTerminal`), and run it if asked, and can
+  put text on the clipboard (`api.copyText`). A command is one line: one with a
+  line break or another control character is refused. The Sprint Platform
+  inbox uses them for "Ask Claude about it" and the copy items of its new
+  right-click menu.
+
 ## 0.35.0 — 2026-10-21
 
 ### Added
