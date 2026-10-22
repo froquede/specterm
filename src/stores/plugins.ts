@@ -339,6 +339,7 @@ export function pluginStorage(pluginId: string): PluginStorage {
 
 export const pluginHost = {
   openFile: (_path: string, _mode: "split" | "tab") => {},
+  openTerminal: (_command: string, _cwd: string, _run: boolean) => {},
   activeFile: (() => null) as () => string | null,
   revealHeading: (_index: number) => {},
   showView: (key: PluginViewKey) => showViewImpl(key),
@@ -481,7 +482,7 @@ function rendererApi(plugin: PluginContribution, loaded: LoadedRenderer) {
   };
   const storage = pluginStorage(id);
   return {
-    apiVersion: "1.3" as const,
+    apiVersion: "1.4" as const,
     pluginId: id,
     invoke: (method: string, ...args: unknown[]) => invokePlugin(id, method, args),
     on: (event: string, cb: (payload: unknown) => void) => track(onPluginEvent(id, event, cb)),
@@ -578,6 +579,9 @@ export function initPlugins(opts: {
   showView: (key: PluginViewKey) => void;
   isViewOpen: (key: PluginViewKey) => boolean;
   openFile: (path: string, mode: "split" | "tab") => void;
+  // A new terminal tab in `cwd` ("" for the usual startup directory), with
+  // `command` typed at its prompt, and run when `run` is set.
+  openTerminal: (command: string, cwd: string, run: boolean) => void;
   // The file shown in the active pane, or null for a terminal. Tracked.
   activeFile: () => string | null;
   // Scroll the active pane's rendered markdown to its Nth heading.
@@ -589,6 +593,7 @@ export function initPlugins(opts: {
   showViewImpl = opts.showView;
   isViewOpenImpl = opts.isViewOpen;
   pluginHost.openFile = opts.openFile;
+  pluginHost.openTerminal = opts.openTerminal;
   pluginHost.activeFile = opts.activeFile;
   pluginHost.revealHeading = opts.revealHeading;
   syncBindings(contributions());

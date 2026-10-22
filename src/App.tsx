@@ -52,6 +52,7 @@ import {
 import { initStoreSync } from "./lib/store-sync";
 import { getTerminalInstance, useTerminalCwd } from "./lib/terminal-registry";
 import { writePty } from "./lib/pty";
+import { registerPendingCommand } from "./lib/session-restore";
 import { shellQuoteCd, shellQuotePath } from "./lib/fspath";
 import { classifyDrop } from "./lib/file-drop";
 import { isMarkdownPath, isImagePath } from "./lib/file-kind";
@@ -497,6 +498,10 @@ export default function App() {
       showView: (key) => store.showSidebar(key),
       isViewOpen: (key) => store.state.sidebarView === key,
       openFile: handleOpenFile,
+      openTerminal: (command, cwd, run) => {
+        const tab = store.createTab({ kind: "terminal", ptyId: null, cwd });
+        registerPendingCommand(tab.activePaneId, command, run);
+      },
       activeFile,
       revealHeading,
     });

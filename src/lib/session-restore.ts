@@ -23,6 +23,15 @@ import { getTerminalCwd } from "./terminal-registry";
 
 const pending = new Map<string, SessionMeta>();
 
+// Commands a plugin asked to open a terminal with (api.openTerminal). Unlike a
+// resume, the user just clicked for this, so the restore setting doesn't apply
+// and nothing is checked before it is written.
+const pendingCommands = new Map<string, { command: string; run: boolean }>();
+
+export function registerPendingCommand(paneId: string, command: string, run: boolean) {
+  pendingCommands.set(paneId, { command, run });
+}
+
 export function registerPendingRestore(paneId: string, meta: SessionMeta) {
   pending.set(paneId, meta);
 }
@@ -36,6 +45,7 @@ export function consumePendingRestore(paneId: string): SessionMeta | undefined {
 /** Drop a pane's pending restore without delivering it (the pane went away). */
 export function cancelPendingRestore(paneId: string) {
   pending.delete(paneId);
+  pendingCommands.delete(paneId);
 }
 
 // How long to wait after the shell's first output before writing. The command
@@ -67,6 +77,12 @@ export function takePendingRestore(
   paneId: string,
   ptyId: number
 ): (() => void) | null {
+  const asked = pendingCommands.get(paneId);
+  if (asked) {
+    pendingCommands.delete(paneId);
+    return afterPrompt(() => writePty(ptyId, asked.run ? `${asked.command}\r` : asked.command));
+  }
+
   const mode = sessionRestoreMode();
   if (mode === "off") {
     // Still consume it: leaving the entry behind would deliver the command if
@@ -78,16 +94,13 @@ export function takePendingRestore(
   const meta = consumePendingRestore(paneId);
   if (!meta) return null;
 
-  let sent = false;
-  const send = () => {
-    if (sent) return;
-    sent = true;
-    // Confirm the session is still there before putting its command on screen.
-    // A recorded id is a remembered fact, and a resume command for a session that
-    // has since been pruned — or that this pane's directory can't reach — looks
-    // authoritative and fails the moment it's run. Nothing is written in that
-    // case: the pane already has its transcript replayed above the prompt, which
-    // is the part that was worth keeping.
+  // Confirm the session is still there before putting its command on screen.
+  // A recorded id is a remembered fact, and a resume command for a session that
+  // has since been pruned — or that this pane's directory can't reach — looks
+  // authoritative and fails the moment it's run. Nothing is written in that
+  // case: the pane already has its transcript replayed above the prompt, which
+  // is the part that was worth keeping.
+  return afterPrompt(() => {
     void stillResumable(meta, getTerminalCwd(paneId)).then((ok) => {
       if (!ok) return;
       // "run" submits with a carriage return — the byte a real Enter sends, and
@@ -98,16 +111,25 @@ export function takePendingRestore(
         mode === "run" ? `${meta.resumeCommand}\r` : meta.resumeCommand
       );
     });
-  };
+  });
+}
 
-  // A shell that never says anything (a silent `sh` with an empty prompt) would
-  // otherwise never get the command.
-  window.setTimeout(send, FIRST_OUTPUT_TIMEOUT_MS);
+// Calls `send` once, a beat after the shell's first output (its prompt), or
+// after FIRST_OUTPUT_TIMEOUT_MS for a shell that never says anything. Returns
+// the hook the pane calls on output.
+function afterPrompt(send: () => void): () => void {
+  let sent = false;
+  const once = () => {
+    if (sent) return;
+    sent = true;
+    send();
+  };
+  window.setTimeout(once, FIRST_OUTPUT_TIMEOUT_MS);
 
   let armed = true;
   return () => {
     if (!armed) return;
     armed = false;
-    window.setTimeout(send, AFTER_PROMPT_DELAY_MS);
+    window.setTimeout(once, AFTER_PROMPT_DELAY_MS);
   };
 }

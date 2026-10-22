@@ -15,6 +15,7 @@ import {
 import { useTabStore } from "../stores/tabs";
 import { useTerminalCwd } from "../lib/terminal-registry";
 import { getBackend } from "../backends";
+import { clipboardWriteText } from "../lib/pty";
 import { noteStructure, renderMarkdown, type NoteHeading, type NoteLink } from "../lib/markdown";
 import { os } from "../lib/platform";
 import "../styles/plugins.css";
@@ -23,7 +24,7 @@ import "../styles/plugins.css";
 // `engines.specterm`: an addition is a new minor (noted beside it), a change is
 // a new major.
 export interface PluginPanelApi {
-  apiVersion: "1.3";
+  apiVersion: "1.4";
   pluginId: string;
   viewId: string;
   /** Call a method its host module registered with `ctx.handle`. */
@@ -62,6 +63,12 @@ export interface PluginPanelApi {
   noteStructure(source: string): { headings: NoteHeading[]; links: NoteLink[] };
   /** 1.3 — Show one of this plugin's sidebar views. */
   showView(viewId: string): void;
+  /** 1.4 — Open a terminal in a new tab, in `cwd` (the usual startup
+   *  directory when left out), with `command` typed at its prompt; `run` also
+   *  presses Enter. One line only: a command with a line break is refused. */
+  openTerminal(opts: { command: string; cwd?: string; run?: boolean }): void;
+  /** 1.4 — Put text on the system clipboard. */
+  copyText(text: string): Promise<void>;
 }
 
 const PLATFORM = ({ mac: "darwin", windows: "win32", linux: "linux" } as const)[os];
@@ -119,7 +126,7 @@ export default function PluginView(props: {
       document.head.appendChild(stylesheet);
     }
     const api: PluginPanelApi = {
-      apiVersion: "1.3",
+      apiVersion: "1.4",
       pluginId: plugin.id,
       viewId: view.id,
       invoke: (method, ...args) => invokePlugin(plugin.id, method, args),
@@ -190,6 +197,15 @@ export default function PluginView(props: {
       revealHeading: (index) => pluginHost.revealHeading(Number(index)),
       noteStructure: (source) => noteStructure(String(source ?? "")),
       showView: (viewId) => pluginHost.showView(viewKey(plugin.id, String(viewId))),
+      openTerminal(opts) {
+        const command = String(opts?.command ?? "");
+        // Control characters would let the "typed" command press Enter (or
+        // anything else) on its own.
+        if (!command.trim() || /[\x00-\x1f\x7f]/.test(command)) return;
+        const cwd = typeof opts?.cwd === "string" ? opts.cwd : "";
+        pluginHost.openTerminal(command, cwd, opts?.run === true);
+      },
+      copyText: (text) => clipboardWriteText(String(text ?? "")),
       storage: (() => {
         const storage = pluginStorage(plugin.id);
         return {

@@ -46,7 +46,8 @@ const {
 //   1.3 — overlays, the renderer module (file-tree folder actions and banners,
 //         commands it runs), api.onActiveFile, api.revealHeading,
 //         api.noteStructure, api.showView, and tabBarButton.order.
-const API_VERSION = { major: 1, minor: 3 };
+//   1.4 — api.openTerminal and api.copyText.
+const API_VERSION = { major: 1, minor: 4 };
 
 const SCHEME = "specterm-plugin";
 const MANIFEST = "specterm-plugin.json";

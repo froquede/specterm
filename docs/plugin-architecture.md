@@ -94,7 +94,7 @@ Bundled plugins update with the app. External plugins added from Settings update
 
 ## Status
 
-Plugin API **1.3**, built and covered by `test/e2e-plugins.mjs` (95 checks), `test/e2e-vault.mjs` (22) and `test/plugin-install.mjs` (17, the release rules), all part of `run-all`:
+Plugin API **1.4**, built and covered by `test/e2e-plugins.mjs` (102 checks), `test/e2e-vault.mjs` (22) and `test/plugin-install.mjs` (17, the release rules), all part of `run-all`:
 - discovery (symlinked folders included) and manifest validation (`electron/plugins.cjs`);
 - the shared plugin host process (`electron/plugin-host.cjs`), started on the first enable and killed when the last plugin is turned off;
 - the bridge (`invoke`, events, badge, toast) and the `specterm-plugin://` scheme, which serves only the files the manifest names;
@@ -114,13 +114,13 @@ The first external plugin is the Sprint Platform inbox, in `nexfar/nf-sprint-pla
 
 Not built yet: the same install from a command line. Updates are built (see Updates), checked by `test/e2e-plugins.mjs`.
 
-## Reference (API 1.3)
+## Reference (API 1.4)
 
 **Manifest** (`specterm-plugin.json`): `id` (the folder's name), `name`, `version`, `engines.specterm` (a caret range such as `"^1.1"`), and optionally `host`, `panel`, `style` (paths inside the plugin), `sidebarViews: [{ id, title, icon, ownHeader? }]`, `tabBarButton: { view, icon, title }`, `commands: [{ id, title, key, shift?, toggleView | toggleOverlay | invoke | run }]`, `activation: "startup" | "view"` (1.2; default `"startup"`), and from 1.3 `renderer` (a path), `overlays: [{ id }]` and `tabBarButton.order`. Icons are names from `src/lib/plugin-icons.ts`. The `specterm-plugin://` scheme serves the files the manifest names and whatever sits in their folders (a bundler's chunks), never the host module or the manifest.
 
 **Host module** (CommonJS, `exports.activate(ctx)`, optional `exports.deactivate()`). `ctx` has `handle(method, fn)`, `emit(event, payload)`, `setBadge(count | "dot" | null)`, `toast({ title, tag?, body?, more?, payload? })` (1.1), `openExternal(url)`, `setInterval`, `setTimeout`, `clearTimer`, `onDispose(fn)` and `storagePath`. Everything registered through `ctx` is undone when the plugin is turned off.
 
-**Panel module** (ES module, `export function mount(element, api)`, returning a dispose function). `api` has `invoke(method, ...args)`, `on(event, cb)`, `close()`, and from 1.1 `onReveal(cb)`, `renderMarkdown(source)`, `platform` and `openExternal(url)`, and from 1.2 `onActiveCwd(cb)`, `openFile(path, "tab" | "split")` and `storage` (`get`, `set`, `onChange`; a small JSON object per plugin, shared by its windows). The panel brings its own framework; the theme comes from the core's CSS variables. From 1.3: `onActiveFile(cb)`, `revealHeading(index)`, `noteStructure(source)` (the preview's own parser, so heading N is the preview's heading N) and `showView(viewId)`; an overlay is mounted with its id as `viewId`. A module stays loaded after its view closes, so module-level state survives a close and reopen.
+**Panel module** (ES module, `export function mount(element, api)`, returning a dispose function). `api` has `invoke(method, ...args)`, `on(event, cb)`, `close()`, and from 1.1 `onReveal(cb)`, `renderMarkdown(source)`, `platform` and `openExternal(url)`, and from 1.2 `onActiveCwd(cb)`, `openFile(path, "tab" | "split")` and `storage` (`get`, `set`, `onChange`; a small JSON object per plugin, shared by its windows). The panel brings its own framework; the theme comes from the core's CSS variables. From 1.3: `onActiveFile(cb)`, `revealHeading(index)`, `noteStructure(source)` (the preview's own parser, so heading N is the preview's heading N) and `showView(viewId)`; an overlay is mounted with its id as `viewId`. From 1.4: `openTerminal({ command, cwd?, run? })` (a new terminal tab, in `cwd` or the usual startup directory, with the one-line `command` typed at its prompt once the shell draws it; `run` also presses Enter; a command with a control character is refused) and `copyText(text)`. A module stays loaded after its view closes, so module-level state survives a close and reopen.
 
 **Renderer module** (1.3; ES module, `export function activate(api)`, returning a dispose function). `api` has `invoke`, `on`, `storage`, `showView`, `openFile`, `commands.register(name, fn)` (what a `run` shortcut calls), and `fileTree.addFolderAction({ id, title(path), run(path) })`, `fileTree.addFolderBanner({ id, match(path, names), run(path) })` and `fileTree.refresh()`. The tree asks for titles and banners synchronously when it draws; a plugin whose answers depend on its own state calls `refresh()` when that state changes. A plugin's panel and renderer modules built together share their chunks, so they share one copy of their state in the window.
 

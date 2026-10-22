@@ -149,6 +149,7 @@ writePlugin("hello", {
       api.invoke("ping", "x").then((v) => (out.textContent = v));
       api.on("tick", (n) => (ticks.textContent = String(n)));
       api.onReveal((p) => (revealed.textContent = JSON.stringify(p)));
+      window.__helloApi = api;
       return () => {
         window.__helloDisposed = (window.__helloDisposed || 0) + 1;
       };
@@ -388,6 +389,42 @@ try {
     "the frame draws the view's header",
     (await view.locator(".plugin-view-header").textContent().catch(() => "")) === "Hello view"
   );
+
+  // 1.4: a terminal opened with a command, and the clipboard.
+  {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "specterm-open-terminal-"));
+    const tabs = () => win.locator(".tab[data-tab-id]").count();
+    const before = await tabs();
+    await win.evaluate(
+      (cwd) => window.__helloApi.openTerminal({ command: "touch typed-only", cwd }),
+      dir
+    );
+    await win.evaluate(
+      (cwd) => window.__helloApi.openTerminal({ command: "pwd > ran.txt", cwd, run: true }),
+      dir
+    );
+    await win.evaluate(() => window.__helloApi.openTerminal({ command: "echo a\recho b", run: true }));
+    check(
+      "openTerminal opens a tab per call, and refuses a command with a line break",
+      await until("two tabs", async () => (await tabs()) === before + 2)
+    );
+    const ran = path.join(dir, "ran.txt");
+    check(
+      "and runs the command in the cwd it was given",
+      await until("ran.txt", () => fs.existsSync(ran) && fs.readFileSync(ran, "utf-8").trim() === fs.realpathSync(dir))
+    );
+    check(
+      "without run, it is only typed",
+      !fs.existsSync(path.join(dir, "typed-only"))
+    );
+    await app.evaluate(({ clipboard }) => clipboard.writeText("before-copy"));
+    await win.evaluate(() => window.__helloApi.copyText("copied by a plugin"));
+    check(
+      "copyText puts the text on the clipboard",
+      (await app.evaluate(({ clipboard }) => clipboard.readText())) === "copied by a plugin"
+    );
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 
   // 5. Its shortcut closes the view, and closing undoes the panel.
   await win.keyboard.press(HELLO_KEY);
