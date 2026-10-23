@@ -165,7 +165,19 @@ export function joinWrappedLines(text: string, cols?: number): string {
   let width = 0;
   for (const row of headRows) if (row > width) width = row;
   if (width < MIN_WRAP_WIDTH) return text;
-  if (headRows.some((row) => row < width - WRAP_SLACK)) return text;
+  // A row further short than the slack still reads as a wrap when the next
+  // row's first word is what didn't fit: a long path moved down whole leaves a
+  // gap as wide as itself. Had that word fitted after the row (one space, then
+  // the word, within the column), the wrapper would have put it there.
+  if (
+    headRows.some((row, i) => {
+      if (row >= width - WRAP_SLACK) return false;
+      const word = /^\S*/.exec(lines[i + 1].trimStart())?.[0].length ?? 0;
+      return row + 1 + word <= width;
+    })
+  ) {
+    return text;
+  }
   if (rows[rows.length - 1] > width) return text;
   if (cols !== undefined && (width > cols || width < cols - COLS_SLACK)) {
     return text;
