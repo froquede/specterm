@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.36.1 — 2026-10-22
+
+### Fixed
+- **A wrapped command pastes as one command when a row ends short.** A program
+  that wraps by word moves a long word (a path, a URL) down whole, so the row
+  before it can end well short of the others, and a command copied from Claude
+  Code pasted as several. That row now counts as wrapped when the next word
+  would not have fitted after it.
+
 ## 0.36.0 — 2026-10-22
 
 ### Added
