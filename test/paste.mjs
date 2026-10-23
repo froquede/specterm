@@ -106,6 +106,33 @@ const COLS = 120;
   );
 }
 
+// A row that ends well short of the others because the word after it is long:
+// the wrapper moved a 34-character path down whole, leaving a gap wider than
+// any fixed slack. The exact rows of an `ssh … '…'` command copied out of a
+// Claude Code reply, which pasted as four commands and ran a broken remote
+// line.
+{
+  const rows = [
+    "ssh -J deploy@suporte.nxf.link:2230 root@192.168.109.23 'crontab -l -u root 2>/dev/null | grep -v \"^#\"; grep -rl ",
+    "  \"pg_dump\\|backup-sync\" /etc/cron* /var/spool/cron 2>/dev/null; ls -la --time-style=+%d/%m-%H:%M ",
+    "  /backup-local/dump/grupomtf/pgsql/ /backup-local/dump/navarromed/pgsql/nf-navarromed-v39 | head -8; ls -lt ",
+    "  --time-style=+%d/%m-%H:%M /tmp/*.log | head -8'",
+  ];
+  eq(
+    "a row cut short by a long next word still joins",
+    joinWrappedLines(rows.join("\n"), COLS),
+    rows.map((row) => row.trim()).join(" ")
+  );
+  // The same short row with a next word that would have fitted after it: the
+  // wrapper would have put it there, so this break was written.
+  const short = [rows[0], "  \"pg_dump\" /etc/cron* /var/spool/cron 2>/dev/null; ls -la --time-style=+%d/%m-%H:%M ", "  -ld /tmp"];
+  eq(
+    "a short row whose next word would have fitted",
+    joinWrappedLines(short.join("\n"), COLS),
+    short.join("\n")
+  );
+}
+
 // --- the refusals ---------------------------------------------------------
 const refuses = (name, text, cols = COLS) =>
   eq(name, joinWrappedLines(text, cols), text);
