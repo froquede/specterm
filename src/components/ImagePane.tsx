@@ -1,5 +1,7 @@
 import { createSignal, onCleanup, Show } from "solid-js";
 import { attachPanZoom, type PanZoom } from "../lib/pan-zoom";
+import { getBackend } from "../backends";
+import { revealLabel } from "../lib/platform";
 
 interface ImagePaneProps {
   filePath: string;
@@ -123,6 +125,13 @@ export default function ImagePane(props: ImagePaneProps) {
               </button>
             </div>
           </Show>
+          <button
+            class="image-zoom-btn image-zoom-text"
+            title={revealLabel}
+            onClick={() => getBackend().then((b) => b.revealInFileManager(props.filePath, false))}
+          >
+            Reveal
+          </button>
         </div>
       </div>
       <div class="image-body" ref={viewportRef}>

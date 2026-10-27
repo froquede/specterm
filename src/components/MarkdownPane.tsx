@@ -11,7 +11,7 @@ import type { EditorView } from "@codemirror/view";
 import type * as MarkdownEditor from "../lib/markdown-editor";
 import { getBackend } from "../backends";
 import { renderMarkdown, renderMermaidBlocks } from "../lib/markdown";
-import { matchesCmd, shortcutLabel, isAccelClick } from "../lib/platform";
+import { matchesCmd, shortcutLabel, isAccelClick, revealLabel } from "../lib/platform";
 import { IconChevronUp, IconChevronDown, IconX } from "../lib/icons";
 
 interface MarkdownPaneProps {
@@ -639,6 +639,13 @@ export default function MarkdownPane(props: MarkdownPaneProps) {
               Refresh
             </button>
           </Show>
+          <button
+            class="markdown-toolbar-btn"
+            onClick={() => getBackend().then((b) => b.revealInFileManager(props.filePath, false))}
+            title={revealLabel}
+          >
+            Reveal
+          </button>
         </div>
       </div>
       {mode() === "read" && searchOpen() && (
