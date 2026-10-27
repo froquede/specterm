@@ -87,3 +87,11 @@ export function shortcutLabel(key: string, opts: { shift?: boolean } = {}): stri
   }
   return opts.shift ? `Ctrl+Alt+${key}` : `Ctrl+Shift+${key}`;
 }
+
+/** Menu/tooltip wording for showing a path in the OS file manager. */
+export const revealLabel =
+  os === "windows"
+    ? "Reveal in Explorer"
+    : os === "mac"
+      ? "Reveal in Finder"
+      : "Reveal in file manager";

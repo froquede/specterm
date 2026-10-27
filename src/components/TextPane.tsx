@@ -8,7 +8,7 @@ import {
 } from "solid-js";
 import type { EditorView } from "@codemirror/view";
 import { getBackend } from "../backends";
-import { matchesCmd, shortcutLabel, isMac } from "../lib/platform";
+import { matchesCmd, shortcutLabel, isMac, revealLabel } from "../lib/platform";
 import {
   highlightCode,
   lineCommentToken,
@@ -457,6 +457,13 @@ export default function TextPane(props: TextPaneProps) {
               Refresh
             </button>
           </Show>
+          <button
+            class="text-toolbar-btn"
+            onClick={() => getBackend().then((b) => b.revealInFileManager(props.filePath, false))}
+            title={revealLabel}
+          >
+            Reveal
+          </button>
         </div>
       </div>
       <Show when={mode() === "read" && searchOpen()}>
