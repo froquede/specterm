@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.37.0 — 2026-11-05
+
+### Added
+- **Reveal the open file.** A file opened in a pane (markdown, text or an image)
+  has a Reveal button in its toolbar that shows it selected in Explorer, Finder
+  or the Linux file manager.
+
 ## 0.36.1 — 2026-10-22
 
 ### Fixed
