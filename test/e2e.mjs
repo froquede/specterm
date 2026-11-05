@@ -2102,6 +2102,20 @@ try {
     await win.waitForTimeout(400);
   }
 
+  // A viewer's Reveal button asks the OS to show exactly the file it has open.
+  // The stub keeps CI from spawning a file-manager window and records the path;
+  // it is set here too because the file tree's section (6b) can skip its own.
+  const checkViewerReveal = async (button, want, label) => {
+    await app.evaluate(({ shell }) => {
+      globalThis.__revealArg = null;
+      shell.showItemInFolder = (p) => { globalThis.__revealArg = p; };
+    });
+    await button.click();
+    await win.waitForTimeout(300);
+    const arg = await app.evaluate(() => globalThis.__revealArg);
+    check(`${label}: Reveal calls the OS file manager with the path`, eqPath(arg, want), `arg=${arg} want=${want}`);
+  };
+
   // 13) Text viewer (open ANY file) + markdown/mermaid regression guard. Point
   // the file tree at test/fixtures, then drive real clicks on the fixtures.
   const fixturesDir = path.join(root, "test", "fixtures");
@@ -2154,6 +2168,11 @@ try {
     check("text viewer opens a non-markdown file", tv.codeText.includes("makeWidget"), tv.codeText.slice(0, 40));
     check("text viewer numbers every line once", tv.gutterFirst === "1" && tv.gutterLines > 8, `first=${tv.gutterFirst} lines=${tv.gutterLines}`);
     check("text viewer highlights syntax by language", tv.hasHljs && /typescript/i.test(tv.lang), `hljs=${tv.hasHljs} lang=${tv.lang}`);
+    await checkViewerReveal(
+      win.locator(".text-pane .text-toolbar-btn", { hasText: "Reveal" }).first(),
+      path.join(fixturesDir, "sample.ts"),
+      "text viewer"
+    );
 
     // 13b) In-pane find marks matches. Click the Find button (openSearch) rather
     // than the ⌘F chord, so the check doesn't race the pane's focus/isActive flip.
@@ -2184,6 +2203,7 @@ try {
     // First switch pulls the lazy CodeMirror chunk.
     const envEditor = envPane.locator(".text-editor .cm-content");
     await envEditor.waitFor({ timeout: 10000 });
+    await checkViewerReveal(envPane.locator(".text-toolbar-btn", { hasText: "Reveal" }), envFixture, "text editor");
     await envEditor.click();
     await win.waitForTimeout(200);
     // Put the caret on the last line (DEBUG=false) and comment it out.
@@ -2298,6 +2318,7 @@ try {
     // has settled, not while it is still animating into place.
     await win.waitForTimeout(600);
     const imgPane = win.locator(".pane", { has: win.locator(".image-pane") }).first();
+    await checkViewerReveal(imgPane.locator(".image-zoom-btn", { hasText: "Reveal" }), imgFixture, "image viewer");
     // Read the viewer's own state: the transform the stage carries, and the
     // percentage in the toolbar, which is scale measured against the image's
     // real pixels rather than against the fit.
@@ -2496,11 +2517,14 @@ try {
     await clickEntry(win, "note.md");
     await win.waitForSelector(".markdown-content", { timeout: 8000 });
     check("markdown opens in read mode", (await win.locator(".markdown-content h1").count()) === 1, "");
+    const mdReveal = win.locator(".markdown-toolbar-btn", { hasText: "Reveal" }).first();
+    await checkViewerReveal(mdReveal, notePath, "markdown viewer");
 
     // Toggle to edit — CodeMirror mounts (loaded lazily on first switch).
     await win.locator(".markdown-toolbar-btn", { hasText: "Edit" }).first().click();
     await win.waitForSelector(".markdown-editor .cm-editor", { timeout: 8000 });
     await win.waitForTimeout(500);
+    await checkViewerReveal(mdReveal, notePath, "markdown editor");
     check("Edit toggle mounts the CodeMirror editor", (await win.locator(".markdown-editor .cm-content").count()) === 1, "");
 
     // Type at the end of the document.

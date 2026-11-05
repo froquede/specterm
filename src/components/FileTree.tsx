@@ -23,7 +23,7 @@ import { entryIcon } from "../lib/file-icons";
 import { fileKind } from "../lib/file-kind";
 import { getBackend } from "../backends";
 import type { FileEntry } from "../backends/types";
-import { isAccelClick, os } from "../lib/platform";
+import { isAccelClick, os, revealLabel } from "../lib/platform";
 import { join, dirname, normalize, equalPath, sep } from "../lib/fspath";
 import { favorites, toggleFavorite, favoriteByIndex } from "../stores/favorites";
 import { fileTreeEpoch, folderActions, folderBanners, type FolderBanner } from "../stores/plugins";
@@ -856,11 +856,7 @@ export default function FileTree(props: FileTreeProps) {
                     data-action="reveal"
                     onClick={() => revealEntry(m().entry)}
                   >
-                    {WIN
-                      ? "Reveal in Explorer"
-                      : os === "mac"
-                        ? "Reveal in Finder"
-                        : "Reveal in file manager"}
+                    {revealLabel}
                   </button>
                   <button
                     class="file-tree-menu-item"
