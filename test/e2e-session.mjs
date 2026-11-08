@@ -66,9 +66,12 @@ const WIN = process.platform === "win32";
 
 // The foreground probe every section runs: a line a second into `file`, for
 // fifteen minutes. Windows panes run PowerShell, which has no `seq` or `sleep`.
+// There the loop runs in a child PowerShell rather than in the pane's own: a
+// cmdlet loop is invisible from outside the shell, and Windows tells a busy
+// parked window from an idle one by its child processes (see refreshParkedBusy).
 const tickLoop = (file) =>
   WIN
-    ? `1..900 | ForEach-Object { Add-Content -LiteralPath '${file}' tick; Start-Sleep 1 }`
+    ? `powershell -NoProfile -Command "1..900 | ForEach-Object { Add-Content -LiteralPath '${file}' tick; Start-Sleep 1 }"`
     : `for i in $(seq 1 900); do echo tick >> ${file}; sleep 1; done`;
 // Text from that command, to find it again in a pane's scrollback.
 const TICK_NEEDLE = WIN ? "Start-Sleep 1" : "seq 1 900";

@@ -570,6 +570,7 @@ function reattachSession() {
     : createWindow();
   updateTray();
   if (parked) scheduleSessionWrite();
+  watchParkedShells();
   raise(win);
   return win;
 }
@@ -2315,11 +2316,18 @@ function collectSessionWindows() {
 // shell itself (a Claude Code session, a build, a dev server). Read straight off
 // the pty, synchronously, which is what lets a session write ask it on the way
 // out of a Quit. A shell's own helpers (gitstatusd and the like) run in the
-// background and never show up here. Windows reports the shell's own name
-// whatever runs in it, so there this is always false and a parked window ends
-// with the app.
+// background and never show up here.
+//
+// Not on Windows. There node-pty's `process` is not a process at all: it hands
+// back the terminal name the pty was spawned with ("xterm-256color"), which never
+// matches the shell's — so every parked window read as busy, every one was saved,
+// and they piled up in the session file for as long as the app sat in the tray.
+// A reboot then reopened all of them, some from weeks back. Windows answers from
+// the process table instead (see refreshParkedBusy), cached on the instance so
+// this stays synchronous.
 function shellIsBusy(instance) {
   if (!instance || instance.disposed) return false;
+  if (process.platform === "win32") return instance.busy === true;
   try {
     // By name only: Linux reports the path the process was started with
     // ("/bin/bash"), macOS the bare name ("zsh"), and a login shell may lead
@@ -2328,6 +2336,80 @@ function shellIsBusy(instance) {
     return Boolean(foreground) && foreground !== instance.shellName;
   } catch {
     return false;
+  }
+}
+
+// Windows' answer to shellIsBusy: a parked shell is busy when it has a live
+// descendant that isn't one of its own helpers — the same reading the close
+// confirmation makes (runningCommands). Each scan is a PowerShell start, so it
+// runs once when a window parks and then on a slow poll for as long as anything
+// is parked, which is what keeps the flag honest when a parked build finishes or
+// a parked Claude Code session is exited. Until a shell's first scan lands it
+// counts as idle: a window nobody can vouch for is not one to reopen.
+const PARKED_BUSY_POLL_MS = 15_000;
+let parkedBusyTimer = null;
+let parkedBusyScanning = false;
+// A window parked while a scan was already running: its shells weren't in it.
+let parkedBusyRescan = false;
+
+async function refreshParkedBusy() {
+  if (process.platform !== "win32") return;
+  if (parkedBusyScanning) {
+    parkedBusyRescan = true;
+    return;
+  }
+  const ids = new Set();
+  for (const session of detachedSessions) {
+    for (const id of ptyIdsIn(session.tabs)) ids.add(id);
+  }
+  const shells = [...ids]
+    .map((id) => ptyInstances.get(id))
+    .filter((instance) => instance && !instance.disposed && instance.process.pid);
+  if (!shells.length) return;
+  parkedBusyScanning = true;
+  try {
+    const index = await childProcessIndex();
+    let changed = false;
+    for (const instance of shells) {
+      const busy = (await descendantsOf(instance.process.pid, index)).some(
+        (proc) => !IGNORED_DESCENDANTS.some((re) => re.test(proc.comm))
+      );
+      if (instance.busy !== busy) {
+        instance.busy = busy;
+        changed = true;
+      }
+    }
+    if (changed) scheduleSessionWrite();
+  } catch (err) {
+    console.warn("[session] scanning parked shells failed:", err?.message ?? err);
+  } finally {
+    parkedBusyScanning = false;
+  }
+  if (parkedBusyRescan) {
+    parkedBusyRescan = false;
+    void refreshParkedBusy();
+  }
+}
+
+// Called whenever the set of parked sessions changes.
+function watchParkedShells() {
+  if (process.platform !== "win32") return;
+  if (quitting || detachedSessions.length === 0) {
+    clearInterval(parkedBusyTimer);
+    parkedBusyTimer = null;
+    return;
+  }
+  void refreshParkedBusy();
+  if (!parkedBusyTimer) {
+    parkedBusyTimer = setInterval(() => {
+      if (quitting || detachedSessions.length === 0) {
+        clearInterval(parkedBusyTimer);
+        parkedBusyTimer = null;
+        return;
+      }
+      void refreshParkedBusy();
+    }, PARKED_BUSY_POLL_MS);
+    parkedBusyTimer.unref?.();
   }
 }
 
@@ -2661,6 +2743,9 @@ ipcMain.handle("park-session", (event, payload) => {
     if (savedLayout) parkedLayouts.push(savedLayout);
     updateTray();
     scheduleSessionWrite();
+    // On Windows the saved session can't tell whether this window is worth
+    // reopening until its shells have been looked at (see refreshParkedBusy).
+    watchParkedShells();
   }
   if (win && !win.isDestroyed()) win.destroy();
 });
