@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.37.1 — 2026-11-08
+
+### Fixed
+- **Windows no longer reopens a pile of old windows after a reboot.** A window
+  closed into the tray is meant to come back on the next launch only if
+  something was still running in it. On Windows every one of them counted as
+  running, so they piled up for as long as Specterm sat in the tray, and a
+  reboot brought them all back, some weeks old. Windows now checks for a real
+  program running in the shell, such as Claude Code or a build, the same check
+  the close confirmation makes.
+
 ## 0.37.0 — 2026-11-05
 
 ### Added
