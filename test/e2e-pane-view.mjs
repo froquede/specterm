@@ -135,6 +135,34 @@ await sleep(600);
 const cBack = await win.$eval(`[data-pane-id="${c}"]`, (e) => e.getBoundingClientRect());
 check("chord restores the layout", cBack.width < ws.width - 100, `width=${cBack.width}`);
 
+// Double-click on the bar does the same, and the second one puts the pane back
+// at exactly the size it had.
+const bar = (paneId) => `[data-pane-id="${paneId}"] .pane-title`;
+await win.dblclick(bar(c));
+await sleep(600);
+const cDbl = await win.$eval(`[data-pane-id="${c}"]`, (e) => e.getBoundingClientRect());
+check("double-click on the bar focuses the pane", cDbl.width > ws.width - 10 && cDbl.height > ws.height - 10, `${cDbl.width}x${cDbl.height}`);
+await shot("5b-dblclick-focused");
+await win.dblclick(bar(c));
+await sleep(600);
+const cDblBack = await win.$eval(`[data-pane-id="${c}"]`, (e) => e.getBoundingClientRect());
+check(
+  "second double-click restores the same size",
+  Math.abs(cDblBack.width - cBack.width) < 1 && Math.abs(cDblBack.height - cBack.height) < 1,
+  `${cBack.width}x${cBack.height} → ${cDblBack.width}x${cDblBack.height}`
+);
+// A quick double press on a view button is two presses of that button, not a
+// bar double-click on top of them. (Hide, because it stays put: the focus
+// button moves with the pane, so a second press lands somewhere else.)
+await win.dblclick(btn(c, "Hide pane content"));
+await sleep(600);
+const cBtn = await win.$eval(`[data-pane-id="${c}"]`, (e) => e.getBoundingClientRect());
+check(
+  "double press on a bar button doesn't focus the pane",
+  Math.abs(cBtn.width - cBack.width) < 1 && !(await win.$(`[data-pane-id="${c}"] .pane-privacy-cover`)),
+  `width=${cBtn.width}`
+);
+
 // Hidden content leaves layout too, and the shell keeps its size meanwhile.
 await win.click(btn(b, "Show pane content"));
 await win.click(btn(a, "Hide pane content"));
