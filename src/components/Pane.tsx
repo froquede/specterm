@@ -305,8 +305,28 @@ export default function Pane(props: PaneProps) {
     >
       <div
         class="pane-titlebar"
-        title={collapsed() ? "Click to expand, drag to move" : "Drag to move / swap pane"}
+        title={
+          collapsed()
+            ? "Click to expand, drag to move"
+            : props.axis || zoomed()
+              ? zoomed()
+                ? "Double-click to restore layout, drag to move"
+                : "Double-click to focus, drag to move"
+              : "Drag to move / swap pane"
+        }
         onPointerDown={onBarPointerDown}
+        // Same as the focus button: the pane takes the workspace and a second
+        // double-click puts the layout back as it was (zoom leaves the split
+        // ratios alone, see stores/pane-view.ts). The view buttons stop the
+        // press, so a quick double press on one of them never reaches here.
+        onDblClick={(e) => {
+          if ((e.target as HTMLElement).closest("button")) return;
+          const moved =
+            Math.abs(e.clientX - barDownAt.x) + Math.abs(e.clientY - barDownAt.y);
+          if (moved >= 4 || !(props.axis || zoomed())) return;
+          toggleZoom(props.tabId, paneId);
+          props.onFocus();
+        }}
         // A folded pane is just its bar, so a click anywhere on it unfolds it.
         // A drag still moves it: a click is a press and release in one place.
         onClick={(e) => {
