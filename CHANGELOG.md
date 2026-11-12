@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.38.0 — 2026-11-12
+
+### Added
+- **Double-click a pane's title bar to focus it.** The pane fills the tab, and
+  a second double-click puts the layout back with every pane at the size it
+  had. It is the same focus mode as the button on the bar and
+  `Ctrl+Shift+Enter`.
+
 ## 0.37.1 — 2026-11-08
 
 ### Fixed
