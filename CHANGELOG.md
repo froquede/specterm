@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.38.1 — 2026-11-19
+
+### Fixed
+- **Scrolling Claude Code no longer garbles its text.** Lines with emoji such
+  as ✅ or 🔧 came back with doubled and missing characters after a scroll
+  ("✅135" for "✅ 35"). The terminal counted each emoji as one column while
+  Claude Code counts it as two, so every repaint landed a column off. The
+  terminal now measures characters with Unicode 11 widths, the same count the
+  programs running in it use.
+
 ## 0.38.0 — 2026-11-12
 
 ### Added
