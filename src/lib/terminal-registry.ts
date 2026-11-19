@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import {
   spawnPty,
   writePty,
@@ -1036,6 +1037,16 @@ export async function createTerminalInstance(
       markFirstRender = null;
     });
   }
+
+  // Character widths from Unicode 11 instead of xterm's default Unicode 6
+  // tables. Under Unicode 6 an emoji such as ✅ or 🔧 takes one column, while
+  // the programs writing to the pane (Claude Code's renderer among them) count
+  // it as two. A program that repaints in place moves the cursor by its own
+  // count, so every emoji on a line shifts what it writes after it by a column:
+  // scrolling Claude Code's transcript left the repainted lines with doubled
+  // and missing characters ("✅135" for "✅ 35", "okok").
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = "11";
 
   const fitAddon = new FitAddon();
   term.loadAddon(fitAddon);
